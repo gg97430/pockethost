@@ -8,14 +8,13 @@ import { type InstanceFields, parseBoolean } from 'pockethost/common'
 // The apex domain of this whole operation.
 export const PUBLIC_APEX_DOMAIN = import.meta.env.PUBLIC_APEX_DOMAIN || `monappli.re`
 
-export const PUBLIC_APP_URL = import.meta.env.PUBLIC_APP_URL || `https://${PUBLIC_APEX_DOMAIN}`
+export const PUBLIC_APP_URL = import.meta.env.PUBLIC_APP_URL || `https://app.${PUBLIC_APEX_DOMAIN}`
 
 // The protocol to use, almost always will be https
 export const PUBLIC_HTTP_PROTOCOL = import.meta.env.PUBLIC_HTTP_PROTOCOL || `https:`
 
 // The complete URL to the mothership
-export const PUBLIC_MOTHERSHIP_URL =
-  import.meta.env.PUBLIC_MOTHERSHIP_URL || `https://central.${PUBLIC_APEX_DOMAIN}`
+export const PUBLIC_MOTHERSHIP_URL = import.meta.env.PUBLIC_MOTHERSHIP_URL || PUBLIC_APP_URL
 
 // Whether we are in debugging mode - default TRUE
 export const PUBLIC_DEBUG = parseBoolean(import.meta.env.PUBLIC_DEBUG || 'true')

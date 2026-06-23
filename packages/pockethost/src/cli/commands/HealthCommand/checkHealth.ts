@@ -15,7 +15,9 @@ import {
   MOTHERSHIP_PORT,
   PH_FTP_PORT,
   PH_SFTP_PORT,
+  PocketBase,
   SSL_CERT,
+  adminAuthWithPassword,
   stringify,
 } from '../../..'
 
@@ -221,19 +223,11 @@ export const checkHealth = async () => {
 
   if (MOTHERSHIP_ADMIN_USERNAME() && MOTHERSHIP_ADMIN_PASSWORD()) {
     try {
-      const res = await fetch(`http://localhost:${MOTHERSHIP_PORT()}/api/admins/auth-with-password`, {
-        method: `POST`,
-        headers: { 'content-type': `application/json` },
-        body: stringify({
-          identity: MOTHERSHIP_ADMIN_USERNAME(),
-          password: MOTHERSHIP_ADMIN_PASSWORD(),
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
+      const client = new PocketBase(`http://localhost:${MOTHERSHIP_PORT()}`)
+      await adminAuthWithPassword(client, MOTHERSHIP_ADMIN_USERNAME(), MOTHERSHIP_ADMIN_PASSWORD())
       push({
         name: `mothership admin auth`,
-        ok: res.status === 200,
-        detail: res.status === 200 ? undefined : `HTTP ${res.status}`,
+        ok: true,
         priority: 9,
       })
     } catch (e) {

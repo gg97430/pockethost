@@ -72,6 +72,9 @@ routerAdd("PUT", "/api/instance/{id}", (e) => {
 routerAdd("POST", "/api/instance", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceCreate(e);
 }, $apis.requireAuth());
+routerAdd("GET", "/api/instance/{id}/overview", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceOverview(e);
+}, $apis.requireAuth());
 routerAdd("POST", "/api/instance/{id}/duplicate", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceDuplicate(e);
 }, $apis.requireAuth());

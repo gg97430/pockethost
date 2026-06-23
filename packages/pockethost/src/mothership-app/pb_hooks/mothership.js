@@ -504,7 +504,7 @@ const MAX_STOP_WAIT_SECONDS = 120;
 const DIR_MODE = 493;
 const PRIVATE_DIR_MODE = 448;
 const PRIVATE_FILE_MODE = 384;
-const dataRoot$1 = () => {
+const dataRoot$2 = () => {
 	const envRoot = $os.getenv("DATA_ROOT");
 	if (envRoot) return envRoot;
 	const appDataDir = `${$app.dataDir()}`;
@@ -512,8 +512,8 @@ const dataRoot$1 = () => {
 	if (inferred !== appDataDir) return inferred;
 	throw new Error("Impossible de trouver le dossier de donnees des instances.");
 };
-const backupRoot = () => $os.getenv("INSTANCE_BACKUP_ROOT") || `${dataRoot$1()}/backups/instances`;
-const assertSafeInstanceId$1 = (id) => {
+const backupRoot = () => $os.getenv("INSTANCE_BACKUP_ROOT") || `${dataRoot$2()}/backups/instances`;
+const assertSafeInstanceId$2 = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
 const assertSafeBackupId = (id) => {
@@ -522,7 +522,7 @@ const assertSafeBackupId = (id) => {
 const assertSafeBackupFilename = (filename) => {
 	if (!filename.match(/^[a-zA-Z0-9._-]+\.tar\.gz$/)) throw new BadRequestError("Nom de sauvegarde invalide.");
 };
-const instanceRoot$1 = (id) => `${dataRoot$1()}/instances/${id}`;
+const instanceRoot$2 = (id) => `${dataRoot$2()}/instances/${id}`;
 const backupDir = (instanceId) => `${backupRoot()}/${instanceId}`;
 const backupPath = (instanceId, filename) => `${backupDir(instanceId)}/${filename}`;
 const pathExists$1 = (path) => {
@@ -556,20 +556,20 @@ const createBackupFilename = (instance, kind) => {
 	const suffix = kind === "pre-restore" ? "pre-restore" : "manual";
 	return `${timestampForFilename()}-${slugForFilename(instance.getString("subdomain"))}-${suffix}-${instance.id}.tar.gz`;
 };
-const findInstance = (id) => {
-	assertSafeInstanceId$1(id);
+const findInstance$1 = (id) => {
+	assertSafeInstanceId$2(id);
 	const instance = $app.findRecordById("instances", id);
 	if (!instance) throw new BadRequestError(`Instance ${id} introuvable.`);
 	return instance;
 };
-const requireAuthRecord = (authRecord) => {
+const requireAuthRecord$1 = (authRecord) => {
 	if (!authRecord) throw new BadRequestError("Session utilisateur attendue.");
 	return authRecord;
 };
-const assertInstanceAccess = (instance, authRecord) => {
+const assertInstanceAccess$1 = (instance, authRecord) => {
 	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
 };
-const serializeBackup = (backup) => ({
+const serializeBackup$1 = (backup) => ({
 	id: backup.id,
 	user: backup.getString("user"),
 	instance: backup.getString("instance"),
@@ -592,7 +592,7 @@ const getBackupRecord = (instance, backupId) => {
 	if (!backup || backup.getString("instance") !== instance.id) throw new BadRequestError("Sauvegarde introuvable.");
 	return backup;
 };
-const pathValue = (e, name) => {
+const pathValue$1 = (e, name) => {
 	if (!e.request) throw new BadRequestError("Requete invalide.");
 	return e.request.pathValue(name);
 };
@@ -606,14 +606,14 @@ const assertNoRunningOperation = (instanceId) => {
 	if (running) throw new BadRequestError("Une operation de sauvegarde est deja en cours pour cette instance.");
 };
 const setInstancePower = (instanceId, power) => {
-	const record = findInstance(instanceId);
+	const record = findInstance$1(instanceId);
 	record.set("power", power);
 	$app.save(record);
 	return record;
 };
 const waitUntilIdle = (instanceId) => {
 	for (let i = 0; i < MAX_STOP_WAIT_SECONDS; i++) {
-		const current = findInstance(instanceId);
+		const current = findInstance$1(instanceId);
 		if (!current.getBool("power") && current.getString("status").toLowerCase() === "idle") return current;
 		sleepOneSecond();
 	}
@@ -695,8 +695,8 @@ const ensureInstanceDirs = (root) => {
 	for (const dir of BACKUP_DIRS) $os.mkdirAll(`${root}/${dir}`, DIR_MODE);
 };
 const createArchive = (instance, backup, kind) => {
-	assertSafeInstanceId$1(instance.id);
-	const root = instanceRoot$1(instance.id);
+	assertSafeInstanceId$2(instance.id);
+	const root = instanceRoot$2(instance.id);
 	const dir = backupDir(instance.id);
 	const filename = createBackupFilename(instance, kind);
 	const finalPath = backupPath(instance.id, filename);
@@ -777,7 +777,7 @@ const createBackupForInstance = (instance, authRecord, kind, managePower, skipRu
 	try {
 		if (managePower) power = stopForFilesystemOperation(instance);
 		else waitUntilIdle(instance.id);
-		markBackupReady(backup, createArchive(findInstance(instance.id), backup, kind));
+		markBackupReady(backup, createArchive(findInstance$1(instance.id), backup, kind));
 		return backup;
 	} catch (error) {
 		markBackupFailed(backup, error);
@@ -817,7 +817,7 @@ const readManifest = (extractDir) => {
 	return manifest;
 };
 const restoreExtractedDirs = (instance, extractDir) => {
-	const root = instanceRoot$1(instance.id);
+	const root = instanceRoot$2(instance.id);
 	const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`;
 	$os.mkdirAll(root, DIR_MODE);
 	$os.mkdirAll(rollbackDir, PRIVATE_DIR_MODE);
@@ -849,8 +849,8 @@ const restoreExtractedDirs = (instance, extractDir) => {
 const restoreArchive = (instance, backup) => {
 	const archivePath = ensureLocalArchive(instance, backup);
 	validateArchiveListing(archivePath);
-	const extractDir = `${instanceRoot$1(instance.id)}/.restore-extract-${backup.id}`;
-	$os.mkdirAll(instanceRoot$1(instance.id), DIR_MODE);
+	const extractDir = `${instanceRoot$2(instance.id)}/.restore-extract-${backup.id}`;
+	$os.mkdirAll(instanceRoot$2(instance.id), DIR_MODE);
 	$os.removeAll(extractDir);
 	$os.mkdirAll(extractDir, PRIVATE_DIR_MODE);
 	try {
@@ -858,7 +858,7 @@ const restoreArchive = (instance, backup) => {
 		const manifest = readManifest(extractDir);
 		restoreExtractedDirs(instance, extractDir);
 		if (manifest.instance?.version) {
-			const current = findInstance(instance.id);
+			const current = findInstance$1(instance.id);
 			current.set("version", manifest.instance.version);
 			$app.save(current);
 		}
@@ -870,25 +870,25 @@ const restoreArchive = (instance, backup) => {
 };
 const HandleInstanceBackupCreate = (e) => {
 	const log = mkLog("POST:instance:backup");
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
 	const backup = createBackupForInstance(instance, authRecord, "manual", true);
 	log(`created ${backup.id} for ${instance.id}`);
-	return e.json(200, { backup: serializeBackup(backup) });
+	return e.json(200, { backup: serializeBackup$1(backup) });
 };
 const HandleInstanceBackupsList = (e) => {
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
-	const backups = $app.findRecordsByFilter("instance_backups", "instance = {:instance}", "-created", 100, 0, { instance: instance.id }).filter((record) => !!record).map(serializeBackup);
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const backups = $app.findRecordsByFilter("instance_backups", "instance = {:instance}", "-created", 100, 0, { instance: instance.id }).filter((record) => !!record).map(serializeBackup$1);
 	return e.json(200, { backups });
 };
 const HandleInstanceBackupDownload = (e) => {
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
-	const backup = getBackupRecord(instance, pathValue(e, "backupId"));
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
 	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
 	const localPath = ensureLocalArchive(instance, backup);
 	const filename = backup.getString("filename");
@@ -897,10 +897,10 @@ const HandleInstanceBackupDownload = (e) => {
 	return e.fileFS($os.dirFS(backupDir(instance.id)), filename);
 };
 const HandleInstanceBackupDelete = (e) => {
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
-	const backup = getBackupRecord(instance, pathValue(e, "backupId"));
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
 	const filename = backup.getString("filename");
 	if (filename) {
 		assertSafeBackupFilename(filename);
@@ -916,17 +916,17 @@ const HandleInstanceBackupDelete = (e) => {
 };
 const HandleInstanceBackupRestore = (e) => {
 	const log = mkLog("POST:instance:backup:restore");
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
 	assertNoRunningOperation(instance.id);
-	const backup = getBackupRecord(instance, pathValue(e, "backupId"));
+	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
 	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
 	const power = stopForFilesystemOperation(instance);
 	let restored = false;
 	try {
-		createBackupForInstance(findInstance(instance.id), authRecord, "pre-restore", false, true);
-		restoreArchive(findInstance(instance.id), backup);
+		createBackupForInstance(findInstance$1(instance.id), authRecord, "pre-restore", false, true);
+		restoreArchive(findInstance$1(instance.id), backup);
 		restored = true;
 		log(`restored ${backup.id} into ${instance.id}`);
 	} finally {
@@ -965,7 +965,7 @@ const COPY_DIRS = [
 	"pb_public",
 	"pb_hooks"
 ];
-const dataRoot = () => {
+const dataRoot$1 = () => {
 	const envRoot = $os.getenv("DATA_ROOT");
 	if (envRoot) return envRoot;
 	const appDataDir = `${$app.dataDir()}`;
@@ -973,10 +973,10 @@ const dataRoot = () => {
 	if (inferred !== appDataDir) return inferred;
 	throw new Error("Impossible de trouver le dossier de donnees des instances.");
 };
-const assertSafeInstanceId = (id) => {
+const assertSafeInstanceId$1 = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
-const instanceRoot = (id) => `${dataRoot()}/instances/${id}`;
+const instanceRoot$1 = (id) => `${dataRoot$1()}/instances/${id}`;
 const pathExists = (path) => {
 	try {
 		$os.stat(path);
@@ -990,10 +990,10 @@ const copyDirectory = (source, target) => {
 	$os.cmd("cp", "-a", `${source}/.`, target).combinedOutput();
 };
 const copyInstanceFiles = (sourceId, targetId) => {
-	assertSafeInstanceId(sourceId);
-	assertSafeInstanceId(targetId);
-	const sourceRoot = instanceRoot(sourceId);
-	const targetRoot = instanceRoot(targetId);
+	assertSafeInstanceId$1(sourceId);
+	assertSafeInstanceId$1(targetId);
+	const sourceRoot = instanceRoot$1(sourceId);
+	const targetRoot = instanceRoot$1(targetId);
 	$os.mkdirAll(targetRoot, 493);
 	for (const dir of COPY_DIRS) {
 		const source = `${sourceRoot}/${dir}`;
@@ -1031,7 +1031,7 @@ const HandleInstanceDuplicate = (e) => {
 	const authRecord = e.auth;
 	if (!authRecord) throw new BadRequestError(`Session utilisateur attendue`);
 	const sourceId = e.request.pathValue("id");
-	assertSafeInstanceId(sourceId);
+	assertSafeInstanceId$1(sourceId);
 	const source = $app.findRecordById("instances", sourceId);
 	if (!source) throw new BadRequestError(`Instance ${sourceId} introuvable.`);
 	if (source.get("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError(`Non autorise`);
@@ -1060,11 +1060,85 @@ const HandleInstanceDuplicate = (e) => {
 			if (target.id) $app.delete(target);
 		} catch {}
 		try {
-			if (target.id) $os.removeAll(instanceRoot(target.id));
+			if (target.id) $os.removeAll(instanceRoot$1(target.id));
 		} catch {}
 		throw new ApiError(500, `Impossible de dupliquer la base.`, { error });
 	}
 	return e.json(200, { instance: target });
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceOverview.ts
+const assertSafeInstanceId = (id) => {
+	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
+};
+const dataRoot = () => {
+	const envRoot = $os.getenv("DATA_ROOT");
+	if (envRoot) return envRoot;
+	const appDataDir = `${$app.dataDir()}`;
+	const inferred = appDataDir.replace(/\/mothership\/pb_data\/?$/, "");
+	if (inferred !== appDataDir) return inferred;
+	throw new Error("Impossible de trouver le dossier de donnees des instances.");
+};
+const instanceRoot = (id) => `${dataRoot()}/instances/${id}`;
+const requireAuthRecord = (authRecord) => {
+	if (!authRecord) throw new BadRequestError("Session utilisateur attendue.");
+	return authRecord;
+};
+const findInstance = (id) => {
+	assertSafeInstanceId(id);
+	const instance = $app.findRecordById("instances", id);
+	if (!instance) throw new BadRequestError(`Instance ${id} introuvable.`);
+	return instance;
+};
+const assertInstanceAccess = (instance, authRecord) => {
+	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
+};
+const pathValue = (e, name) => {
+	if (!e.request) throw new BadRequestError("Requete invalide.");
+	return e.request.pathValue(name);
+};
+const serializeBackup = (backup) => ({
+	id: backup.id,
+	kind: backup.getString("kind"),
+	status: backup.getString("status"),
+	filename: backup.getString("filename"),
+	remoteKey: backup.getString("remoteKey"),
+	sizeBytes: Number(backup.get("sizeBytes") || 0),
+	compressedBytes: Number(backup.get("compressedBytes") || 0),
+	error: backup.getString("error"),
+	remoteError: backup.getString("remoteError"),
+	created: backup.getString("created"),
+	updated: backup.getString("updated")
+});
+const getDirectorySizeBytes = (path) => {
+	try {
+		const output = toString($os.cmd("du", "-sb", path).combinedOutput()).trim();
+		const value = Number(output.split(/\s+/)[0] || 0);
+		return Number.isFinite(value) ? value : null;
+	} catch {
+		return null;
+	}
+};
+const HandleInstanceOverview = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const backups = $app.findRecordsByFilter("instance_backups", "instance = {:instance}", "-created", 100, 0, { instance: instance.id }).filter((record) => !!record).map(serializeBackup);
+	const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0);
+	return e.json(200, {
+		instance,
+		backups: {
+			count: backups.length,
+			readyCount: backups.filter((backup) => backup.status === "ready").length,
+			runningCount: backups.filter((backup) => backup.status === "running").length,
+			failedCount: backups.filter((backup) => backup.status === "failed").length,
+			totalCompressedBytes,
+			latest: backups[0] || null
+		},
+		storage: { instanceBytes: getDirectorySizeBytes(instanceRoot(instance.id)) },
+		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
+	});
 };
 
 //#endregion
@@ -4463,6 +4537,7 @@ exports.HandleInstanceBackupsList = HandleInstanceBackupsList;
 exports.HandleInstanceCreate = HandleInstanceCreate;
 exports.HandleInstanceDelete = HandleInstanceDelete;
 exports.HandleInstanceDuplicate = HandleInstanceDuplicate;
+exports.HandleInstanceOverview = HandleInstanceOverview;
 exports.HandleInstanceUpdate = HandleInstanceUpdate;
 exports.HandleInstancesResetIdle = HandleInstancesResetIdle;
 exports.HandleInstancesRuntimeReset = HandleInstancesRuntimeReset;

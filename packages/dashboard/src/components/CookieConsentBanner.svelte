@@ -34,7 +34,7 @@
           Gestion PocketBase utilise des cookies d'analyse pour améliorer le produit.
           <a href="/privacy" class="text-primary hover:text-secondary underline underline-offset-2">Politique de confidentialité</a>
         </p>
-        <wa-button type="button" variant="brand" size="small" class="shrink-0" onclick={accept}>Accepter</wa-button>
+        <wa-button type="button" variant="brand" size="s" class="shrink-0" onclick={accept}>Accepter</wa-button>
       </div>
     </wa-callout>
   </div>

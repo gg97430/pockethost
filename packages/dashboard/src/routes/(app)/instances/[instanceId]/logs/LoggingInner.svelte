@@ -82,7 +82,7 @@
       <wa-button
         class="absolute top-4 right-4"
         variant="neutral"
-        size="small"
+        size="s"
         onclick={() => (autoScroll = !autoScroll)}
       >
         Défilement auto
@@ -106,17 +106,17 @@
     </div>
 
     <form method="dialog" class="mt-4">
-      <wa-button type="submit" variant="neutral" size="small">fermer</wa-button>
+      <wa-button type="submit" variant="neutral" size="s">fermer</wa-button>
     </form>
   </dialog>
 
   <div class="mockup-code relative">
     <div class="flex flex-row absolute top-4 right-4 gap-1">
-      <wa-button variant="neutral" size="small" onclick={() => (autoScroll = !autoScroll)}>
+      <wa-button variant="neutral" size="s" onclick={() => (autoScroll = !autoScroll)}>
         Défilement auto
         <wa-icon slot="end" name={autoScroll ? 'arrow-down' : 'xmark'}></wa-icon>
       </wa-button>
-      <wa-button variant="neutral" size="small" onclick={handleFullScreenModal}>
+      <wa-button variant="neutral" size="s" onclick={handleFullScreenModal}>
         Plein écran
         <wa-icon slot="end" name="up-right-and-down-left-from-center"></wa-icon>
       </wa-button>

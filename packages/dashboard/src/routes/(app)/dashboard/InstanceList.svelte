@@ -104,7 +104,7 @@
   <div class="instance-list-toolbar-actions">
     <wa-button
       variant="neutral"
-      size="small"
+      size="s"
       appearance="outline"
       onclick={toggleSortDirection}
       aria-label="Changer le sens du tri"

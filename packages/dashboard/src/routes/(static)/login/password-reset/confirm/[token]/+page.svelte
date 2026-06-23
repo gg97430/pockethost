@@ -20,7 +20,7 @@
     formErrors = []
 
     if (!token) {
-      formErrors = ['No token was found. Please check your email again for the link.']
+      formErrors = ['Aucun jeton trouvé. Veuillez vérifier à nouveau le lien reçu par email.']
       return
     }
 
@@ -34,7 +34,7 @@
       if (error instanceof Error) {
         formErrors = client().parseError(error)
       } else {
-        formErrors = ['Something went wrong with confirming your password change.']
+        formErrors = ['Une erreur est survenue pendant la confirmation du changement de mot de passe.']
       }
     }
 
@@ -43,16 +43,16 @@
 </script>
 
 <svelte:head>
-  <title>Reset Your Password - PocketHost</title>
+  <title>Réinitialisez votre mot de passe - Gestion PocketBase</title>
 </svelte:head>
 
 <div class="w-full flex items-center justify-center px-4 md:px-16 py-10 md:py-16">
   <div class="auth-card w-full max-w-md">
     <form class="auth-form" method="post" autocomplete="on" onsubmit={handleSubmit}>
-      <h2 class="auth-form-title">New Password</h2>
+      <h2 class="auth-form-title">Nouveau mot de passe</h2>
 
       <div class="auth-field-group">
-        <label class="auth-label" for="password">New Password</label>
+        <label class="auth-label" for="password">Nouveau mot de passe</label>
         <input
           type="password"
           id="password"
@@ -70,7 +70,7 @@
       {/each}
 
       <button type="submit" class="auth-submit" disabled={isFormButtonDisabled}>
-        Save
+        Enregistrer
         <wa-icon name="arrow-right"></wa-icon>
       </button>
     </form>

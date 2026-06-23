@@ -30,14 +30,14 @@
             class="mt-1 block text-primary hover:text-secondary underline underline-offset-2 sm:mt-0 sm:inline"
             onclick={dismissBanner}
           >
-            Learn more
+            En savoir plus
           </a>
         </p>
         <button
           type="button"
           class="shrink-0 rounded p-1 text-neutral-500 transition-colors hover:bg-white/5 hover:text-white"
           onclick={dismissBanner}
-          aria-label="Dismiss banner"
+          aria-label="Masquer la bannière"
         >
           <wa-icon name="xmark"></wa-icon>
         </button>

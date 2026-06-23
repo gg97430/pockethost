@@ -1,64 +1,70 @@
 <script lang="ts">
+  import { browser } from '$app/environment'
+  import { goto } from '$app/navigation'
+  import { page } from '$app/stores'
   import Navbar from '$src/routes/Navbar/Navbar.svelte'
   import VerifyAccountBar from '$components/VerifyAccountBar.svelte'
   import Meta from '$components/guards/Meta.svelte'
+  import ThemeToggle from '$components/ThemeToggle.svelte'
   import '../app.css'
   import '$lib/webawesome'
   import { onMount } from 'svelte'
-  import { init } from '$util/stores'
-  import CookieConsentBanner from '$components/CookieConsentBanner.svelte'
-  import PocketHost30Banner from './PocketHost30Banner.svelte'
+  import { init, isAuthStateInitialized, isUserLoggedIn } from '$util/stores'
+  import { initTheme } from '$lib/theme'
   import MothershipStatus from './MothershipStatus.svelte'
-  import { cloudLogo } from '$lib/brand'
   import { proseCodeBlocks } from '$lib/proseCodeBlocks'
   import a11yDark from 'svelte-highlight/styles/seti-ui'
 
-  const currentYear = new Date().getFullYear()
+  const blockedPublicPrefixes = ['/pricing', '/blog', '/docs', '/support', '/about', '/privacy', '/terms', '/3.0']
 
   onMount(() => {
+    initTheme()
     init()
   })
+
+  $: pathname = $page.url.pathname.replace(/\/$/, '') || '/'
+  $: isAuthOnlyPage = pathname === '/' || pathname === '/login' || pathname.startsWith('/login/')
+  $: isBlockedPublicPage = blockedPublicPrefixes.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+  $: if (browser && $isAuthStateInitialized && isBlockedPublicPage) {
+    goto($isUserLoggedIn ? '/dashboard' : '/login')
+  }
 </script>
 
 <Meta />
 
 <svelte:head>
-  <title>PocketHost</title>
+  <title>Gestion PocketBase</title>
   {@html a11yDark}
 </svelte:head>
 
-<div class="bg-[#111111]">
-  <MothershipStatus />
-  <Navbar />
-  <PocketHost30Banner />
-
-  <div class="px-4 md:px-20">
-    <VerifyAccountBar />
-  </div>
-  <div class="w-full" use:proseCodeBlocks>
-    <slot />
-  </div>
-
-  <footer class="text-white px-4 md:px-20 pt-6 pb-8 text-sm relative z-1 border-t border-neutral-700">
-    <div class="flex flex-col gap-5">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-neutral-500">
-        <div class="flex flex-wrap gap-x-4 gap-y-1">
-          <a href="/privacy" class="hover:text-neutral-300 hover:underline">Privacy</a>
-          <a href="/terms" class="hover:text-neutral-300 hover:underline">Terms</a>
-          <a
-            href="https://status.pockethost.io/"
-            rel="noreferrer"
-            target="_blank"
-            class="hover:text-neutral-300 hover:underline">System Status</a
-          >
-        </div>
-        <div class="sm:text-right">
-          <span>&copy; <span id="year">{currentYear}</span> PocketHost</span>
-          <span class="mx-2 text-neutral-700" aria-hidden="true">·</span>
-          <span>Proudly hacking open source in Reno, NV ❤️</span>
-        </div>
-      </div>
+<div class="app-shell min-h-screen">
+  {#if isAuthOnlyPage && !isBlockedPublicPage}
+    <div class="auth-theme-toggle">
+      <ThemeToggle />
     </div>
-  </footer>
+  {/if}
+
+  {#if !isAuthOnlyPage && !isBlockedPublicPage}
+    <MothershipStatus />
+    <Navbar />
+
+    <div class="px-4 md:px-20">
+      <VerifyAccountBar />
+    </div>
+  {/if}
+
+  {#if !isBlockedPublicPage}
+    <div class="w-full" use:proseCodeBlocks>
+      <slot />
+    </div>
+  {/if}
 </div>
-<CookieConsentBanner />
+
+<style>
+  .auth-theme-toggle {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 50;
+  }
+</style>

@@ -1,81 +1,81 @@
 ---
-title: Getting Started
-description: A step-by-step guide to getting started with PocketHost
+title: Démarrage
+description: Guide pas à pas pour commencer avec PocketHost
 ---
-# Getting Started with PocketHost
+# Démarrer avec PocketHost
 
-Welcome to PocketHost! This guide will help you set up your first PocketBase instance and get you familiar with the basics of our platform. Let's dive in!
+Bienvenue sur PocketHost ! Ce guide vous aide à configurer votre première instance PocketBase et à découvrir les bases de la plateforme.
 
-## 1. Create a PocketHost Account
+## 1. Créer un compte PocketHost
 
-The first step is to create a free account on PocketHost.
+La première étape consiste à créer un compte gratuit sur PocketHost.
 
-- **Sign Up**: Visit [pockethost.io/get-started](https://pockethost.io/get-started).
-- **Email Verification**: Provide a valid email address and verify it through the confirmation email sent to you.
-- **Account Setup**: Complete your profile setup, and you're ready to go!
+- **Inscription** : allez sur [pockethost.io/get-started](https://pockethost.io/get-started).
+- **Vérification email** : fournissez une adresse email valide et validez-la avec l'email de confirmation.
+- **Configuration du compte** : terminez votre profil, puis vous êtes prêt.
 
-_For detailed instructions, see [Account Creation](/docs/account-creation)._
+_Pour les instructions détaillées, consultez [Création de compte](/docs/account-creation)._
 
-## 2. Choose an Instance Name
+## 2. Choisir un nom d'instance
 
-After logging in, you can create a new PocketBase instance.
+Après connexion, vous pouvez créer une nouvelle instance PocketBase.
 
-- **Auto-Assigned Name**: If you prefer, you can let PocketHost assign a random, unique name to your instance.
-- **Custom Name**: You can also choose a custom name that reflects your project or brand.
+- **Nom automatique** : si vous préférez, PocketHost peut attribuer un nom aléatoire et unique à votre instance.
+- **Nom personnalisé** : vous pouvez aussi choisir un nom reflétant votre projet ou votre marque.
 
-**Note**: Instance names must be unique and comply with our naming guidelines.
+**Note** : les noms d'instances doivent être uniques et respecter nos règles de nommage.
 
-_Learn more in [Choosing an Instance Name](#)._
+_En savoir plus dans [Choisir un nom d'instance](#)._
 
-## 3. Accessing the Instance Admin Interface
+## 3. Accéder à l'interface admin de l'instance
 
-Once your instance is created, you can access the PocketBase admin UI.
+Une fois votre instance créée, vous pouvez accéder à l'interface admin PocketBase.
 
-- **Admin URL**: Navigate to `https://<instance>.pockethost.io/_`
-  - Replace `<instance>` with your instance name.
-- **Login**: Use the default admin credentials provided during instance creation.
+- **URL admin** : ouvrez `https://<instance>.pockethost.io/_`
+  - Remplacez `<instance>` par le nom de votre instance.
+- **Connexion** : utilisez les identifiants admin fournis lors de la création de l'instance.
 
-**Example**:
+**Exemple** :
 
 ```plaintext
 https://myapp.pockethost.io/_
 ```
 
-_For more details, visit [Accessing the Admin Interface](#)._
+_Pour plus de détails, consultez [Accéder à l'interface admin](#)._
 
-## 4. Exploring the Instance Dashboard
+## 4. Explorer le dashboard de l'instance
 
-PocketHost provides a user-friendly dashboard to manage your instances.
+PocketHost fournit un dashboard simple pour gérer vos instances.
 
-- **Dashboard Access**: Log in to your PocketHost account and go to the [Dashboard](https://pockethost.io/dashboard).
-- **Instance Management**: From the dashboard, you can:
-  - Start, stop, or restart instances.
-  - View instance status and resource usage.
-  - Configure settings and access logs.
+- **Accès au dashboard** : connectez-vous à votre compte PocketHost et allez au [Dashboard](https://pockethost.io/dashboard).
+- **Gestion des instances** : depuis le dashboard, vous pouvez :
+  - Démarrer, arrêter ou relancer les instances.
+  - Voir l'état des instances et l'utilisation des ressources.
+  - Configurer les paramètres et accéder aux logs.
 
-_See [Using the PocketHost Dashboard](#) for an in-depth guide._
+_Consultez [Utiliser le dashboard PocketHost](#) pour un guide détaillé._
 
-## 5. Managing instance files (SFTP)
+## 5. Gérer les fichiers d'instance (SFTP)
 
-For hooks, migrations, and backups, use **SFTP** with an Ed25519 SSH key.
+Pour les hooks, migrations et sauvegardes, utilisez **SFTP** avec une clé SSH Ed25519.
 
-1. Create a key with `ssh-keygen -t ed25519` and register the public key under **[Account → Keys](/account/keys)**.
-2. Connect to `ftp.pockethost.io` on port **2222** with your email as the username and your private key.
+1. Créez une clé avec `ssh-keygen -t ed25519` et enregistrez la clé publique dans **[Compte → Clés](/account/keys)**.
+2. Connectez-vous à `ftp.pockethost.io` sur le port **2222** avec votre email comme nom d'utilisateur et votre clé privée.
 
-Legacy FTPS on port 21 is deprecated. See **[SFTP File Access](/docs/ftp)** for macOS, Windows, Linux, and client-specific instructions.
+L'ancien FTPS sur le port 21 est déprécié. Consultez **[Accès fichiers SFTP](/docs/ftp)** pour les instructions macOS, Windows, Linux et par client.
 
-For watch-and-deploy from your project directory, use **[phio](/docs/phio)** (`phio link`, `phio dev`, `phio deploy`).
-
----
-
-**Next Steps**:
-
-Now that you're set up, you can start building your application!
-
-- **Configure Your Database**: Set up collections and records in the admin UI.
-- **Integrate with Your App**: Connect your PocketBase instance to your web or mobile application.
-- **Deploy Updates**: Use [phio](/docs/phio), [SFTP](/docs/ftp), or the admin UI to manage your instance files.
+Pour surveiller et déployer depuis votre dossier projet, utilisez **[phio](/docs/phio)** (`phio link`, `phio dev`, `phio deploy`).
 
 ---
 
-_Happy building with PocketHost!_
+**Étapes suivantes** :
+
+Maintenant que tout est prêt, vous pouvez commencer à construire votre application.
+
+- **Configurer votre base** : créez collections et enregistrements dans l'interface admin.
+- **Intégrer votre app** : connectez votre instance PocketBase à votre application web ou mobile.
+- **Déployer des mises à jour** : utilisez [phio](/docs/phio), [SFTP](/docs/ftp) ou l'interface admin pour gérer les fichiers de votre instance.
+
+---
+
+_Bon développement avec PocketHost !_

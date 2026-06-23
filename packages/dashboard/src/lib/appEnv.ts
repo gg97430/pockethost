@@ -6,7 +6,7 @@ import { type InstanceFields, parseBoolean } from 'pockethost/common'
  */
 
 // The apex domain of this whole operation.
-export const PUBLIC_APEX_DOMAIN = import.meta.env.PUBLIC_APEX_DOMAIN || `pockethost.io`
+export const PUBLIC_APEX_DOMAIN = import.meta.env.PUBLIC_APEX_DOMAIN || `monappli.re`
 
 export const PUBLIC_APP_URL = import.meta.env.PUBLIC_APP_URL || `https://${PUBLIC_APEX_DOMAIN}`
 
@@ -15,7 +15,7 @@ export const PUBLIC_HTTP_PROTOCOL = import.meta.env.PUBLIC_HTTP_PROTOCOL || `htt
 
 // The complete URL to the mothership
 export const PUBLIC_MOTHERSHIP_URL =
-  import.meta.env.PUBLIC_MOTHERSHIP_URL || `https://pockethost-central.${PUBLIC_APEX_DOMAIN}`
+  import.meta.env.PUBLIC_MOTHERSHIP_URL || `https://central.${PUBLIC_APEX_DOMAIN}`
 
 // Whether we are in debugging mode - default TRUE
 export const PUBLIC_DEBUG = parseBoolean(import.meta.env.PUBLIC_DEBUG || 'true')
@@ -48,8 +48,8 @@ const instanceHttpProtocol = () => {
  * Helpful alias for generating the URL for a specific instance
  *
  * @example
- *   INSTANCE_URL('my-cool-instance') // https://my-cool-instance.pockethost.io/
- *   INSTANCE_URL('my-cool-instance', 'dashboard') // https://my-cool-instance.pockethost.io/dashboard
+ *   INSTANCE_URL('my-cool-instance') // https://my-cool-instance.monappli.re/
+ *   INSTANCE_URL('my-cool-instance', 'dashboard') // https://my-cool-instance.monappli.re/dashboard
  *
  * @param {string} instance This is the unique instance name
  * @param {string[]} paths This is an optional list of additional paths to append to the instance URL.
@@ -62,7 +62,7 @@ export const INSTANCE_URL = (instance: InstanceFields, ...paths: string[]) => {
  * Helpful alias for generating the URL for a specific instance's admin panel
  *
  * @example
- *   INSTANCE_ADMIN_URL('my-cool-instance') // https://my-cool-instance.pockethost.io/_/
+ *   INSTANCE_ADMIN_URL('my-cool-instance') // https://my-cool-instance.monappli.re/_/
  *
  * @param {string} name This is the unique instance name
  */
@@ -76,7 +76,7 @@ export const SFTP_PORT = 2222
 
 /** Example sftp connect. Replace path with your private key file. */
 export const SFTP_COMMAND = (email: string) => {
-  return `sftp -i ~/.ssh/pockethost_ed25519 -P ${SFTP_PORT} ${email}@${FTP_HOST}`
+  return `sftp -i ~/.ssh/gestion_pocketbase_ed25519 -P ${SFTP_PORT} ${email}@${FTP_HOST}`
 }
 
 /** @deprecated FTPS — use SFTP_COMMAND */

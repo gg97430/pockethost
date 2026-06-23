@@ -88,7 +88,7 @@
     const trimmed = formCname.trim()
 
     if (trimmed && !$isUserPaid) {
-      errorMessage = `Oof, you hit a paywall. This is a Pro feature only. Please <a class='text-primary' href="/account">upgrade your account.</a>`
+      errorMessage = `Vous avez atteint une limite. Cette fonctionnalité est réservée à l'offre Pro. Veuillez <a class='text-primary' href="/account">changer d'offre.</a>`
       return
     }
 
@@ -96,7 +96,7 @@
     errorMessage = ``
 
     if (trimmed.length > 0 && !regex.test(trimmed)) {
-      errorMessage = `Must be a valid domain (subdomain optional)`
+      errorMessage = `Le domaine doit être valide (sous-domaine facultatif)`
       isButtonDisabled = false
       return
     }
@@ -108,7 +108,7 @@
       },
     }).catch((error) => {
       if (error.response?.data?.cname?.code === 'validation_not_unique') {
-        errorMessage = `This domain is already in use. Please use a different domain.`
+        errorMessage = `Ce domaine est déjà utilisé. Veuillez utiliser un autre domaine.`
       } else {
         errorMessage = error.data.message
       }
@@ -119,26 +119,26 @@
 </script>
 
 <FeatureTab
-  title="Custom Domain (CNAME)"
+  title="Domaine personnalisé (CNAME)"
   documentation="/docs/custom-domain"
-  powerOffAction="change the custom domain"
+  powerOffAction="modifier le domaine personnalisé"
   {errorMessage}
 >
   <svelte:fragment slot="summary">
-    <p>Point a CNAME at your DNS provider to your PocketHost instance hostname.</p>
+    <p>Faites pointer un CNAME chez votre fournisseur DNS vers le nom d'hôte de votre instance.</p>
   </svelte:fragment>
 
   <svelte:fragment slot="alerts">
     {#if cnameToCheck}
       {#if domainHealthy}
-        <AlertBar message="Your custom domain name is active." type="success" />
+        <AlertBar message="Votre domaine personnalisé est actif." type="success" />
       {:else if domainHealthy === false}
         <AlertBar
-          message="We are having trouble checking the health of your custom domain name. Check your CNAME settings and try again."
+          message="Nous n'arrivons pas à vérifier l'état de votre domaine personnalisé. Vérifiez vos paramètres CNAME puis réessayez."
           type="warning"
         />
       {:else if domainHealthy === null}
-        <AlertBar message="Checking health of your custom domain name..." type="info" />
+        <AlertBar message="Vérification de l'état de votre domaine personnalisé..." type="info" />
       {/if}
     {/if}
   </svelte:fragment>
@@ -146,7 +146,7 @@
   <form class="flex rename-instance-form-container-query gap-4" onsubmit={onRename}>
     <div class="relative flex-1">
       <wa-input
-        title="Only valid domain name patterns are allowed"
+        title="Seuls les formats de domaine valides sont autorisés"
         type="text"
         value={formCname}
         oninput={(e: Event) => (formCname = (e.currentTarget as HTMLInputElement).value)}
@@ -166,7 +166,7 @@
       {/if}
     </div>
 
-    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}>Update Custom Domain</wa-button
+    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}>Mettre à jour le domaine</wa-button
     >
   </form>
 

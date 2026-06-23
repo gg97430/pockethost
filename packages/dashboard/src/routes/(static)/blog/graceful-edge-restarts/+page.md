@@ -1,54 +1,54 @@
-During the [Mothership v0.39 cutover](/blog/mothership-pocketbase-v039), I was restarting edge daemons more often than usual. BetterStack showed a few minutes of blips. For most requests that meant a slow page, not a broken one.
+Pendant la [bascule Mothership v0.39](/blog/mothership-pocketbase-v039), je redémarrais les daemons edge plus souvent que d'habitude. BetterStack affichait quelques minutes de micro-coupures. Pour la plupart des requêtes, cela voulait dire une page lente, pas une page cassée.
 
-For some of you it meant **500 errors**. A customer told me plainly: when PocketHost hiccuped, their whole frontend went down with it. That is a fair complaint even when the outage is short and "planned."
+Pour certains d'entre vous, cela voulait dire des **erreurs 500**. Un client me l'a dit franchement : quand PocketHost avait un à-coup, tout son frontend tombait avec. C'est une remarque légitime, même quand l'interruption est courte et "prévue".
 
-I shipped two changes the same afternoon. Together they cut the pain way down.
+J'ai livré deux changements le même après-midi. Ensemble, ils réduisent fortement la douleur.
 
-### What was going wrong
+### Ce qui n'allait pas
 
-Every hosted instance runs in Docker on an **edge** node. The **firewall** sits in front and proxies traffic to the edge daemon, which routes requests to the right container.
+Chaque instance hébergée tourne dans Docker sur un noeud **edge**. Le **firewall** est devant et proxifie le trafic vers le daemon edge, qui route les requêtes vers le bon conteneur.
 
-When I recycled the edge daemon during the migration, two bad things happened in sequence:
+Quand je recyclais le daemon edge pendant la migration, deux mauvaises choses se produisaient à la suite :
 
-1. The firewall lost its upstream immediately. Open connections failed fast. Your app saw a hard error instead of a brief wait.
-2. The old daemon shut down by **stopping every running container**, then booted and **cold-started** them again. That added extra churn on top of the restart itself.
+1. Le firewall perdait immédiatement son upstream. Les connexions ouvertes échouaient vite. Votre app voyait une erreur dure au lieu d'une courte attente.
+2. L'ancien daemon s'arrêtait en **stoppant tous les conteneurs actifs**, puis redémarrait et les **relançait à froid**. Cela ajoutait du mouvement inutile au redémarrage lui-même.
 
-Monitoring tools and uptime checks were mostly right. The user experience was worse than the graphs suggested.
+Les outils de monitoring et les checks d'uptime avaient globalement raison. L'expérience utilisateur était pire que ce que les graphiques suggéraient.
 
-### Fix 1: hold traffic at the firewall
+### Correctif 1 : retenir le trafic au niveau du firewall
 
-The firewall now treats a momentarily unavailable edge daemon like a subsystem reboot, not a fatal error.
+Le firewall traite maintenant un daemon edge momentanément indisponible comme un redémarrage de sous-système, pas comme une erreur fatale.
 
-Before proxying instance traffic, it polls `/_api/daemon/health` on the edge. If the daemon is still starting or reconciling after a restart, the firewall **holds the request** and retries every 500ms, for up to **60 seconds** by default.
+Avant de proxifier le trafic d'instance, il interroge `/_api/daemon/health` sur l'edge. Si le daemon démarre encore ou réconcilie son état après un redémarrage, le firewall **retient la requête** et réessaie toutes les 500 ms, jusqu'à **60 secondes** par défaut.
 
-From your app's point of view, that usually feels like a slow load, not an instant 500. Browsers and HTTP clients wait. BetterStack may still flag a blip if the hold runs long, but your users often never see a broken page.
+Du point de vue de votre app, cela ressemble généralement à un chargement lent, pas à un 500 instantané. Les navigateurs et clients HTTP attendent. BetterStack peut encore signaler une micro-coupure si l'attente dure longtemps, mais vos utilisateurs ne voient souvent jamais de page cassée.
 
-If the edge still is not ready after the grace window, you get a **503** with `Retry-After: 5` and a plain message that the hosting daemon is restarting. That is intentional downtime signaling, not an opaque proxy failure.
+Si l'edge n'est toujours pas prêt après la fenêtre de grâce, vous recevez un **503** avec `Retry-After: 5` et un message simple indiquant que le daemon d'hébergement redémarre. C'est un signal d'indisponibilité volontaire, pas une erreur proxy opaque.
 
-Health probe paths bypass the grace period so external monitors can still see the edge boot sequence accurately.
+Les chemins de health probe contournent la période de grâce afin que les moniteurs externes voient toujours correctement la séquence de démarrage de l'edge.
 
-Self-hosters can tune this with `PH_FIREWALL_DAEMON_GRACE_MS` (default `60000`) and `PH_FIREWALL_DAEMON_GRACE_RETRY_MS` (default `500`). Set grace to `0` to disable it.
+Les auto-hébergeurs peuvent régler ce comportement avec `PH_FIREWALL_DAEMON_GRACE_MS` (défaut `60000`) et `PH_FIREWALL_DAEMON_GRACE_RETRY_MS` (défaut `500`). Mettez la grâce à `0` pour la désactiver.
 
-### Fix 2: keep instance containers running
+### Correctif 2 : garder les conteneurs d'instance en marche
 
-The second fix is on the edge itself.
+Le second correctif est côté edge.
 
-When the daemon receives SIGTERM, it used to shut down every managed PocketBase container before exiting. On boot it had to spawn them all again. That was safe, but wasteful during routine daemon restarts.
+Quand le daemon recevait SIGTERM, il arrêtait auparavant tous les conteneurs PocketBase gérés avant de quitter. Au démarrage suivant, il devait tous les relancer. C'était sûr, mais coûteux pendant les redémarrages routiniers du daemon.
 
-Now the daemon **detaches** instead. Docker containers keep running under their instance ID names. When the daemon comes back, it **reconciles** what is already running: adopt warm containers, stop orphans, and respect `power` and version mismatches. Only then does it mark traffic ready and report `{ status: 'ok' }` on the health endpoint.
+Maintenant, le daemon se **détache**. Les conteneurs Docker continuent de tourner sous leurs noms d'ID d'instance. Quand le daemon revient, il **réconcilie** ce qui tourne déjà : adoption des conteneurs chauds, arrêt des orphelins et respect de `power` et des différences de version. Ensuite seulement il marque le trafic prêt et renvoie `{ status: 'ok' }` sur l'endpoint de santé.
 
-Warm instances often never notice the daemon recycled at all.
+Les instances chaudes ne remarquent souvent même pas que le daemon a été recyclé.
 
-### What you should notice
+### Ce que vous devriez remarquer
 
-- Short edge maintenance during platform work should feel like latency, not a site-wide 500.
-- Instances that were already running should come back faster after a daemon restart.
-- If something is genuinely broken for more than a minute, you still get a clear 503, not a mystery error from your frontend framework.
+- Une courte maintenance edge pendant les travaux plateforme devrait ressembler à de la latence, pas à un 500 global.
+- Les instances déjà actives devraient revenir plus vite après un redémarrage de daemon.
+- Si quelque chose est réellement cassé pendant plus d'une minute, vous obtenez toujours un 503 clair, pas une erreur mystérieuse venant de votre framework frontend.
 
-This is not zero downtime. I am still one person rolling a big migration. There will be blips. The goal was to stop turning a ten-second engine-room restart into a user-visible catastrophe.
+Ce n'est pas du zéro downtime. Je reste une seule personne qui déploie une grosse migration. Il y aura des micro-coupures. L'objectif était d'éviter qu'un redémarrage interne de dix secondes devienne une catastrophe visible par vos utilisateurs.
 
-### A note on frontend resilience
+### Une note sur la résilience frontend
 
-Decoupling your frontend from backend availability is still good practice. A friendly "be right back" page beats any 503. PocketHost should not make that necessary for a routine daemon recycle though. These changes are me owning the hosting side of that bargain.
+Découpler votre frontend de la disponibilité backend reste une bonne pratique. Une page "on revient vite" vaut mieux que n'importe quel 503. PocketHost ne devrait toutefois pas rendre cela nécessaire pour un simple recyclage de daemon. Ces changements sont ma part du contrat côté hébergement.
 
-If you saw 500s during the v0.39 rollout and have not since, this is probably why. Questions or a regression? [Discord](https://discord.gg/nVTxCMEcGT) as always.
+Si vous avez vu des 500 pendant le déploiement v0.39 et plus depuis, c'est probablement pour cette raison. Questions ou régression ? [Discord](https://discord.gg/nVTxCMEcGT), comme toujours.

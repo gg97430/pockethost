@@ -1,0 +1,748 @@
+<script lang="ts">
+  import { client, type OperatorAdminOverview, type OperatorSettings, type OperatorUser } from '$src/pocketbase-client'
+  import { userStore } from '$util/stores'
+
+  type UserDraft = {
+    email: string
+    password: string
+    verified: boolean
+    superAdmin: boolean
+    subscription: string
+    subscription_quantity: number
+    suspension: string
+  }
+
+  const subscriptionOptions = ['free', 'premium', 'founder', 'flounder', 'legacy']
+
+  let hasLoaded = false
+  let isLoading = false
+  let isSavingSettings = false
+  let isCreatingUser = false
+  let savingUserId = ''
+  let errorMessage = ''
+  let successMessage = ''
+  let searchQuery = ''
+  let overview: OperatorAdminOverview | undefined
+  let settings: OperatorSettings | undefined
+  let users: OperatorUser[] = []
+  let userDrafts: Record<string, UserDraft> = {}
+  let newUser: UserDraft = {
+    email: '',
+    password: '',
+    verified: true,
+    superAdmin: false,
+    subscription: 'free',
+    subscription_quantity: 250,
+    suspension: '',
+  }
+
+  $: canAccessAdmin = !!$userStore?.superAdmin
+  $: if (canAccessAdmin && !hasLoaded) {
+    hasLoaded = true
+    loadAdmin()
+  }
+
+  $: filteredUsers = users.filter((user) => {
+    const target = `${user.email} ${user.username} ${user.suspension}`.toLowerCase()
+    return target.includes(searchQuery.toLowerCase())
+  })
+
+  const applyOverview = (next: OperatorAdminOverview) => {
+    overview = next
+    settings = { ...next.settings }
+    users = next.users
+    userDrafts = Object.fromEntries(users.map((user) => [user.id, toUserDraft(user)]))
+    newUser = {
+      ...newUser,
+      verified: next.settings.autoVerifyUsers,
+      subscription: next.settings.defaultSubscription,
+      subscription_quantity: next.settings.defaultUserQuota,
+    }
+  }
+
+  const toUserDraft = (user: OperatorUser): UserDraft => ({
+    email: user.email,
+    password: '',
+    verified: user.verified,
+    superAdmin: user.superAdmin,
+    subscription: user.subscription || 'free',
+    subscription_quantity: user.subscription_quantity,
+    suspension: user.suspension || '',
+  })
+
+  const showError = (error: unknown) => {
+    const message = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+    errorMessage = message || 'Erreur inconnue'
+    successMessage = ''
+  }
+
+  const showSuccess = (message: string) => {
+    successMessage = message
+    errorMessage = ''
+  }
+
+  async function loadAdmin() {
+    isLoading = true
+    errorMessage = ''
+    try {
+      applyOverview(await client().getOperatorAdminOverview())
+    } catch (error) {
+      showError(error)
+    } finally {
+      isLoading = false
+    }
+  }
+
+  async function createUser(event: SubmitEvent) {
+    event.preventDefault()
+    isCreatingUser = true
+    try {
+      const { user } = await client().createOperatorUser(newUser)
+      users = [user, ...users]
+      userDrafts = { ...userDrafts, [user.id]: toUserDraft(user) }
+      overview = overview
+        ? {
+            ...overview,
+            stats: {
+              ...overview.stats,
+              totalUsers: overview.stats.totalUsers + 1,
+              verifiedUsers: overview.stats.verifiedUsers + (user.verified ? 1 : 0),
+              superAdmins: overview.stats.superAdmins + (user.superAdmin ? 1 : 0),
+              suspendedUsers: overview.stats.suspendedUsers + (user.suspension ? 1 : 0),
+            },
+          }
+        : overview
+      newUser = {
+        email: '',
+        password: '',
+        verified: settings?.autoVerifyUsers ?? true,
+        superAdmin: false,
+        subscription: settings?.defaultSubscription ?? 'free',
+        subscription_quantity: settings?.defaultUserQuota ?? 250,
+        suspension: '',
+      }
+      showSuccess('Compte cree.')
+    } catch (error) {
+      showError(error)
+    } finally {
+      isCreatingUser = false
+    }
+  }
+
+  async function saveUser(userId: string) {
+    savingUserId = userId
+    try {
+      const draft = userDrafts[userId]
+      if (!draft) throw new Error('Brouillon utilisateur introuvable.')
+      const payload = {
+        ...draft,
+        password: draft.password.trim() ? draft.password : undefined,
+      }
+      const { user } = await client().updateOperatorUser(userId, payload)
+      users = users.map((item) => (item.id === user.id ? user : item))
+      userDrafts = { ...userDrafts, [user.id]: toUserDraft(user) }
+      showSuccess('Utilisateur mis a jour.')
+      await loadAdmin()
+    } catch (error) {
+      showError(error)
+    } finally {
+      savingUserId = ''
+    }
+  }
+
+  async function saveSettings(event: SubmitEvent) {
+    event.preventDefault()
+    if (!settings) return
+    isSavingSettings = true
+    try {
+      const result = await client().updateOperatorSettings(settings)
+      settings = result.settings
+      showSuccess('Parametres enregistres.')
+    } catch (error) {
+      showError(error)
+    } finally {
+      isSavingSettings = false
+    }
+  }
+</script>
+
+<svelte:head>
+  <title>Administration - Gestion PocketBase</title>
+</svelte:head>
+
+{#if !canAccessAdmin}
+  <section class="admin-forbidden">
+    <wa-icon name="shield-halved"></wa-icon>
+    <h1>Acces superadmin requis</h1>
+    <p>Ce backoffice est reserve aux comptes operateurs.</p>
+  </section>
+{:else}
+  <header class="admin-head">
+    <div>
+      <h1>Administration</h1>
+      <p>Utilisateurs, quotas et parametres operateur.</p>
+    </div>
+    <button class="admin-icon-btn" type="button" onclick={loadAdmin} aria-label="Rafraichir" disabled={isLoading}>
+      <wa-icon name="rotate"></wa-icon>
+    </button>
+  </header>
+
+  {#if errorMessage}
+    <wa-callout variant="danger" class="admin-callout">
+      <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+      <span>{errorMessage}</span>
+    </wa-callout>
+  {/if}
+
+  {#if successMessage}
+    <wa-callout variant="success" class="admin-callout">
+      <wa-icon slot="icon" name="circle-check"></wa-icon>
+      <span>{successMessage}</span>
+    </wa-callout>
+  {/if}
+
+  {#if isLoading && !overview}
+    <div class="admin-loading">Chargement...</div>
+  {:else if overview && settings}
+    <section class="admin-kpis" aria-label="Indicateurs backoffice">
+      <div class="admin-kpi">
+        <span>Utilisateurs</span>
+        <strong>{overview.stats.totalUsers}</strong>
+      </div>
+      <div class="admin-kpi">
+        <span>Verifies</span>
+        <strong>{overview.stats.verifiedUsers}</strong>
+      </div>
+      <div class="admin-kpi">
+        <span>Instances</span>
+        <strong>{overview.stats.totalInstances}</strong>
+      </div>
+      <div class="admin-kpi">
+        <span>Superadmins</span>
+        <strong>{overview.stats.superAdmins}</strong>
+      </div>
+    </section>
+
+    <section class="admin-grid">
+      <form class="admin-panel admin-create" onsubmit={createUser}>
+        <div class="admin-panel-head">
+          <h2>Nouveau compte</h2>
+        </div>
+        <label>
+          Email
+          <input type="email" bind:value={newUser.email} required autocomplete="off" />
+        </label>
+        <label>
+          Mot de passe
+          <input type="password" bind:value={newUser.password} required minlength="8" autocomplete="new-password" />
+        </label>
+        <div class="admin-form-row">
+          <label>
+            Offre
+            <select bind:value={newUser.subscription}>
+              {#each subscriptionOptions as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            Quota
+            <input type="number" min="0" step="1" bind:value={newUser.subscription_quantity} />
+          </label>
+        </div>
+        <div class="admin-checks">
+          <label><input type="checkbox" bind:checked={newUser.verified} /> Verifie</label>
+          <label><input type="checkbox" bind:checked={newUser.superAdmin} /> Superadmin</label>
+        </div>
+        <label>
+          Suspension
+          <input type="text" bind:value={newUser.suspension} placeholder="vide = actif" />
+        </label>
+        <button class="admin-primary-btn" type="submit" disabled={isCreatingUser}>
+          <wa-icon name="user-plus"></wa-icon>
+          {isCreatingUser ? 'Creation...' : 'Creer le compte'}
+        </button>
+      </form>
+
+      <form class="admin-panel admin-settings" onsubmit={saveSettings}>
+        <div class="admin-panel-head">
+          <h2>Parametres</h2>
+        </div>
+        <div class="admin-checks admin-checks--grid">
+          <label><input type="checkbox" bind:checked={settings.publicSignupEnabled} /> Inscription publique</label>
+          <label><input type="checkbox" bind:checked={settings.autoVerifyUsers} /> Verification auto</label>
+          <label><input type="checkbox" bind:checked={settings.defaultInstancePower} /> Instances actives</label>
+          <label><input type="checkbox" bind:checked={settings.defaultInstanceDevMode} /> Mode dev</label>
+          <label><input type="checkbox" bind:checked={settings.defaultSyncAdmin} /> Synchro admin</label>
+          <label><input type="checkbox" bind:checked={settings.defaultAutoVacuum} /> Nettoyage auto</label>
+        </div>
+        <div class="admin-form-row">
+          <label>
+            Quota par defaut
+            <input type="number" min="0" step="1" bind:value={settings.defaultUserQuota} />
+          </label>
+          <label>
+            Offre par defaut
+            <select bind:value={settings.defaultSubscription}>
+              {#each subscriptionOptions as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+        <label>
+          Email support
+          <input type="email" bind:value={settings.supportEmail} placeholder="support@monappli.re" />
+        </label>
+        <label>
+          Message maintenance
+          <textarea rows="2" bind:value={settings.maintenanceMessage}></textarea>
+        </label>
+        <label>
+          Notes internes
+          <textarea rows="3" bind:value={settings.notes}></textarea>
+        </label>
+        <button class="admin-primary-btn" type="submit" disabled={isSavingSettings}>
+          <wa-icon name="floppy-disk"></wa-icon>
+          {isSavingSettings ? 'Enregistrement...' : 'Enregistrer'}
+        </button>
+      </form>
+    </section>
+
+    <section class="admin-panel admin-users">
+      <div class="admin-users-toolbar">
+        <div>
+          <h2>Comptes utilisateurs</h2>
+          <p>{filteredUsers.length} affiche{filteredUsers.length > 1 ? 's' : ''}</p>
+        </div>
+        <label class="admin-search">
+          <wa-icon name="magnifying-glass"></wa-icon>
+          <input type="search" bind:value={searchQuery} placeholder="Rechercher..." />
+        </label>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Quota</th>
+              <th>Etat</th>
+              <th>Role</th>
+              <th>Instances</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each filteredUsers as user (user.id)}
+              {@const draft = userDrafts[user.id]}
+              {#if draft}
+                <tr>
+                  <td>
+                    <input class="admin-table-input admin-table-input--email" type="email" bind:value={draft.email} />
+                    <input
+                      class="admin-table-input"
+                      type="password"
+                      bind:value={draft.password}
+                      placeholder="nouveau mot de passe"
+                    />
+                  </td>
+                  <td>
+                    <input
+                      class="admin-table-input admin-table-input--number"
+                      type="number"
+                      min="0"
+                      step="1"
+                      bind:value={draft.subscription_quantity}
+                    />
+                    <select class="admin-table-input" bind:value={draft.subscription}>
+                      {#each subscriptionOptions as option}
+                        <option value={option}>{option}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td>
+                    <label class="admin-inline-check">
+                      <input type="checkbox" bind:checked={draft.verified} />
+                      Verifie
+                    </label>
+                    <input
+                      class="admin-table-input"
+                      type="text"
+                      bind:value={draft.suspension}
+                      placeholder="suspension"
+                    />
+                  </td>
+                  <td>
+                    <label class="admin-inline-check">
+                      <input type="checkbox" bind:checked={draft.superAdmin} />
+                      Superadmin
+                    </label>
+                  </td>
+                  <td>
+                    <span class="admin-instance-count">{user.instanceCount}</span>
+                  </td>
+                  <td class="admin-table-actions">
+                    <button
+                      class="admin-secondary-btn"
+                      type="button"
+                      onclick={() => saveUser(user.id)}
+                      disabled={savingUserId === user.id}
+                    >
+                      <wa-icon name="floppy-disk"></wa-icon>
+                      {savingUserId === user.id ? '...' : 'OK'}
+                    </button>
+                  </td>
+                </tr>
+              {/if}
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {/if}
+{/if}
+
+<style>
+  .admin-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .admin-head h1,
+  .admin-panel h2,
+  .admin-users-toolbar h2 {
+    margin: 0;
+    color: var(--app-text-strong);
+  }
+
+  .admin-head h1 {
+    font-size: 1.875rem;
+    font-weight: 750;
+  }
+
+  .admin-head p,
+  .admin-users-toolbar p {
+    margin: 0.35rem 0 0;
+    color: var(--app-text-muted);
+    font-size: 0.875rem;
+  }
+
+  .admin-callout {
+    margin-bottom: 1rem;
+  }
+
+  .admin-forbidden,
+  .admin-loading {
+    display: grid;
+    place-items: center;
+    min-height: 22rem;
+    text-align: center;
+    color: var(--app-text-muted);
+  }
+
+  .admin-forbidden wa-icon {
+    margin-bottom: 1rem;
+    font-size: 2rem;
+    color: #1eb854;
+  }
+
+  .admin-forbidden h1 {
+    margin: 0;
+    color: var(--app-text-strong);
+    font-size: 1.25rem;
+  }
+
+  .admin-forbidden p {
+    margin: 0.5rem 0 0;
+  }
+
+  .admin-icon-btn,
+  .admin-primary-btn,
+  .admin-secondary-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .admin-icon-btn {
+    width: 2.25rem;
+    height: 2.25rem;
+    background: var(--app-surface);
+    color: var(--app-text);
+    border-color: var(--app-border);
+  }
+
+  .admin-primary-btn {
+    min-height: 2.5rem;
+    padding: 0 1rem;
+    background: #1eb854;
+    color: #ffffff;
+    box-shadow: 0 12px 24px rgb(30 184 84 / 0.18);
+  }
+
+  .admin-secondary-btn {
+    min-height: 2rem;
+    padding: 0 0.65rem;
+    background: var(--app-surface-soft);
+    border-color: var(--app-border);
+    color: var(--app-text-strong);
+  }
+
+  button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+
+  .admin-kpis {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .admin-kpi,
+  .admin-panel {
+    border: 1px solid var(--app-border);
+    border-radius: 0.5rem;
+    background: var(--app-surface);
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .admin-kpi {
+    padding: 1rem;
+  }
+
+  .admin-kpi span {
+    display: block;
+    color: var(--app-text-muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .admin-kpi strong {
+    display: block;
+    margin-top: 0.4rem;
+    color: var(--app-text-strong);
+    font-size: 1.75rem;
+    line-height: 1;
+  }
+
+  .admin-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .admin-panel {
+    padding: 1rem;
+  }
+
+  .admin-panel-head {
+    margin-bottom: 1rem;
+  }
+
+  .admin-panel h2,
+  .admin-users-toolbar h2 {
+    font-size: 1rem;
+    font-weight: 750;
+  }
+
+  .admin-panel label {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--app-text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  .admin-panel input,
+  .admin-panel select,
+  .admin-panel textarea,
+  .admin-search input,
+  .admin-table-input {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--app-border);
+    border-radius: 0.45rem;
+    background: var(--app-surface-strong);
+    color: var(--app-text-strong);
+    font-size: 0.875rem;
+    outline: none;
+  }
+
+  .admin-panel input,
+  .admin-panel select,
+  .admin-panel textarea {
+    padding: 0.62rem 0.7rem;
+  }
+
+  .admin-panel textarea {
+    resize: vertical;
+  }
+
+  .admin-create,
+  .admin-settings {
+    display: grid;
+    align-content: start;
+    gap: 0.8rem;
+  }
+
+  .admin-form-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .admin-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .admin-checks--grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-checks label,
+  .admin-inline-check {
+    display: inline-flex;
+    grid-template-columns: unset;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--app-text);
+    font-size: 0.8125rem;
+    font-weight: 650;
+  }
+
+  .admin-checks input,
+  .admin-inline-check input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: #1eb854;
+  }
+
+  .admin-users {
+    margin-bottom: 2rem;
+  }
+
+  .admin-users-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .admin-search {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: min(100%, 18rem);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--app-border);
+    border-radius: 0.5rem;
+    background: var(--app-surface-strong);
+    color: var(--app-text-faint);
+  }
+
+  .admin-search input {
+    border: none;
+    padding: 0;
+    background: transparent;
+  }
+
+  .admin-table-wrap {
+    overflow-x: auto;
+  }
+
+  .admin-table {
+    width: 100%;
+    min-width: 58rem;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+
+  .admin-table th {
+    padding: 0.65rem 0.75rem;
+    border-bottom: 1px solid var(--app-border);
+    background: var(--app-surface-soft);
+    color: var(--app-text-muted);
+    font-size: 0.68rem;
+    font-weight: 750;
+    letter-spacing: 0.06em;
+    text-align: left;
+    text-transform: uppercase;
+  }
+
+  .admin-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--app-border);
+    vertical-align: top;
+  }
+
+  .admin-table-input {
+    display: block;
+    margin-bottom: 0.45rem;
+    padding: 0.48rem 0.55rem;
+  }
+
+  .admin-table-input--email {
+    min-width: 15rem;
+  }
+
+  .admin-table-input--number {
+    max-width: 7rem;
+  }
+
+  .admin-inline-check {
+    margin-bottom: 0.55rem;
+  }
+
+  .admin-instance-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    background: rgb(30 184 84 / 0.13);
+    color: #15803d;
+    font-weight: 800;
+  }
+
+  .admin-table-actions {
+    text-align: right;
+  }
+
+  @media (min-width: 768px) {
+    .admin-kpis {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .admin-grid {
+      grid-template-columns: minmax(18rem, 0.85fr) minmax(24rem, 1.15fr);
+    }
+
+    .admin-form-row {
+      grid-template-columns: 1fr 0.7fr;
+    }
+  }
+</style>

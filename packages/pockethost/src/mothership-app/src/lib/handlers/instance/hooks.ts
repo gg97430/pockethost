@@ -15,6 +15,54 @@ routerAdd(
   $apis.requireAuth()
 )
 routerAdd(
+  'POST',
+  '/api/instance/{id}/duplicate',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceDuplicate(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/backups',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupCreate(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/backups',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupsList(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/backups/{backupId}/download',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupDownload(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'DELETE',
+  '/api/instance/{id}/backups/{backupId}',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupDelete(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/backups/{backupId}/restore',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupRestore(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
   'DELETE',
   '/api/instance/{id}',
   (e) => {

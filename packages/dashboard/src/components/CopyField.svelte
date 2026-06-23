@@ -28,7 +28,7 @@
   </div>
 
   <Clipboard {text} let:copy on:copy={handleCopy}>
-    <button type="button" class="copy-field-icon" onclick={copy} aria-label={isCopied ? 'Copied' : 'Copy to clipboard'}>
+    <button type="button" class="copy-field-icon" onclick={copy} aria-label={isCopied ? 'Copié' : 'Copier'}>
       <wa-icon name={isCopied ? 'check' : 'copy'}></wa-icon>
     </button>
   </Clipboard>

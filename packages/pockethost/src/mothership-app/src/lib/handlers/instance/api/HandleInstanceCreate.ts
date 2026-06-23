@@ -1,5 +1,6 @@
 import { mkLog } from '$util/Logger'
 import { listVersions } from '$util/versions'
+import { readOperatorSettings } from '../../operatorAdmin/operatorSettings'
 
 export const HandleInstanceCreate = (e: core.RequestEvent) => {
   const log = mkLog(`POST:instance`)
@@ -7,7 +8,7 @@ export const HandleInstanceCreate = (e: core.RequestEvent) => {
   log(`authRecord`, JSON.stringify(authRecord))
 
   if (!authRecord) {
-    throw new Error(`Expected authRecord here`)
+    throw new Error(`Session utilisateur attendue`)
   }
 
   log(`TOP OF POST`)
@@ -26,23 +27,24 @@ export const HandleInstanceCreate = (e: core.RequestEvent) => {
   data = JSON.parse(JSON.stringify(data))
 
   const { subdomain, version } = data
+  const settings = readOperatorSettings()
 
   log(`vars`, JSON.stringify({ subdomain }))
 
   if (!subdomain) {
-    throw new BadRequestError(`Subdomain is required when creating an instance.`)
+    throw new BadRequestError(`Le sous-domaine est obligatoire pour créer une instance.`)
   }
 
   const collection = $app.findCollectionByNameOrId('instances')
   const record = new Record(collection)
   record.set('uid', authRecord.id)
   record.set('subdomain', subdomain)
-  record.set('power', true)
+  record.set('power', settings.defaultInstancePower)
   record.set('status', 'idle')
   record.set('version', version)
-  record.set('dev', true)
-  record.set('syncAdmin', true)
-  record.set('autoVacuum', true)
+  record.set('dev', settings.defaultInstanceDevMode)
+  record.set('syncAdmin', settings.defaultSyncAdmin)
+  record.set('autoVacuum', settings.defaultAutoVacuum)
 
   $app.save(record)
 

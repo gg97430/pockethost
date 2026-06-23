@@ -11,38 +11,38 @@
   const features = [
     {
       icon: 'database',
-      title: 'Database',
+      title: 'Base de données',
       description:
-        'Your PocketHost instance is powered by its own internal SQLite instance. SQLite is more performant than mySQL or Postgres and is perfect for powering your next app.',
+        'Votre instance PocketHost s’appuie sur sa propre base SQLite interne. SQLite est très performante et parfaite pour propulser votre prochaine application.',
     },
     {
       icon: 'lock',
       title: 'Auth',
-      description: 'Email and oAuth authentication options work out of the box for your app users.',
+      description: "Les options d'authentification email et OAuth fonctionnent immédiatement pour les utilisateurs de votre app.",
     },
     {
       icon: 'cloud',
-      title: 'Cloud Functions',
+      title: 'Fonctions cloud',
       description:
-        'Run your own custom code on PocketHost with our cloud functions. Use the JS Client to call your functions from your frontend.',
+        'Exécutez votre propre code sur PocketHost avec nos fonctions cloud. Utilisez le client JS pour appeler vos fonctions depuis votre frontend.',
     },
     {
       icon: 'link',
-      title: 'Custom Domain',
+      title: 'Domaine personnalisé',
       description:
-        'Point your own domain at your PocketHost instance. SSL provisioning and verification are handled automatically.',
+        'Faites pointer votre propre domaine vers votre instance PocketHost. Le provisionnement SSL et la vérification sont gérés automatiquement.',
     },
     {
       icon: 'download',
       title: 'Self-host',
       description:
-        "When you're ready to take your project in-house, download your full instance via SFTP and run PocketBase on your own hardware.",
+        'Quand vous êtes prêt à internaliser votre projet, téléchargez votre instance complète via SFTP et lancez PocketBase sur votre propre infrastructure.',
     },
     {
       icon: 'bolt',
-      title: 'Zero Config',
+      title: 'Zéro config',
       description:
-        'With PocketHost, batteries are included. You get a database, SSL, authentication, cloud functions, SFTP access, and high concurrency all in one stop.',
+        "Avec PocketHost, tout est inclus : base de données, SSL, authentification, fonctions cloud, accès SFTP et forte concurrence au même endroit.",
     },
   ]
 
@@ -60,7 +60,7 @@
 
   const fetchStars = async () => {
     const res = await fetch('https://api.github.com/repos/pockethost/pockethost')
-    if (!res.ok) throw new Error('Failed to fetch GitHub stars')
+    if (!res.ok) throw new Error('Impossible de récupérer les étoiles GitHub')
     const data = await res.json()
     if (typeof data.stargazers_count === 'number' && Number.isFinite(data.stargazers_count)) {
       stars.set(data.stargazers_count)
@@ -69,7 +69,7 @@
 
   const fetchUptime = async () => {
     const res = await fetch('https://status.pockethost.io/index.json')
-    if (!res.ok) throw new Error('Failed to fetch status page')
+    if (!res.ok) throw new Error('Impossible de récupérer la page de statut')
     const data = await res.json()
     const availabilities = (data.included ?? [])
       .filter((item: { type: string }) => item.type === 'status_page_resource')
@@ -83,7 +83,7 @@
 
   const fetchStats = async () => {
     const res = await fetch(`${PUBLIC_MOTHERSHIP_URL}/stats.json`)
-    if (!res.ok) throw new Error('Failed to fetch platform stats')
+    if (!res.ok) throw new Error('Impossible de récupérer les statistiques de la plateforme')
     const data = await res.json()
     if (typeof data.developers === 'number' && Number.isFinite(data.developers)) {
       developers.set(data.developers)
@@ -102,17 +102,17 @@
   <div class="relative w-full text-white p-8 lg:px-16 flex flex-col h-[85vh] md:h-[70vh] items-center justify-center">
     <div class="flex flex-col items-center z-10 relative">
       <h1 class="text-5xl max-w-4xl md:text-6xl text-center fade-up">
-        PocketBase Hosting, <span class="font-bold">Simplified</span>
+        Hébergement PocketBase, <span class="font-bold">simplifié</span>
       </h1>
 
       <p class="text-xl w-2/3 md:w-1/2 text-center font-light mb-10 mt-4 text-white/60 fade-up animation-delay-250">
-        No server configs. No downtime. Just build.
+        Pas de configuration serveur. Pas d'interruption. Construisez.
       </p>
 
       <AuthStateGuard>
         <div slot="loading">
           <PrimaryButton
-            text="Get Started"
+            text="Commencer"
             url="/get-started"
             className="wiggle opacity-0 fade-up animation-delay-500"
             icon="arrow-right"
@@ -127,7 +127,7 @@
           />
         </UserLoggedIn>
         <UserLoggedOut>
-          <PrimaryButton text="Get Started" url="/get-started" icon="arrow-right" className="wiggle" />
+          <PrimaryButton text="Commencer" url="/get-started" icon="arrow-right" className="wiggle" />
         </UserLoggedOut>
       </AuthStateGuard>
     </div>
@@ -139,15 +139,15 @@
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-8 text-center">
           <div>
             <div class="text-3xl md:text-4xl font-light mb-2 text-white">30s</div>
-            <div class="text-white/60 text-sm font-light">Setup Time</div>
+            <div class="text-white/60 text-sm font-light">Temps de setup</div>
           </div>
           <div>
             <div class="text-3xl md:text-4xl font-light mb-2 text-white">{$uptime.toFixed(3)}%</div>
-            <div class="text-white/60 text-sm font-light">Uptime</div>
+            <div class="text-white/60 text-sm font-light">Disponibilité</div>
           </div>
           <div>
             <div class="text-3xl md:text-4xl font-light mb-2 text-white">{formatCompact($developers)}</div>
-            <div class="text-white/60 text-sm font-light">Developers</div>
+            <div class="text-white/60 text-sm font-light">Développeurs</div>
           </div>
           <div>
             <div class="text-3xl md:text-4xl font-light mb-2 text-white">{formatCompact($instances)}</div>
@@ -158,7 +158,7 @@
               {formatter.format(Number($stars.toFixed(0)))}
               <wa-icon name="star" class="w-5 h-5 text-yellow-400"></wa-icon>
             </div>
-            <div class="text-white/60 text-sm font-light">On Github</div>
+            <div class="text-white/60 text-sm font-light">Sur GitHub</div>
           </div>
         </div>
       </div>
@@ -168,7 +168,7 @@
   <section class="py-24 lg:px-8 text-white">
     <div class="text-center mb-10 md:mb-20">
       <h2 class="text-4xl md:text-5xl font-light mb-6 tracking-tight text-white">
-        Everything you need to <span class="font-medium">build</span>
+        Tout ce qu'il faut pour <span class="font-medium">construire</span>
       </h2>
     </div>
     <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 items-stretch">

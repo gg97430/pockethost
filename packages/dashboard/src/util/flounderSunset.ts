@@ -1,7 +1,7 @@
 /** Midnight UTC when Flounder lifetime sales stop. */
 export const FLOUNDER_SALES_END_MS = Date.UTC(2026, 6, 1)
 
-export const FLOUNDER_SALES_END_LABEL = 'July 1, 2026'
+export const FLOUNDER_SALES_END_LABEL = '1 juillet 2026'
 
 export function daysUntilFlounderSunset(now = new Date()): number {
   const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
@@ -14,7 +14,7 @@ export function isFlounderSalesOpen(now = new Date()): boolean {
 }
 
 export function flounderDaysLeftLabel(days: number): string {
-  if (days === 0) return 'Sales ended'
-  if (days === 1) return '1 day left'
-  return `${days} days left`
+  if (days === 0) return 'Ventes terminées'
+  if (days === 1) return '1 jour restant'
+  return `${days} jours restants`
 }

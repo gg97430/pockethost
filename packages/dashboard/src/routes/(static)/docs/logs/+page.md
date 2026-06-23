@@ -1,13 +1,13 @@
 ---
-title: Logging
-description: Learn how to view live logs from your PocketHost instance and access console output from pb_hooks scripts
+title: Logs
+description: Apprendre à voir les logs en direct de votre instance PocketHost et les sorties console des scripts pb_hooks
 ---
-# Logging
+# Logs
 
-You can view live logs while your PocketHost instance is running. `console.log` output from `pb_hooks` scripts will also appear in these logs.
+Vous pouvez voir les logs en direct pendant que votre instance PocketHost tourne. Les sorties `console.log` des scripts `pb_hooks` apparaissent aussi dans ces logs.
 
 ![](logs.png)
 
-For enhanced logging, use [Dev mode](/docs/dev-mode).
+Pour des logs plus détaillés, utilisez le [mode dev](/docs/dev-mode).
 
-These logs are also accessible in the logging area of your PocketBase admin dashboard.
+Ces logs sont aussi accessibles depuis la zone de logs du dashboard admin PocketBase.

@@ -37,6 +37,66 @@ export type PocketbaseClientConfig = {
 }
 export type PocketbaseClient = ReturnType<typeof createPocketbaseClient>
 
+export type OperatorSettings = {
+  publicSignupEnabled: boolean
+  autoVerifyUsers: boolean
+  defaultUserQuota: number
+  defaultSubscription: 'free' | 'premium' | 'founder' | 'flounder' | 'legacy'
+  defaultInstancePower: boolean
+  defaultInstanceDevMode: boolean
+  defaultSyncAdmin: boolean
+  defaultAutoVacuum: boolean
+  supportEmail: string
+  maintenanceMessage: string
+  notes: string
+}
+
+export type OperatorUser = {
+  id: string
+  email: string
+  username: string
+  name: string
+  verified: boolean
+  superAdmin: boolean
+  subscription: string
+  subscription_interval: string
+  subscription_quantity: number
+  suspension: string
+  created: string
+  updated: string
+  instanceCount: number
+}
+
+export type OperatorAdminOverview = {
+  settings: OperatorSettings
+  users: OperatorUser[]
+  stats: {
+    totalUsers: number
+    verifiedUsers: number
+    superAdmins: number
+    totalInstances: number
+    suspendedUsers: number
+  }
+}
+
+export type InstanceBackup = {
+  id: string
+  user: string
+  instance: string
+  kind: 'manual' | 'pre-restore'
+  status: 'running' | 'ready' | 'failed'
+  filename: string
+  remoteKey: string
+  sizeBytes: number
+  compressedBytes: number
+  checksum: string
+  error: string
+  remoteError: string
+  manifest: unknown
+  created: string
+  updated: string
+}
+
 export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const { url } = config
 
@@ -146,6 +206,59 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     DeleteInstancePayloadSchema
   )
 
+  const duplicateInstance = (id: InstanceId) =>
+    client.send<{ instance: InstanceFields }>(`/api/instance/${id}/duplicate`, {
+      method: 'POST',
+    })
+
+  const createInstanceBackup = (id: InstanceId) =>
+    client.send<{ backup: InstanceBackup }>(`/api/instance/${id}/backups`, {
+      method: 'POST',
+    })
+
+  const listInstanceBackups = (id: InstanceId) =>
+    client.send<{ backups: InstanceBackup[] }>(`/api/instance/${id}/backups`, {
+      method: 'GET',
+    })
+
+  const restoreInstanceBackup = (id: InstanceId, backupId: string) =>
+    client.send<{ status: 'ok' }>(`/api/instance/${id}/backups/${backupId}/restore`, {
+      method: 'POST',
+    })
+
+  const deleteInstanceBackup = (id: InstanceId, backupId: string) =>
+    client.send<{ status: 'ok' }>(`/api/instance/${id}/backups/${backupId}`, {
+      method: 'DELETE',
+    })
+
+  const downloadInstanceBackup = async (id: InstanceId, backup: Pick<InstanceBackup, 'id' | 'filename'>) => {
+    if (!browser) throw new Error('Téléchargement disponible uniquement dans le navigateur.')
+
+    const response = await fetch(`${url}/api/instance/${id}/backups/${backup.id}/download`, {
+      headers: {
+        Authorization: client.authStore.token,
+      },
+    })
+
+    if (!response.ok) {
+      const message = await response
+        .json()
+        .then((data) => data?.message || data?.error || response.statusText)
+        .catch(() => response.statusText)
+      throw new Error(message)
+    }
+
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = objectUrl
+    anchor.download = backup.filename || 'instance-backup.tar.gz'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(objectUrl)
+  }
+
   const getInstanceById = (id: InstanceId): Promise<InstanceFields | undefined> =>
     client.collection('instances').getOne<InstanceFields>(id)
 
@@ -160,6 +273,45 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       },
       {} as { [_: InstanceId]: InstanceFields }
     )
+
+  const getOperatorAdminOverview = () => client.send<OperatorAdminOverview>('/api/admin/overview', {})
+
+  const createOperatorUser = (data: {
+    email: string
+    password: string
+    verified: boolean
+    superAdmin: boolean
+    subscription: string
+    subscription_quantity: number
+    suspension: string
+  }) =>
+    client.send<{ user: OperatorUser }>('/api/admin/users', {
+      method: 'POST',
+      body: data,
+    })
+
+  const updateOperatorUser = (
+    id: string,
+    data: Partial<{
+      email: string
+      password: string
+      verified: boolean
+      superAdmin: boolean
+      subscription: string
+      subscription_quantity: number
+      suspension: string
+    }>
+  ) =>
+    client.send<{ user: OperatorUser }>(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: data,
+    })
+
+  const updateOperatorSettings = (data: OperatorSettings) =>
+    client.send<{ settings: OperatorSettings }>('/api/admin/settings', {
+      method: 'PUT',
+      body: data,
+    })
 
   const parseError = (e: Error): string[] => {
     if (!(e instanceof ClientResponseError)) return [`${e}`]
@@ -309,8 +461,18 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     isLoggedIn,
     user,
     getAllInstancesById,
+    getOperatorAdminOverview,
+    createOperatorUser,
+    updateOperatorUser,
+    updateOperatorSettings,
     resendVerificationEmail,
     updateInstance,
     deleteInstance,
+    duplicateInstance,
+    createInstanceBackup,
+    listInstanceBackups,
+    restoreInstanceBackup,
+    deleteInstanceBackup,
+    downloadInstanceBackup,
   }
 }

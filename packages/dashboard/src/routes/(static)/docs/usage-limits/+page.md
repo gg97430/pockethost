@@ -1,15 +1,15 @@
 ---
-title: Usage Limits
-description: PocketHost provides generous free resources under a Fair Use policy, ensuring balanced storage, bandwidth, and CPU for all apps
+title: Limites d'utilisation
+description: PocketHost fournit des ressources gratuites généreuses selon une politique d'utilisation raisonnable, afin d'équilibrer stockage, bande passante et CPU pour toutes les apps
 ---
-PocketHost offers generous free projects, storage, bandwidth, and CPU on a Fair Use basis.
+PocketHost propose des projets, du stockage, de la bande passante et du CPU généreux selon une logique d'utilisation raisonnable.
 
-## What is 'Fair'?
+## Que veut dire "raisonnable" ?
 
-We think `fair` means that you are using about the same amount of bandwidth, storage, and CPU resources as the average active app on our platform.
+Nous pensons que `raisonnable` signifie utiliser à peu près la même quantité de bande passante, de stockage et de CPU que l'application active moyenne de notre plateforme.
 
-PocketHost achieves economies of scale through dynamic management of resources. Relatively low-traffic apps do not require many resources. That means the high-traffic apps are free to use our ample resources. Your app will scale up and down depending on its needs.
+PocketHost réalise des économies d'échelle grâce à une gestion dynamique des ressources. Les apps à faible trafic nécessitent peu de ressources, ce qui laisse plus de marge aux apps à fort trafic. Votre app scale automatiquement selon ses besoins.
 
-If we notice that your app is consistently using so many resources that it is starting to affect the experience of other users, or if it is starting to cost significantly more than you are paying, we will come talk to you. Obviously, anything taken to the extreme is silly: creating 1 billion projects will cause a conversation with us.
+Si nous constatons que votre app utilise régulièrement tellement de ressources qu'elle commence à affecter l'expérience d'autres utilisateurs, ou qu'elle coûte beaucoup plus que ce que vous payez, nous viendrons en discuter avec vous. Évidemment, tout abus extrême posera problème : créer 1 milliard de projets déclenchera une conversation.
 
-The PocketHost ethos is one for indie developers and hackers. We actively avoid the utility hosting provider model with metered-everything. If you keep that in mind, we think you'll be a good citizen and we will return the courtesy!
+L'esprit PocketHost est pensé pour les développeurs indépendants et les hackers. Nous évitons volontairement le modèle d'hébergement où tout est facturé au compteur. Gardez cela en tête, utilisez la plateforme de bonne foi, et nous vous rendrons la pareille.

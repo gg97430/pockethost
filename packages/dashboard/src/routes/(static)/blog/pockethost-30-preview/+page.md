@@ -1,50 +1,50 @@
-PocketHost **3.0** lands **July 1, 2026**. I am sending this to everyone now so nothing on that date feels like a surprise.
+PocketHost **3.0** arrive le **1 juillet 2026**. J'envoie ce message à tout le monde maintenant pour que rien ne ressemble à une surprise ce jour-là.
 
-If you already host with us, the short version is: **your plan and price stay the same.** The changes below apply to new signups, lifetime sales, and how we communicate limits going forward.
+Si vous hébergez déjà chez nous, la version courte est simple : **votre formule et votre prix ne changent pas.** Les changements ci-dessous concernent les nouvelles inscriptions, les ventes à vie et la façon dont nous communiquons les limites à l'avenir.
 
-Full reference page: [/3.0](/3.0)
+Page de référence complète : [/3.0](/3.0)
 
-### Flounder lifetime ends July 1
+### Flounder à vie s'arrête le 1 juillet
 
-The **Flounder** one-time lifetime tier has been one of the best deals we ever offered. Pay once, Pro-tier hosting for as long as PocketHost exists. Unlimited instances, bandwidth, and storage under our [Fair Use](/docs/pricing-ethos) policy, plus `#onlyflounders` Discord and priority support.
+La formule **Flounder** à vie en paiement unique a été l'une des meilleures offres que nous ayons proposées. Vous payez une fois, puis vous bénéficiez d'un hébergement de niveau Pro tant que PocketHost existe. Instances, bande passante et stockage illimités selon notre politique d'[utilisation raisonnable](/docs/pricing-ethos), plus le Discord `#onlyflounders` et le support prioritaire.
 
-**Sales stop July 1, 2026.** After that, Flounder is off the menu for new buyers.
+**Les ventes s'arrêtent le 1 juillet 2026.** Après cette date, Flounder ne sera plus disponible pour les nouveaux acheteurs.
 
-- **Current Flounder subscribers** are grandfathered. Nothing changes for you.
-- **New visitors** will not see Flounder after July 1.
-- **Existing PocketHost accounts registered before July 1** get a **30-day grace window**. You have until **July 31** to buy Flounder if you still want it.
+- Les **abonnés Flounder actuels** conservent leurs droits. Rien ne change pour vous.
+- Les **nouveaux visiteurs** ne verront plus Flounder après le 1 juillet.
+- Les **comptes PocketHost existants enregistrés avant le 1 juillet** disposent d'une **période de grâce de 30 jours**. Vous avez jusqu'au **31 juillet** pour acheter Flounder si vous le souhaitez encore.
 
-The [pricing page](/pricing) shows a countdown while sales are open. More detail: [Last call for Flounder lifetime access](/blog/flounder-lifetime-sunset).
+La [page tarifs](/pricing) affiche un compte à rebours tant que les ventes sont ouvertes. Plus de détails : [dernier appel pour l'accès à vie Flounder](/blog/flounder-lifetime-sunset).
 
-Lifetime tiers helped bootstrap PocketHost. Going forward, recurring subscriptions are how we pay for storage, run the edge fleet, and ship features like [Auto Vacuum](/blog/auto-vacuum) and [SFTP file access](/blog/sftp-file-access). Retiring Flounder is part of that shift.
+Les formules à vie ont aidé à lancer PocketHost. À l'avenir, les abonnements récurrents financeront le stockage, la flotte edge et les fonctionnalités comme [Auto Vacuum](/blog/auto-vacuum) et [l'accès fichiers SFTP](/blog/sftp-file-access). L'arrêt de Flounder fait partie de ce changement.
 
-### New tiers for new signups only
+### Nouvelles formules uniquement pour les nouvelles inscriptions
 
-Starting July 1, **new customers** see clearer monthly tiers instead of lifetime checkout:
+À partir du 1 juillet, les **nouveaux clients** verront des formules mensuelles plus claires au lieu du paiement à vie :
 
-| Tier | Price | Powered-on instances | Primary storage |
-| ---- | ----- | -------------------- | --------------- |
-| **Free** | $0 | 1 | 1 GB |
-| **Pro** | $19.99/mo | 5 | 50 GB |
-| **Agency** | $49.99/mo | 50 | 200 GB |
+| Formule | Prix | Instances allumées | Stockage principal |
+| ------- | ---- | ------------------ | ------------------ |
+| **Free** | 0 $ | 1 | 1 Go |
+| **Pro** | 19,99 $/mois | 5 | 50 Go |
+| **Agency** | 49,99 $/mois | 50 | 200 Go |
 
-**If you already subscribe, your billing does not change.** Same plan, same price. These tiers apply to signups after July 1, not to existing accounts.
+**Si vous avez déjà un abonnement, votre facturation ne change pas.** Même formule, même prix. Ces formules s'appliquent aux inscriptions après le 1 juillet, pas aux comptes existants.
 
-We will publish the full pricing page and in-dashboard checkout when 3.0 goes live.
+Nous publierons la page tarifs complète et le checkout intégré au dashboard lorsque la 3.0 sera en ligne.
 
-### SFTP and FTPS (already in motion)
+### SFTP et FTPS (déjà en cours)
 
-This refresh lines up with work we have already shipped:
+Cette mise à jour s'aligne avec le travail déjà livré :
 
-- **SFTP on port 2222** with Ed25519 keys is the way to manage instance files. See [SFTP file access](/blog/sftp-file-access) and [Account → Keys](/account/keys).
-- **FTPS on port 21** is on a sunset path. It still works during the transition. New setups should use SFTP. See [FTPS is going away](/blog/ftps-sunset).
+- **SFTP sur le port 2222** avec des clés Ed25519 est la méthode à utiliser pour gérer les fichiers d'instance. Voir [accès fichiers SFTP](/blog/sftp-file-access) et [Compte → Clés](/account/keys).
+- **FTPS sur le port 21** est en fin de vie. Il fonctionne encore pendant la transition. Les nouvelles configurations doivent utiliser SFTP. Voir [FTPS disparaît](/blog/ftps-sunset).
 
-### What to do now
+### Que faire maintenant
 
-1. **On Flounder?** Decide before **July 1** (or **July 31** if you already had an account on July 1). [Pricing](/pricing) · [Get started](/get-started)
-2. **Using FTPS?** Move clients and CI to SFTP when you can. [Docs](/docs/ftp) · [phio deploy](/docs/phio)
-3. **Existing subscriber?** No action required. Your account is grandfathered.
+1. **Vous envisagez Flounder ?** Décidez avant le **1 juillet** (ou le **31 juillet** si vous aviez déjà un compte au 1 juillet). [Tarifs](/pricing) · [Démarrer](/get-started)
+2. **Vous utilisez FTPS ?** Migrez vos clients et votre CI vers SFTP quand vous le pouvez. [Docs](/docs/ftp) · [phio deploy](/docs/phio)
+3. **Vous avez déjà un abonnement ?** Aucune action requise. Votre compte conserve ses droits.
 
-We will send a reminder closer to July 1 and post again when the new tiers go live.
+Nous enverrons un rappel plus près du 1 juillet et publierons un nouveau billet quand les nouvelles formules seront en ligne.
 
-Questions? [Discord](https://discord.gg/nVTxCMEcGT) or [support](/support).
+Des questions ? [Discord](https://discord.gg/nVTxCMEcGT) ou [support](/support).

@@ -12,13 +12,13 @@
     <div class="flex items-start gap-3 min-w-0 sm:items-center">
       <wa-icon name="circle-info" class="mt-0.5 shrink-0 text-sky-400 text-sm sm:mt-0"></wa-icon>
       <p class="min-w-0 flex-1 text-sm leading-snug text-white/90">
-        <span class="font-medium">PocketHost 3.0 is coming.</span>
-        SFTP replaces FTPS, Flounder lifetime ends July 1
+        <span class="font-medium">PocketHost 3.0 arrive.</span>
+        SFTP remplace FTPS, les ventes Flounder à vie se terminent le 1 juillet
         {#if flounderOpen}
           ({flounderDaysLeftLabel(flounderDaysLeft)})
         {/if}
-        , and pricing is changing.
-        <a href={INFO_PATH} class="text-primary hover:text-secondary underline underline-offset-2"> Get ready </a>
+        , et les tarifs changent.
+        <a href={INFO_PATH} class="text-primary hover:text-secondary underline underline-offset-2"> Se préparer </a>
       </p>
     </div>
   </div>

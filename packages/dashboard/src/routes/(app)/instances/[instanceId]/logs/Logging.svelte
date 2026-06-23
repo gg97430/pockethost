@@ -5,7 +5,7 @@
 </script>
 
 <Card>
-  <CardHeader>Instance Logging</CardHeader>
+  <CardHeader>Logs de l'instance</CardHeader>
 
   <LoggingInner /></Card
 >

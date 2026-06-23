@@ -16,13 +16,13 @@
     disabled = false,
     onClass = 'text-green-500',
     offClass = 'text-red-500',
-    onText = 'ON',
-    offText = 'OFF',
+    onText = 'Actif',
+    offText = 'Éteint',
     onChange = () => {},
   }: Props = $props()
 
   const displayOffClass = $derived(loading ? 'text-yellow-500' : offClass)
-  const displayOffText = $derived(loading ? 'Stopping...' : offText)
+  const displayOffText = $derived(loading ? 'Arrêt...' : offText)
   const isDisabled = $derived(disabled || loading)
 
   const toggle = () => {

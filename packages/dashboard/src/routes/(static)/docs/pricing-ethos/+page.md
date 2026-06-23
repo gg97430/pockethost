@@ -1,37 +1,37 @@
 ---
-title: Pricing Ethos
-description: Understand PocketHost's simple and transparent pricing model, including instance plans, lifetime offers, and our Fair Use policy
+title: Philosophie tarifaire
+description: Comprendre le modèle tarifaire simple et transparent de PocketHost, incluant les offres par instance, les offres à vie et notre politique d'utilisation raisonnable
 ---
-# Pricing Ethos
+# Philosophie tarifaire
 
-At PocketHost, we believe in keeping things simple and transparent. Our pricing is designed to support indie hackers, makers, and small businesses. We offer flexible plans to suit your needs, based on the number of instances you want to run. We also offer limited Lifetime Offers during our bootstrapping phase.
+Chez PocketHost, nous voulons garder les choses simples et transparentes. Nos tarifs sont pensés pour soutenir les indie hackers, makers et petites entreprises. Nous proposons des offres flexibles selon le nombre d'instances que vous voulez exécuter. Nous proposons aussi des offres à vie limitées pendant notre phase de démarrage.
 
 ## Instances
 
-You can get started easily on PocketHost by purchasing an instance.
+Vous pouvez commencer facilement sur PocketHost en achetant une instance.
 
-- **Generous Resources**: Fair use of storage, bandwidth, and CPU.
-- **Priority Support**: Get help when you need it.
+- **Ressources généreuses** : stockage, bande passante et CPU selon l'utilisation raisonnable.
+- **Support prioritaire** : obtenez de l'aide quand vous en avez besoin.
 
-## Lifetime Offers
+## Offres à vie
 
-- **One-Time Payment**: Enjoy Pro Tier benefits without recurring fees.
-- **Limited Availability**: Offered in limited quantities and sold on a first-come, first-served basis.
-- **Non-Transferable**: Cannot be pro-rated, transferred, used retroactively, reserved, or purchased in advance.
+- **Paiement unique** : profitez des avantages Pro sans frais récurrents.
+- **Disponibilité limitée** : quantités limitées, vendues selon le principe premier arrivé, premier servi.
+- **Non transférable** : ne peut pas être proratisé, transféré, utilisé rétroactivement, réservé ou acheté à l'avance.
 
-**Please Note**:
+**À noter** :
 
-- Once sold out, Lifetime Offers are gone forever.
-- Timing is everything—if you can wait and catch one of these deals, it's an incredible opportunity.
+- Une fois épuisées, les offres à vie disparaissent définitivement.
+- Le timing compte : si vous pouvez attendre et saisir l'une de ces offres, c'est une très bonne opportunité.
 
-## Fair Use Policy
+## Politique d'utilisation raisonnable
 
-**Unlimited Doesn't Mean Infinite**
+**Illimité ne veut pas dire infini**
 
-While we offer ample limits for projects, storage, bandwidth, and CPU, all usage is subject to Fair Use:
+Même si nous proposons des limites généreuses pour les projets, le stockage, la bande passante et le CPU, tout usage reste soumis à l'utilisation raisonnable :
 
-- **Fair Use Basis**: Use resources similarly to the average active app on our platform.
-- **Resource Management**: Your app scales up or down based on its needs.
-- **Good Citizenship**: Be mindful of resource consumption to ensure a positive experience for all users.
+- **Base raisonnable** : utilisez les ressources de manière comparable à l'app active moyenne de notre plateforme.
+- **Gestion des ressources** : votre app scale à la hausse ou à la baisse selon ses besoins.
+- **Bon usage** : soyez attentif à votre consommation pour préserver une bonne expérience pour tous.
 
-For more details, please refer to our complete [Fair Use Policy](/terms).
+Pour plus de détails, consultez notre [politique d'utilisation raisonnable](/terms) complète.

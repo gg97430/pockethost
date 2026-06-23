@@ -20,7 +20,7 @@
     formErrors = []
 
     if (!token) {
-      formErrors = ['No token was found. Please check your email again for the link.']
+      formErrors = ['Aucun jeton trouvé. Veuillez vérifier à nouveau le lien reçu par email.']
       return
     }
 
@@ -34,7 +34,7 @@
       if (error instanceof Error) {
         formErrors = client().parseError(error)
       } else {
-        formErrors = ['Something went wrong confirming your email change.']
+        formErrors = ["Une erreur est survenue pendant la confirmation du changement d'email."]
       }
     }
 
@@ -43,24 +43,24 @@
 </script>
 
 <svelte:head>
-  <title>Confirm Email Change - PocketHost</title>
+  <title>Confirmer le changement d'email - Gestion PocketBase</title>
 </svelte:head>
 
 <div class="w-full flex items-center justify-center px-4 md:px-16 py-10 md:py-16">
   <div class="auth-card w-full max-w-md">
     <form class="auth-form" method="post" autocomplete="on" onsubmit={handleSubmit}>
-      <h2 class="auth-form-title">Confirm email change</h2>
-      <p class="text-sm text-white/70 mb-4">Enter your current password to complete the change.</p>
+      <h2 class="auth-form-title">Confirmer le changement d'email</h2>
+      <p class="text-sm text-white/70 mb-4">Saisissez votre mot de passe actuel pour finaliser le changement.</p>
 
       <div class="auth-field-group">
-        <label class="auth-label" for="password">Current password</label>
+        <label class="auth-label" for="password">Mot de passe actuel</label>
         <div class="auth-field-wrap">
           <input
             type={showPassword ? 'text' : 'password'}
             id="password"
             name="password"
             class="auth-field auth-field--password"
-            placeholder="Password"
+            placeholder="Mot de passe"
             autocomplete="current-password"
             bind:value={password}
             required
@@ -71,7 +71,7 @@
               class="auth-field-toggle"
               onclick={() => (showPassword = !showPassword)}
               tabindex="-1"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
             >
               <wa-icon name={showPassword ? 'eye-slash' : 'eye'}></wa-icon>
             </button>
@@ -84,7 +84,7 @@
       {/each}
 
       <button type="submit" class="auth-submit" disabled={isFormButtonDisabled}>
-        Confirm
+        Confirmer
         <wa-icon name="arrow-right"></wa-icon>
       </button>
     </form>

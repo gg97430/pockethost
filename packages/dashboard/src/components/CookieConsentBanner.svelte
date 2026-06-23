@@ -24,17 +24,17 @@
   <div
     class="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#111111]/95 px-4 py-4 backdrop-blur-sm md:px-20"
     role="dialog"
-    aria-label="Cookie consent"
+    aria-label="Consentement aux cookies"
     transition:slide={{ duration: 200 }}
   >
     <wa-callout variant="neutral" class="wa-callout-padded wa-callout-subtle-border">
       <wa-icon slot="icon" name="shield-halved"></wa-icon>
       <div class="flex w-full flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-sm leading-snug text-white/90">
-          PocketHost uses cookies for analytics so we can improve the product.
-          <a href="/privacy" class="text-primary hover:text-secondary underline underline-offset-2">Privacy policy</a>
+          Gestion PocketBase utilise des cookies d'analyse pour améliorer le produit.
+          <a href="/privacy" class="text-primary hover:text-secondary underline underline-offset-2">Politique de confidentialité</a>
         </p>
-        <wa-button type="button" variant="brand" size="small" class="shrink-0" onclick={accept}>Accept</wa-button>
+        <wa-button type="button" variant="brand" size="small" class="shrink-0" onclick={accept}>Accepter</wa-button>
       </div>
     </wa-callout>
   </div>

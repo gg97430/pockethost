@@ -2,59 +2,62 @@
   import { client } from '$src/pocketbase-client'
   import UserLoggedIn from '$components/guards/UserLoggedIn.svelte'
   import UserLoggedOut from '$components/guards/UserLoggedOut.svelte'
+  import ThemeToggle from '$components/ThemeToggle.svelte'
+  import { userStore } from '$util/stores'
   import Avatar from './Avatar.svelte'
 
   const handleLogoutAndRedirect = async () => {
     const { logOut } = client()
     logOut()
-    window.location.href = '/'
+    window.location.href = '/login'
   }
 
   export let isCollapsed = false
 </script>
 
 {#if isCollapsed}
-  <div class="flex flex-col gap-1 rounded-lg bg-[#111111] p-2 shadow-xl w-52 z-[100] mt-3">
-    <a href="/" class="site-nav-link site-nav-link--menu">Home</a>
+  <div class="nav-menu-panel flex flex-col gap-1 rounded-lg p-2 shadow-xl w-52 z-[100] mt-3">
+    <ThemeToggle showLabel />
     <UserLoggedIn>
       <a href="/dashboard" class="site-nav-link site-nav-link--menu">Dashboard</a>
+      <a href="/instances/new" class="site-nav-link site-nav-link--menu">Nouvelle instance</a>
+      {#if $userStore?.superAdmin}
+        <a href="/admin" class="site-nav-link site-nav-link--menu">Administration</a>
+      {/if}
+      <a href="/account" class="site-nav-link site-nav-link--menu">Compte</a>
+      <button type="button" class="site-nav-link site-nav-link--menu text-left" onclick={handleLogoutAndRedirect}>
+        Déconnexion
+      </button>
     </UserLoggedIn>
-    <a href="/pricing" class="site-nav-link site-nav-link--menu">Pricing</a>
-    <a href="/blog" class="site-nav-link site-nav-link--menu">Blog</a>
-    <a href="/docs" class="site-nav-link site-nav-link--menu">Docs</a>
     <UserLoggedOut>
-      <a href="/about" class="site-nav-link site-nav-link--menu">About</a>
-    </UserLoggedOut>
-    <UserLoggedOut>
-      <a href="/login" class="site-nav-link site-nav-link--menu">Login</a>
+      <a href="/login" class="site-nav-link site-nav-link--menu">Connexion</a>
     </UserLoggedOut>
   </div>
 {:else}
   <nav class="site-nav flex items-center gap-1">
+    <ThemeToggle />
     <UserLoggedIn>
       <a href="/dashboard" class="site-nav-link">Dashboard</a>
+      <a href="/instances/new" class="site-nav-link">Nouvelle instance</a>
+      {#if $userStore?.superAdmin}
+        <a href="/admin" class="site-nav-link">Administration</a>
+      {/if}
     </UserLoggedIn>
-    <a href="/pricing" class="site-nav-link">Pricing</a>
-    <a href="/blog" class="site-nav-link">Blog</a>
-    <a href="/docs" class="site-nav-link">Docs</a>
-    <UserLoggedOut>
-      <a href="/about" class="site-nav-link">About</a>
-    </UserLoggedOut>
     <UserLoggedIn>
       <wa-dropdown placement="bottom-end" class="nav-user-menu ml-1">
-        <button slot="trigger" type="button" class="nav-user-menu-trigger" aria-label="Account menu">
+        <button slot="trigger" type="button" class="nav-user-menu-trigger" aria-label="Menu du compte">
           <Avatar size={32} />
         </button>
         <wa-dropdown-item>
-          <a href="/account">Settings</a>
+          <a href="/account">Paramètres</a>
         </wa-dropdown-item>
         <wa-dropdown-item>
-          <button type="button" onclick={handleLogoutAndRedirect}>Logout</button>
+          <button type="button" onclick={handleLogoutAndRedirect}>Déconnexion</button>
         </wa-dropdown-item>
       </wa-dropdown>
     </UserLoggedIn>
     <UserLoggedOut>
-      <a href="/login" class="site-nav-link site-nav-link--login">Login</a>
+      <a href="/login" class="site-nav-link site-nav-link--login">Connexion</a>
     </UserLoggedOut>
   </nav>
 {/if}

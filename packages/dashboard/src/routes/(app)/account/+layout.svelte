@@ -10,14 +10,14 @@
   $: sections = [
     {
       items: [
-        { href: '/account', label: 'Account', icon: 'user', isActive: isAccountActive },
-        { href: '/account/keys', label: 'Keys', icon: 'key', isActive: isKeysActive },
+        { href: '/account', label: 'Compte', icon: 'user', isActive: isAccountActive },
+        { href: '/account/keys', label: 'Clés', icon: 'key', isActive: isKeysActive },
       ],
     },
   ] satisfies FeatureTabNavSection[]
 </script>
 
-<TabbedFeatureLayout title="Settings" {sections}>
+<TabbedFeatureLayout title="Paramètres" {sections}>
   {#key pathname}
     <slot />
   {/key}

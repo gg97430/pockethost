@@ -40,7 +40,7 @@
       <div class="max-w-4xl mx-auto px-4 md:px-8 py-4">
         <a href="/blog" class="blog-back-link">
           <wa-icon name="arrow-left"></wa-icon>
-          Back to Blog
+          Retour au blog
         </a>
       </div>
     </div>
@@ -65,11 +65,11 @@
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div class="text-sm text-white/60">
             <p>
-              Have questions?
+              Des questions ?
               <a
                 href="https://discord.gg/nVTxCMEcGT"
                 target="_blank"
-                class="text-primary hover:text-secondary hover:underline">Join our Discord</a
+                class="text-primary hover:text-secondary hover:underline">Rejoignez notre Discord</a
               >
             </p>
           </div>

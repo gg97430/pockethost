@@ -1,27 +1,27 @@
 ---
 title: Introduction
-description: An introduction to PocketHost, a cloud hosting platform for PocketBase that simplifies backend setup and management
+description: Introduction à PocketHost, une plateforme cloud pour PocketBase qui simplifie la configuration et la gestion backend
 ---
-# 👋 Welcome to PocketHost
+# 👋 Bienvenue sur PocketHost
 
-## Overview
+## Vue d'ensemble
 
-PocketHost hosts your [PocketBase](https://pocketbase.io) projects, so you don't have to. Create a project like you would in Firebase and Supabase and let PocketHost do the rest.
+PocketHost héberge vos projets [PocketBase](https://pocketbase.io), pour que vous n'ayez pas à le faire. Créez un projet comme vous le feriez dans Firebase ou Supabase, puis laissez PocketHost gérer le reste.
 
-PocketHost is a cloud hosting platform for PocketBase. You can use it to instantly provision a PocketBase backend for your latest project. Features include:
+PocketHost est une plateforme d'hébergement cloud pour PocketBase. Elle permet de provisionner instantanément un backend PocketBase pour votre dernier projet. Fonctionnalités incluses :
 
-- Create PocketBase projects, each with a custom subdomain or custom vanity domain
-- Each instance runs on a subdomain of `pockethost.io`
-- Access your PocketBase instance using the PocketBase JavaScript SDK as easily as `new PocketBase('https://my-project.pockethost.io')`
-- Run your instance in an ultra-beefy shared environment
+- Créer des projets PocketBase, chacun avec un sous-domaine ou un domaine personnalisé.
+- Faire tourner chaque instance sur un sous-domaine de `pockethost.io`.
+- Accéder à votre instance PocketBase avec le SDK JavaScript PocketBase aussi simplement que `new PocketBase('https://my-project.pockethost.io')`.
+- Exécuter votre instance dans un environnement partagé très dimensionné.
 
-## Focus on your app
+## Concentrez-vous sur votre app
 
-Get a live PocketBase instance in 10 seconds with no backend setup:
+Obtenez une instance PocketBase opérationnelle en 10 secondes, sans configuration backend :
 
-1. Create an account at pockethost.io
-2. Provision your first PocketBase instance
-3. Connect from anywhere
+1. Créez un compte sur pockethost.io.
+2. Provisionnez votre première instance PocketBase.
+3. Connectez-vous depuis n'importe où.
 
 ```ts
 import PocketBase from 'pocketbase'
@@ -29,16 +29,16 @@ import PocketBase from 'pocketbase'
 const client = new PocketBase(`https://harvest.pockethost.io`)
 ```
 
-## Batteries Included
+## Tout est inclus
 
-Here's all the Linux/devops stuff that PocketHost does for you:
+Voici tout ce que PocketHost gère côté Linux/devops :
 
-- Email and DKIM+SPF and more
-- DNS jargon: MX, TXT, CNAME
-- SSL cert provisioning and management
-- Storage
-- Volume mounts
-- Cloud computing or VPS deployment
-- CDN and static asset hosting
+- Email, DKIM, SPF et plus encore
+- Jargon DNS : MX, TXT, CNAME
+- Provisionnement et gestion des certificats SSL
+- Stockage
+- Montages de volumes
+- Déploiement cloud ou VPS
+- CDN et hébergement d'assets statiques
 - Amazon AWS
-- Lots more - scaling, firewalls, DDoS defense, user security, log rotation, patches, updates, build tools, CPU architectures, multitenancy, on and on
+- Et beaucoup d'autres choses : scaling, firewalls, protection DDoS, sécurité utilisateur, rotation des logs, correctifs, mises à jour, outils de build, architectures CPU, multitenancy, etc.

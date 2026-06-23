@@ -1,169 +1,169 @@
 ---
 title: Webhooks
-description: Learn how to use Pockethost webhooks to schedule reliable API calls without external cron jobs. Automate tasks like backups, data cleanup, notifications, and integrations—even when your instance is hibernated
+description: Utiliser les webhooks PocketHost pour planifier des appels API fiables sans cron externe. Automatisez sauvegardes, nettoyage, notifications et intégrations, même quand votre instance est en hibernation
 ---
 
 # Webhooks
 
-Webhooks allow you to schedule API calls to your PocketBase instance at specific times, replacing the need for external cron job schedulers. This feature enables automated tasks like data cleanup, backups, notifications, and integrations with external services.
+Les webhooks permettent de planifier des appels API vers votre instance PocketBase à des moments précis, sans planificateur cron externe. Ils servent à automatiser des tâches comme le nettoyage de données, les sauvegardes, les notifications et les intégrations avec des services externes.
 
-> **Important**: Webhooks replace PocketBase's built-in [cron job scheduling](https://pocketbase.io/docs/js-jobs-scheduling/) (`cronAdd`) on PocketHost. While `cronAdd` works in standard PocketBase deployments, it becomes unreliable on PocketHost due to instance hibernation. Scheduled webhooks will always execute reliably, even when your instance is hibernated.
+> **Important** : sur PocketHost, les webhooks remplacent la [planification cron intégrée de PocketBase](https://pocketbase.io/docs/js-jobs-scheduling/) (`cronAdd`). `cronAdd` fonctionne dans les déploiements PocketBase classiques, mais devient peu fiable sur PocketHost à cause de l'hibernation des instances. Les webhooks planifiés s'exécutent de façon fiable, même quand votre instance est en hibernation.
 
-## Overview
+## Vue d'ensemble
 
-Webhooks are configured through the PocketHost dashboard and automatically send HTTP GET requests to your specified endpoints at scheduled intervals. Each webhook consists of:
+Les webhooks se configurent depuis le dashboard PocketHost et envoient automatiquement des requêtes HTTP GET vers les endpoints indiqués selon l'intervalle choisi. Chaque webhook contient :
 
-- **API Endpoint**: The URL path within your instance to call
-- **Schedule**: A cron expression defining when the webhook executes
+- **Endpoint API** : le chemin d'URL à appeler dans votre instance
+- **Planification** : une expression cron qui définit quand le webhook s'exécute
 
-All webhooks execute in **UTC time**. Make sure to adjust your cron schedules accordingly.
+Tous les webhooks s'exécutent en **heure UTC**. Adaptez vos expressions cron en conséquence.
 
-### Why Use Webhooks Instead of `cronAdd`?
+### Pourquoi utiliser les webhooks plutôt que `cronAdd` ?
 
-On PocketHost, webhooks provide several advantages over PocketBase's built-in `cronAdd`:
+Sur PocketHost, les webhooks ont plusieurs avantages par rapport au `cronAdd` intégré à PocketBase :
 
-- **Reliability**: Webhooks execute even when your instance is hibernated
-- **Consistency**: No dependency on your instance's uptime
-- **Scalability**: Handled by PocketHost's infrastructure, not your instance
-- **Monitoring**: Better visibility into execution status and failures
+- **Fiabilité** : ils s'exécutent même quand votre instance est en hibernation
+- **Constance** : ils ne dépendent pas du temps de disponibilité de votre instance
+- **Scalabilité** : ils sont gérés par l'infrastructure PocketHost, pas par votre instance
+- **Suivi** : ils donnent une meilleure visibilité sur l'état d'exécution et les erreurs
 
 ## Configuration
 
-### API Endpoint
+### Endpoint API
 
-The API endpoint must be a valid path within your PocketBase instance:
+L'endpoint API doit être un chemin valide dans votre instance PocketBase :
 
-- Must start with `/` (e.g., `/api/webhooks/backup`)
-- Can include query parameters (e.g., `/api/cron?token=abc123`)
-- Cannot include protocol or host (no `http://` or `https://`)
-- Supports any valid URL path structure
+- Il doit commencer par `/` (ex. `/api/webhooks/backup`)
+- Il peut inclure des paramètres de requête (ex. `/api/cron?token=abc123`)
+- Il ne doit pas inclure de protocole ni d'hôte (pas de `http://` ni de `https://`)
+- Il prend en charge toute structure de chemin URL valide
 
-**Examples:**
+**Exemples :**
 
 - `/api/webhooks/daily-cleanup`
 - `/api/backup?type=full&compress=true`
 - `/webhook/slack/notifications`
 - `/api/maintenance/cleanup-old-records`
 
-### Schedule (Cron Expression)
+### Planification (expression cron)
 
-Webhooks use standard cron expressions to define execution schedules. You can use either:
+Les webhooks utilisent des expressions cron standards pour définir les horaires d'exécution. Vous pouvez utiliser :
 
-#### Predefined Macros
+#### Macros prédéfinies
 
-| Macro       | Description                          | Equivalent Expression |
-| ----------- | ------------------------------------ | --------------------- |
-| `@yearly`   | Once a year at midnight, January 1st | `0 0 1 1 *`           |
-| `@annually` | Same as `@yearly`                    | `0 0 1 1 *`           |
-| `@monthly`  | Once a month at midnight, first day  | `0 0 1 * *`           |
-| `@weekly`   | Once a week at midnight on Sunday    | `0 0 * * 0`           |
-| `@daily`    | Once a day at midnight               | `0 0 * * *`           |
-| `@midnight` | Same as `@daily`                     | `0 0 * * *`           |
-| `@hourly`   | Once an hour at the beginning        | `0 * * * *`           |
-| `@minutely` | Once a minute                        | `* * * * *`           |
-| `@secondly` | Once a second                        | `* * * * * *`         |
-| `@weekdays` | Every weekday at midnight            | `0 0 * * 1-5`         |
-| `@weekends` | Every weekend at midnight            | `0 0 * * 0,6`         |
+| Macro       | Description                                | Expression équivalente |
+| ----------- | ------------------------------------------ | ---------------------- |
+| `@yearly`   | Une fois par an à minuit, le 1er janvier   | `0 0 1 1 *`            |
+| `@annually` | Identique à `@yearly`                      | `0 0 1 1 *`            |
+| `@monthly`  | Une fois par mois à minuit, le premier jour | `0 0 1 * *`            |
+| `@weekly`   | Une fois par semaine, le dimanche à minuit | `0 0 * * 0`            |
+| `@daily`    | Une fois par jour à minuit                 | `0 0 * * *`            |
+| `@midnight` | Identique à `@daily`                       | `0 0 * * *`            |
+| `@hourly`   | Une fois par heure, au début de l'heure    | `0 * * * *`            |
+| `@minutely` | Une fois par minute                        | `* * * * *`            |
+| `@secondly` | Une fois par seconde                       | `* * * * * *`          |
+| `@weekdays` | Chaque jour de semaine à minuit            | `0 0 * * 1-5`          |
+| `@weekends` | Chaque week-end à minuit                   | `0 0 * * 0,6`          |
 
-#### Standard Cron Expressions
+#### Expressions cron standards
 
-Standard cron expressions use 5 fields: `minute hour day month weekday`
+Les expressions cron standards utilisent 5 champs : `minute heure jour mois jour_semaine`
 
-| Field        | Values | Special Characters | Description                |
-| ------------ | ------ | ------------------ | -------------------------- |
-| Minute       | 0-59   | `* , - / ?`        | Minute of the hour         |
-| Hour         | 0-23   | `* , - / ?`        | Hour of the day            |
-| Day of Month | 1-31   | `* , - / ? L W`    | Day of the month           |
-| Month        | 1-12   | `* , - / ?`        | Month of the year          |
-| Day of Week  | 0-6    | `* , - / ? L #`    | Day of the week (0=Sunday) |
+| Champ | Valeurs | Caractères spéciaux | Description |
+| ----- | ------- | ------------------- | ----------- |
+| Minute | 0-59 | `* , - / ?` | Minute de l'heure |
+| Heure | 0-23 | `* , - / ?` | Heure du jour |
+| Jour du mois | 1-31 | `* , - / ? L W` | Jour du mois |
+| Mois | 1-12 | `* , - / ?` | Mois de l'année |
+| Jour de semaine | 0-6 | `* , - / ? L #` | Jour de la semaine (0 = dimanche) |
 
-**Special Characters:**
+**Caractères spéciaux :**
 
-- `*` - Any value
-- `,` - Value list separator
-- `-` - Range of values
-- `/` - Step values
-- `?` - Any value (alias for `*`)
-- `L` - Last day of month/week
-- `W` - Weekday (nearest to given day)
-- `#` - Nth day of month
+- `*` - N'importe quelle valeur
+- `,` - Séparateur de liste de valeurs
+- `-` - Plage de valeurs
+- `/` - Pas d'incrément
+- `?` - N'importe quelle valeur (alias de `*`)
+- `L` - Dernier jour du mois ou de la semaine
+- `W` - Jour ouvré le plus proche du jour indiqué
+- `#` - Nième jour du mois
 
-### Timing
+### Horaires
 
-All webhooks execute in **UTC time**. When scheduling webhooks, convert your local time to UTC:
+Tous les webhooks s'exécutent en **heure UTC**. Convertissez votre heure locale en UTC lors de la planification :
 
-- **EST (UTC-5)**: 9 AM EST = 2 PM UTC (14:00)
-- **PST (UTC-8)**: 6 PM PST = 2 AM UTC next day (02:00)
-- **GMT+3**: 3 PM = 12 PM UTC (12:00)
+- **EST (UTC-5)** : 9 h EST = 14 h UTC (14:00)
+- **PST (UTC-8)** : 18 h PST = 2 h UTC le lendemain (02:00)
+- **GMT+3** : 15 h = 12 h UTC (12:00)
 
-Use online UTC converters to help calculate the correct schedule times.
+Utilisez un convertisseur UTC en ligne pour calculer les bons horaires.
 
-## Common Examples
+## Exemples courants
 
-### Business Operations (UTC Time)
+### Opérations métier (heure UTC)
 
 ```cron
-# Weekdays at 9 AM UTC
+# Jours de semaine à 9 h UTC
 0 9 * * 1-5
 
-# Every Monday at noon UTC
+# Chaque lundi à midi UTC
 0 12 * * 1
 
-# Every Friday at 6 PM UTC
+# Chaque vendredi à 18 h UTC
 0 18 * * 5
 
-# First day of every month at midnight UTC
+# Premier jour de chaque mois à minuit UTC
 0 0 1 * *
 
-# 15th of every month at 8 AM UTC
+# 15 de chaque mois à 8 h UTC
 0 8 15 * *
 ```
 
-### Data Management (UTC Time)
+### Gestion des données (heure UTC)
 
 ```cron
-# Daily backup at 2 AM UTC
+# Sauvegarde quotidienne à 2 h UTC
 0 2 * * *
 
-# Cleanup old records every 6 hours
+# Nettoyage des anciens enregistrements toutes les 6 heures
 0 */6 * * *
 
-# Weekly data export on Sundays at midnight UTC
+# Export hebdomadaire des données le dimanche à minuit UTC
 0 0 * * 0
 
-# Monthly maintenance on the 1st at midnight UTC
+# Maintenance mensuelle le 1er à minuit UTC
 0 0 1 * *
 ```
 
-### Using Macros
+### Utiliser les macros
 
 ```cron
-# Daily operations
+# Opérations quotidiennes
 @daily
 
-# Weekly reports
+# Rapports hebdomadaires
 @weekly
 
-# Monthly cleanup
+# Nettoyage mensuel
 @monthly
 
-# Business hours only
+# Jours ouvrés uniquement
 @weekdays
 ```
 
-## Implementation
+## Implémentation
 
-### Creating Webhook Endpoints
+### Créer des endpoints webhook
 
-Create API endpoints in your PocketBase instance to handle webhook requests using [PocketBase's routing system](https://pocketbase.io/docs/js-routing/):
+Créez des endpoints API dans votre instance PocketBase pour traiter les requêtes webhook avec le [système de routage PocketBase](https://pocketbase.io/docs/js-routing/) :
 
 ```javascript
 // pb_hooks/onRequest.pb.js
 routerAdd('GET', '/api/webhooks/backup', (e) => {
-  // Your backup logic here
-  console.log('Backup webhook triggered')
+  // Votre logique de sauvegarde ici
+  console.log('Webhook de sauvegarde déclenché')
 
-  // Example: Create a backup record
+  // Exemple : créer un enregistrement de sauvegarde
   const backup = new Record($app.findCollectionByNameOrId('backups'), {
     timestamp: new Date().toISOString(),
     status: 'completed',
@@ -176,29 +176,29 @@ routerAdd('GET', '/api/webhooks/backup', (e) => {
 })
 ```
 
-### Error Handling
+### Gestion des erreurs
 
-Webhooks should return appropriate HTTP status codes:
+Les webhooks doivent renvoyer des codes HTTP adaptés :
 
-- `200` - Success
-- `400` - Bad request
-- `500` - Internal server error
+- `200` - Succès
+- `400` - Requête invalide
+- `500` - Erreur serveur interne
 
 ```javascript
 routerAdd('GET', '/api/webhooks/cleanup', (e) => {
   try {
-    // Your cleanup logic
+    // Votre logique de nettoyage
     return e.json(200, { status: 'success' })
   } catch (error) {
-    console.error('Webhook error:', error)
+    console.error('Erreur webhook :', error)
     return e.json(500, { error: 'Internal server error' })
   }
 })
 ```
 
-### Authentication
+### Authentification
 
-For secure webhooks, include authentication in your endpoints:
+Pour sécuriser vos webhooks, ajoutez une authentification dans vos endpoints :
 
 ```javascript
 routerAdd('GET', '/api/webhooks/secure', (e) => {
@@ -208,60 +208,60 @@ routerAdd('GET', '/api/webhooks/secure', (e) => {
     return e.json(401, { error: 'Unauthorized' })
   }
 
-  // Your secure webhook logic
+  // Votre logique webhook sécurisée
   return e.json(200, { status: 'success' })
 })
 ```
 
-## Best Practices
+## Bonnes pratiques
 
-### 1. Idempotency
+### 1. Idempotence
 
-Make your webhooks idempotent so they can be safely retried:
+Rendez vos webhooks idempotents afin qu'ils puissent être réessayés sans risque :
 
 ```javascript
 routerAdd('GET', '/api/webhooks/process', (e) => {
   const jobId = e.request.url.query().get('jobId')
 
-  // Check if already processed
+  // Vérifier si la tâche a déjà été traitée
   const existing = $app.findFirstRecordByData('jobs', 'jobId', jobId)
   if (existing && existing.get('status') === 'completed') {
     return e.json(200, { status: 'already_processed' })
   }
 
-  // Process the job
+  // Traiter la tâche
   // ...
 })
 ```
 
-### 2. Logging
+### 2. Logs
 
-Always log webhook executions for debugging:
+Journalisez toujours les exécutions de webhook pour faciliter le debug :
 
 ```javascript
 routerAdd('GET', '/api/webhooks/backup', (e) => {
-  console.log(`Backup webhook triggered at ${new Date().toISOString()}`)
+  console.log(`Webhook de sauvegarde déclenché à ${new Date().toISOString()}`)
 
-  // Your backup logic
+  // Votre logique de sauvegarde
 
-  console.log('Backup webhook completed successfully')
+  console.log('Webhook de sauvegarde terminé avec succès')
   return e.json(200, { status: 'success' })
 })
 ```
 
-## Troubleshooting
+## Dépannage
 
-### Common Issues
+### Problèmes courants
 
-1. **Webhook not executing**: Check the cron expression syntax and ensure times are in UTC
-2. **Endpoint not found**: Ensure the API endpoint exists in your PocketBase instance using [PocketBase routing](https://pocketbase.io/docs/js-routing/)
-3. **Authentication errors**: Verify any required tokens or secrets
-4. **Timeout errors**: Optimize webhook execution time
-5. **Using `cronAdd` instead of webhooks**: Replace `cronAdd` calls with scheduled webhooks for reliable execution on PocketHost
-6. **Wrong execution time**: Remember all schedules are in UTC - convert your local time accordingly
+1. **Le webhook ne s'exécute pas** : vérifiez la syntaxe de l'expression cron et assurez-vous que les horaires sont en UTC
+2. **Endpoint introuvable** : vérifiez que l'endpoint API existe dans votre instance PocketBase via le [routage PocketBase](https://pocketbase.io/docs/js-routing/)
+3. **Erreurs d'authentification** : vérifiez les tokens ou secrets requis
+4. **Timeouts** : optimisez le temps d'exécution du webhook
+5. **Utilisation de `cronAdd` au lieu des webhooks** : remplacez les appels `cronAdd` par des webhooks planifiés pour une exécution fiable sur PocketHost
+6. **Mauvaise heure d'exécution** : toutes les planifications sont en UTC ; convertissez votre heure locale en conséquence
 
-## Limitations
+## Limites
 
-- Concurrent webhook executions may be limited
-- Webhooks may not run exactly at the time specified, depending on system load and instance state
-- Webhooks are triggered by PocketHost's scheduling system, not your instance's internal clock
+- Les exécutions concurrentes de webhooks peuvent être limitées
+- Les webhooks peuvent ne pas s'exécuter exactement à l'heure indiquée selon la charge système et l'état de l'instance
+- Les webhooks sont déclenchés par le système de planification PocketHost, pas par l'horloge interne de votre instance

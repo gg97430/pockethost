@@ -1,4 +1,3 @@
-Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 
 //#region src/lib/util/appStoreJson.ts
 /** JSON round-trip for $app.store() — Goja objects must not cross goroutines (see PB #7737). */
@@ -74,7 +73,7 @@ const broadcastLiveViewStats = () => {
 		data: JSON.stringify(stats)
 	});
 	const clients = $app.subscriptionsBroker().clients();
-	for (const clientId in clients) if (clients[clientId].hasSubscription("mothership/live/view-stats")) clients[clientId].send(message);
+	for (const clientId in clients) if (clients[clientId].hasSubscription(LIVE_VIEW_STATS_TOPIC)) clients[clientId].send(message);
 };
 const sendLiveViewStatsToClient = (client) => {
 	const stats = getLiveViewStats();
@@ -201,7 +200,7 @@ const broadcastLivePlatformStats = () => {
 		data: JSON.stringify(stats)
 	});
 	const clients = $app.subscriptionsBroker().clients();
-	for (const clientId in clients) if (clients[clientId].hasSubscription("mothership/live/platform")) clients[clientId].send(message);
+	for (const clientId in clients) if (clients[clientId].hasSubscription(LIVE_PLATFORM_TOPIC)) clients[clientId].send(message);
 };
 const sendLivePlatformStatsToClient = (client) => {
 	const stats = getLivePlatformStats();
@@ -266,7 +265,8 @@ const handleLivePlatformUserDelete = (e) => {
 };
 const handleLivePlatformUserUpdate = (e) => {
 	const next = e.record.getBool("verified");
-	if (next === e.record.original().getBool("verified")) return;
+	const prev = e.record.original().getBool("verified");
+	if (next === prev) return;
 	applyVerifiedDelta(next ? 1 : -1, next ? -1 : 1);
 	broadcastLivePlatformStats();
 };
@@ -352,7 +352,8 @@ const parsePocketbaseVersionsValue = (raw) => {
 };
 const readPocketbaseVersions = () => {
 	try {
-		const value = parsePocketbaseVersionsValue($app.findFirstRecordByData("settings", "name", POCKETBASE_VERSIONS_SETTING).getString("value"));
+		const record = $app.findFirstRecordByData("settings", "name", POCKETBASE_VERSIONS_SETTING);
+		const value = parsePocketbaseVersionsValue(record.getString("value"));
 		if (!value?.versions?.length) return [];
 		return value.versions;
 	} catch {
@@ -363,12 +364,107 @@ const readPocketbaseVersions = () => {
 const listVersions = () => readPocketbaseVersions().map((entry) => entry.range);
 
 //#endregion
+//#region src/lib/handlers/operatorAdmin/operatorSettings.ts
+const OPERATOR_SETTINGS_NAME = "operator_settings";
+const envBoolean = (name, fallback) => {
+	const raw = `${process.env[name] || ""}`.trim().toLowerCase();
+	if (!raw) return fallback;
+	return [
+		"1",
+		"true",
+		"yes",
+		"on"
+	].includes(raw);
+};
+const envNumber = (name, fallback) => {
+	const value = Number(process.env[name] || "");
+	if (!Number.isFinite(value) || value < 0) return fallback;
+	return value;
+};
+const defaultOperatorSettings = () => {
+	const autoVerifyUsers = envBoolean("PH_AUTO_VERIFY_SIGNUPS", true);
+	return {
+		publicSignupEnabled: envBoolean("PH_PUBLIC_SIGNUP_ENABLED", false),
+		autoVerifyUsers,
+		defaultUserQuota: envNumber("PH_SIGNUP_SUBSCRIPTION_QUANTITY", autoVerifyUsers ? 250 : 0),
+		defaultSubscription: "free",
+		defaultInstancePower: true,
+		defaultInstanceDevMode: true,
+		defaultSyncAdmin: true,
+		defaultAutoVacuum: true,
+		supportEmail: process.env.PH_SUPPORT_EMAIL || "",
+		maintenanceMessage: "",
+		notes: ""
+	};
+};
+const parseSettingsValue = (raw) => {
+	if (!raw) return {};
+	if (typeof raw === "string") try {
+		return JSON.parse(raw);
+	} catch {
+		return {};
+	}
+	return raw;
+};
+const readOperatorSettings = (app = $app) => {
+	const defaults = defaultOperatorSettings();
+	try {
+		const record = app.findFirstRecordByData("settings", "name", OPERATOR_SETTINGS_NAME);
+		return normalizeOperatorSettings({
+			...defaults,
+			...parseSettingsValue(record.get("value"))
+		});
+	} catch {
+		return defaults;
+	}
+};
+const writeOperatorSettings = (settings, app = $app) => {
+	const collection = app.findCollectionByNameOrId("settings");
+	const normalized = normalizeOperatorSettings(settings);
+	const record = (() => {
+		try {
+			return app.findFirstRecordByData("settings", "name", OPERATOR_SETTINGS_NAME);
+		} catch {
+			const newRecord = new Record(collection);
+			newRecord.set("name", OPERATOR_SETTINGS_NAME);
+			return newRecord;
+		}
+	})();
+	record.set("value", normalized);
+	app.save(record);
+	return normalized;
+};
+const normalizeOperatorSettings = (value) => {
+	const defaults = defaultOperatorSettings();
+	const defaultSubscription = `${value.defaultSubscription || defaults.defaultSubscription}`;
+	return {
+		publicSignupEnabled: !!value.publicSignupEnabled,
+		autoVerifyUsers: !!value.autoVerifyUsers,
+		defaultUserQuota: Math.max(0, Math.floor(Number(value.defaultUserQuota ?? defaults.defaultUserQuota) || 0)),
+		defaultSubscription: [
+			"free",
+			"premium",
+			"founder",
+			"flounder",
+			"legacy"
+		].includes(defaultSubscription) ? defaultSubscription : defaults.defaultSubscription,
+		defaultInstancePower: value.defaultInstancePower ?? defaults.defaultInstancePower,
+		defaultInstanceDevMode: value.defaultInstanceDevMode ?? defaults.defaultInstanceDevMode,
+		defaultSyncAdmin: value.defaultSyncAdmin ?? defaults.defaultSyncAdmin,
+		defaultAutoVacuum: value.defaultAutoVacuum ?? defaults.defaultAutoVacuum,
+		supportEmail: `${value.supportEmail || ""}`.trim(),
+		maintenanceMessage: `${value.maintenanceMessage || ""}`.trim(),
+		notes: `${value.notes || ""}`.trim()
+	};
+};
+
+//#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceCreate.ts
 const HandleInstanceCreate = (e) => {
 	const log = mkLog(`POST:instance`);
 	const authRecord = e.auth;
 	log(`authRecord`, JSON.stringify(authRecord));
-	if (!authRecord) throw new Error(`Expected authRecord here`);
+	if (!authRecord) throw new Error(`Session utilisateur attendue`);
 	log(`TOP OF POST`);
 	let data = new DynamicModel({
 		subdomain: "",
@@ -379,20 +475,476 @@ const HandleInstanceCreate = (e) => {
 	log(`after bind`);
 	data = JSON.parse(JSON.stringify(data));
 	const { subdomain, version } = data;
+	const settings = readOperatorSettings();
 	log(`vars`, JSON.stringify({ subdomain }));
-	if (!subdomain) throw new BadRequestError(`Subdomain is required when creating an instance.`);
+	if (!subdomain) throw new BadRequestError(`Le sous-domaine est obligatoire pour créer une instance.`);
 	const collection = $app.findCollectionByNameOrId("instances");
 	const record = new Record(collection);
 	record.set("uid", authRecord.id);
 	record.set("subdomain", subdomain);
-	record.set("power", true);
+	record.set("power", settings.defaultInstancePower);
 	record.set("status", "idle");
 	record.set("version", version);
-	record.set("dev", true);
-	record.set("syncAdmin", true);
-	record.set("autoVacuum", true);
+	record.set("dev", settings.defaultInstanceDevMode);
+	record.set("syncAdmin", settings.defaultSyncAdmin);
+	record.set("autoVacuum", settings.defaultAutoVacuum);
 	$app.save(record);
 	return e.json(200, { instance: record });
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceBackups.ts
+const BACKUP_FORMAT = "gestion-pocketbase-instance-backup-v1";
+const BACKUP_DIRS = [
+	"pb_data",
+	"pb_public",
+	"pb_migrations",
+	"pb_hooks"
+];
+const MAX_STOP_WAIT_SECONDS = 120;
+const DIR_MODE = 493;
+const PRIVATE_DIR_MODE = 448;
+const PRIVATE_FILE_MODE = 384;
+const dataRoot$1 = () => {
+	const envRoot = $os.getenv("DATA_ROOT");
+	if (envRoot) return envRoot;
+	const appDataDir = `${$app.dataDir()}`;
+	const inferred = appDataDir.replace(/\/mothership\/pb_data\/?$/, "");
+	if (inferred !== appDataDir) return inferred;
+	throw new Error("Impossible de trouver le dossier de donnees des instances.");
+};
+const backupRoot = () => $os.getenv("INSTANCE_BACKUP_ROOT") || `${dataRoot$1()}/backups/instances`;
+const assertSafeInstanceId$1 = (id) => {
+	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
+};
+const assertSafeBackupId = (id) => {
+	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant de sauvegarde invalide.");
+};
+const assertSafeBackupFilename = (filename) => {
+	if (!filename.match(/^[a-zA-Z0-9._-]+\.tar\.gz$/)) throw new BadRequestError("Nom de sauvegarde invalide.");
+};
+const instanceRoot$1 = (id) => `${dataRoot$1()}/instances/${id}`;
+const backupDir = (instanceId) => `${backupRoot()}/${instanceId}`;
+const backupPath = (instanceId, filename) => `${backupDir(instanceId)}/${filename}`;
+const pathExists$1 = (path) => {
+	try {
+		$os.stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const fileSize = (path) => {
+	try {
+		return Number($os.stat(path).size());
+	} catch {
+		return 0;
+	}
+};
+const runCommand = (name, ...args) => toString($os.cmd(name, ...args).combinedOutput()).trim();
+const sleepOneSecond = () => {
+	$os.cmd("sleep", "1").combinedOutput();
+};
+const errorMessage = (error$1) => {
+	if (error$1 instanceof Error) return error$1.message;
+	return `${error$1}`;
+};
+const slugForFilename = (value) => {
+	const clean = value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+	return clean.slice(0, 48).replace(/-+$/g, "") || "instance";
+};
+const timestampForFilename = () => (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+const createBackupFilename = (instance, kind) => {
+	const suffix = kind === "pre-restore" ? "pre-restore" : "manual";
+	return `${timestampForFilename()}-${slugForFilename(instance.getString("subdomain"))}-${suffix}-${instance.id}.tar.gz`;
+};
+const findInstance = (id) => {
+	assertSafeInstanceId$1(id);
+	const instance = $app.findRecordById("instances", id);
+	if (!instance) throw new BadRequestError(`Instance ${id} introuvable.`);
+	return instance;
+};
+const requireAuthRecord = (authRecord) => {
+	if (!authRecord) throw new BadRequestError("Session utilisateur attendue.");
+	return authRecord;
+};
+const assertInstanceAccess = (instance, authRecord) => {
+	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
+};
+const serializeBackup = (backup) => ({
+	id: backup.id,
+	user: backup.getString("user"),
+	instance: backup.getString("instance"),
+	kind: backup.getString("kind"),
+	status: backup.getString("status"),
+	filename: backup.getString("filename"),
+	remoteKey: backup.getString("remoteKey"),
+	sizeBytes: Number(backup.get("sizeBytes") || 0),
+	compressedBytes: Number(backup.get("compressedBytes") || 0),
+	checksum: backup.getString("checksum"),
+	error: backup.getString("error"),
+	remoteError: backup.getString("remoteError"),
+	manifest: backup.get("manifest"),
+	created: backup.getString("created"),
+	updated: backup.getString("updated")
+});
+const getBackupRecord = (instance, backupId) => {
+	assertSafeBackupId(backupId);
+	const backup = $app.findRecordById("instance_backups", backupId);
+	if (!backup || backup.getString("instance") !== instance.id) throw new BadRequestError("Sauvegarde introuvable.");
+	return backup;
+};
+const pathValue = (e, name) => {
+	if (!e.request) throw new BadRequestError("Requete invalide.");
+	return e.request.pathValue(name);
+};
+const assertNoRunningOperation = (instanceId) => {
+	let running = null;
+	try {
+		running = $app.findFirstRecordByFilter("instance_backups", "instance = {:instance} && status = \"running\"", { instance: instanceId });
+	} catch (error$1) {
+		running = null;
+	}
+	if (running) throw new BadRequestError("Une operation de sauvegarde est deja en cours pour cette instance.");
+};
+const setInstancePower = (instanceId, power) => {
+	const record = findInstance(instanceId);
+	record.set("power", power);
+	$app.save(record);
+	return record;
+};
+const waitUntilIdle = (instanceId) => {
+	for (let i = 0; i < MAX_STOP_WAIT_SECONDS; i++) {
+		const current = findInstance(instanceId);
+		if (!current.getBool("power") && current.getString("status").toLowerCase() === "idle") return current;
+		sleepOneSecond();
+	}
+	throw new BadRequestError("L'instance ne s'est pas arretee a temps.");
+};
+const stopForFilesystemOperation = (instance) => {
+	const shouldRestart = instance.getBool("power");
+	if (shouldRestart) setInstancePower(instance.id, false);
+	waitUntilIdle(instance.id);
+	return { shouldRestart };
+};
+const restartIfNeeded = (instanceId, managedPower) => {
+	if (!managedPower.shouldRestart) return;
+	try {
+		setInstancePower(instanceId, true);
+	} catch {}
+};
+const createBackupRecord = (instance, authRecord, kind) => {
+	const collection = $app.findCollectionByNameOrId("instance_backups");
+	const backup = new Record(collection);
+	backup.set("user", instance.getString("uid") || authRecord.id);
+	backup.set("instance", instance.id);
+	backup.set("kind", kind);
+	backup.set("status", "running");
+	backup.set("filename", "");
+	backup.set("sizeBytes", 0);
+	backup.set("compressedBytes", 0);
+	backup.set("checksum", "");
+	backup.set("error", "");
+	backup.set("remoteError", "");
+	backup.set("manifest", null);
+	$app.save(backup);
+	return backup;
+};
+const sourceSizeBytes = (root) => {
+	const dirs = BACKUP_DIRS.map((dir) => `${root}/${dir}`);
+	const output = runCommand("du", "-sb", ...dirs);
+	return output.split("\n").map((line) => Number(line.trim().split(/\s+/)[0] || 0)).filter((value) => Number.isFinite(value)).reduce((sum, value) => sum + value, 0);
+};
+const sha256 = (path) => {
+	const output = runCommand("sha256sum", path);
+	return output.split(/\s+/)[0] || "";
+};
+const s3Config = () => {
+	const enabled = ($os.getenv("INSTANCE_BACKUP_S3_ENABLED") || "").toLowerCase() === "true";
+	if (!enabled) return null;
+	const endpoint = $os.getenv("INSTANCE_BACKUP_S3_ENDPOINT");
+	const bucket = $os.getenv("INSTANCE_BACKUP_S3_BUCKET");
+	const prefix = ($os.getenv("INSTANCE_BACKUP_S3_PREFIX") || "instances").replace(/^\/+|\/+$/g, "");
+	const region = $os.getenv("AWS_DEFAULT_REGION") || "auto";
+	if (!endpoint || !bucket) throw new Error("Configuration R2/S3 incomplete: endpoint et bucket requis.");
+	return {
+		endpoint,
+		bucket,
+		prefix,
+		region
+	};
+};
+const remoteKeyFor = (instanceId, filename) => {
+	const config = s3Config();
+	if (!config) return "";
+	return `${config.prefix}/${instanceId}/${filename}`.replace(/^\/+/, "");
+};
+const uploadBackupToS3 = (instanceId, filename, localPath) => {
+	const config = s3Config();
+	if (!config) return "";
+	const remoteKey = remoteKeyFor(instanceId, filename);
+	runCommand("aws", "s3", "cp", localPath, `s3://${config.bucket}/${remoteKey}`, "--endpoint-url", config.endpoint, "--region", config.region);
+	return remoteKey;
+};
+const downloadBackupFromS3 = (remoteKey, localPath) => {
+	const config = s3Config();
+	if (!config) throw new Error("La sauvegarde locale est absente et R2/S3 est desactive.");
+	runCommand("aws", "s3", "cp", `s3://${config.bucket}/${remoteKey}`, localPath, "--endpoint-url", config.endpoint, "--region", config.region);
+};
+const deleteBackupFromS3 = (remoteKey) => {
+	const config = s3Config();
+	if (!config || !remoteKey) return "";
+	return runCommand("aws", "s3", "rm", `s3://${config.bucket}/${remoteKey}`, "--endpoint-url", config.endpoint, "--region", config.region);
+};
+const ensureInstanceDirs = (root) => {
+	$os.mkdirAll(root, DIR_MODE);
+	for (const dir of BACKUP_DIRS) $os.mkdirAll(`${root}/${dir}`, DIR_MODE);
+};
+const createArchive = (instance, backup, kind) => {
+	assertSafeInstanceId$1(instance.id);
+	const root = instanceRoot$1(instance.id);
+	const dir = backupDir(instance.id);
+	const filename = createBackupFilename(instance, kind);
+	const finalPath = backupPath(instance.id, filename);
+	const tmpPath = `${finalPath}.tmp`;
+	const stagingDir = `${dir}/.staging-${backup.id}`;
+	const manifestPath = `${stagingDir}/manifest.json`;
+	assertSafeBackupFilename(filename);
+	$os.mkdirAll(dir, DIR_MODE);
+	$os.removeAll(stagingDir);
+	$os.mkdirAll(stagingDir, PRIVATE_DIR_MODE);
+	$os.removeAll(tmpPath);
+	ensureInstanceDirs(root);
+	const sizeBytes = sourceSizeBytes(root);
+	const manifest = {
+		format: BACKUP_FORMAT,
+		createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+		kind,
+		instance: {
+			id: instance.id,
+			subdomain: instance.getString("subdomain"),
+			version: instance.getString("version"),
+			dev: instance.getBool("dev"),
+			syncAdmin: instance.getBool("syncAdmin"),
+			autoVacuum: instance.getBool("autoVacuum")
+		},
+		included: BACKUP_DIRS,
+		excluded: ["logs"],
+		sourceSizeBytes: sizeBytes
+	};
+	try {
+		$os.writeFile(manifestPath, JSON.stringify(manifest, null, 2), PRIVATE_FILE_MODE);
+		runCommand("tar", "-czf", tmpPath, "-C", root, ...BACKUP_DIRS, "-C", stagingDir, "manifest.json");
+		$os.rename(tmpPath, finalPath);
+	} finally {
+		try {
+			$os.remove(tmpPath);
+		} catch {}
+		try {
+			$os.removeAll(stagingDir);
+		} catch {}
+	}
+	return {
+		filename,
+		localPath: finalPath,
+		sizeBytes,
+		compressedBytes: fileSize(finalPath),
+		checksum: sha256(finalPath),
+		manifest
+	};
+};
+const markBackupReady = (backup, details) => {
+	backup.set("status", "ready");
+	backup.set("filename", details.filename);
+	backup.set("localPath", details.localPath);
+	backup.set("sizeBytes", details.sizeBytes);
+	backup.set("compressedBytes", details.compressedBytes);
+	backup.set("checksum", details.checksum);
+	backup.set("manifest", details.manifest);
+	backup.set("error", "");
+	try {
+		const remoteKey = uploadBackupToS3(backup.getString("instance"), details.filename, details.localPath);
+		backup.set("remoteKey", remoteKey);
+		backup.set("remoteError", "");
+	} catch (error$1) {
+		backup.set("remoteError", errorMessage(error$1));
+	}
+	$app.save(backup);
+};
+const markBackupFailed = (backup, error$1) => {
+	backup.set("status", "failed");
+	backup.set("error", errorMessage(error$1));
+	$app.save(backup);
+};
+const createBackupForInstance = (instance, authRecord, kind, managePower, skipRunningCheck = false) => {
+	if (!skipRunningCheck) assertNoRunningOperation(instance.id);
+	const backup = createBackupRecord(instance, authRecord, kind);
+	let power = { shouldRestart: false };
+	try {
+		if (managePower) power = stopForFilesystemOperation(instance);
+		else waitUntilIdle(instance.id);
+		const stoppedInstance = findInstance(instance.id);
+		const details = createArchive(stoppedInstance, backup, kind);
+		markBackupReady(backup, details);
+		return backup;
+	} catch (error$1) {
+		markBackupFailed(backup, error$1);
+		throw error$1;
+	} finally {
+		if (managePower) restartIfNeeded(instance.id, power);
+	}
+};
+const safeTarEntry = (entry) => {
+	const normalized = entry.replace(/^\.\/+/, "");
+	const parts = normalized.split("/");
+	return !!normalized && !normalized.startsWith("/") && !normalized.startsWith("../") && !parts.includes("..");
+};
+const validateArchiveListing = (archivePath) => {
+	const output = runCommand("tar", "-tzf", archivePath);
+	const entries = output.split("\n").map((entry) => entry.trim()).filter(Boolean);
+	if (!entries.length) throw new BadRequestError("Archive vide.");
+	for (const entry of entries) if (!safeTarEntry(entry)) throw new BadRequestError("Archive invalide.");
+};
+const ensureLocalArchive = (instance, backup) => {
+	const filename = backup.getString("filename");
+	assertSafeBackupFilename(filename);
+	const localPath = backupPath(instance.id, filename);
+	if (pathExists$1(localPath)) return localPath;
+	const remoteKey = backup.getString("remoteKey");
+	if (!remoteKey) throw new BadRequestError("Archive locale introuvable.");
+	$os.mkdirAll(backupDir(instance.id), DIR_MODE);
+	downloadBackupFromS3(remoteKey, localPath);
+	backup.set("localPath", localPath);
+	backup.set("remoteError", "");
+	$app.save(backup);
+	return localPath;
+};
+const readManifest = (extractDir) => {
+	const raw = toString($os.readFile(`${extractDir}/manifest.json`));
+	const manifest = JSON.parse(raw);
+	if (!manifest || manifest.format !== BACKUP_FORMAT) throw new BadRequestError("Format de sauvegarde non pris en charge.");
+	return manifest;
+};
+const restoreExtractedDirs = (instance, extractDir) => {
+	const root = instanceRoot$1(instance.id);
+	const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`;
+	$os.mkdirAll(root, DIR_MODE);
+	$os.mkdirAll(rollbackDir, PRIVATE_DIR_MODE);
+	let movedOldDirs = false;
+	try {
+		for (const dir of BACKUP_DIRS) {
+			const source = `${extractDir}/${dir}`;
+			if (!pathExists$1(source)) throw new BadRequestError(`Archive incomplete: ${dir} manquant.`);
+		}
+		for (const dir of BACKUP_DIRS) {
+			const current = `${root}/${dir}`;
+			if (pathExists$1(current)) $os.rename(current, `${rollbackDir}/${dir}`);
+		}
+		movedOldDirs = true;
+		for (const dir of BACKUP_DIRS) $os.rename(`${extractDir}/${dir}`, `${root}/${dir}`);
+		$os.removeAll(rollbackDir);
+	} catch (error$1) {
+		if (movedOldDirs) for (const dir of BACKUP_DIRS) {
+			try {
+				$os.removeAll(`${root}/${dir}`);
+			} catch {}
+			try {
+				if (pathExists$1(`${rollbackDir}/${dir}`)) $os.rename(`${rollbackDir}/${dir}`, `${root}/${dir}`);
+			} catch {}
+		}
+		try {
+			$os.removeAll(rollbackDir);
+		} catch {}
+		throw error$1;
+	}
+};
+const restoreArchive = (instance, backup) => {
+	const archivePath = ensureLocalArchive(instance, backup);
+	validateArchiveListing(archivePath);
+	const extractDir = `${instanceRoot$1(instance.id)}/.restore-extract-${backup.id}`;
+	$os.mkdirAll(instanceRoot$1(instance.id), DIR_MODE);
+	$os.removeAll(extractDir);
+	$os.mkdirAll(extractDir, PRIVATE_DIR_MODE);
+	try {
+		runCommand("tar", "-xzf", archivePath, "-C", extractDir);
+		const manifest = readManifest(extractDir);
+		restoreExtractedDirs(instance, extractDir);
+		if (manifest.instance?.version) {
+			const current = findInstance(instance.id);
+			current.set("version", manifest.instance.version);
+			$app.save(current);
+		}
+	} finally {
+		try {
+			$os.removeAll(extractDir);
+		} catch {}
+	}
+};
+const HandleInstanceBackupCreate = (e) => {
+	const log = mkLog("POST:instance:backup");
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const backup = createBackupForInstance(instance, authRecord, "manual", true);
+	log(`created ${backup.id} for ${instance.id}`);
+	return e.json(200, { backup: serializeBackup(backup) });
+};
+const HandleInstanceBackupsList = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const backups = $app.findRecordsByFilter("instance_backups", "instance = {:instance}", "-created", 100, 0, { instance: instance.id }).filter((record) => !!record).map(serializeBackup);
+	return e.json(200, { backups });
+};
+const HandleInstanceBackupDownload = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue(e, "backupId"));
+	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
+	const localPath = ensureLocalArchive(instance, backup);
+	const filename = backup.getString("filename");
+	e.response.header().set("Content-Disposition", `attachment; filename="${filename}"`);
+	e.response.header().set("Content-Length", `${fileSize(localPath)}`);
+	return e.fileFS($os.dirFS(backupDir(instance.id)), filename);
+};
+const HandleInstanceBackupDelete = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue(e, "backupId"));
+	const filename = backup.getString("filename");
+	if (filename) {
+		assertSafeBackupFilename(filename);
+		try {
+			$os.remove(backupPath(instance.id, filename));
+		} catch {}
+	}
+	try {
+		deleteBackupFromS3(backup.getString("remoteKey"));
+	} catch {}
+	$app.delete(backup);
+	return e.json(200, { status: "ok" });
+};
+const HandleInstanceBackupRestore = (e) => {
+	const log = mkLog("POST:instance:backup:restore");
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	assertNoRunningOperation(instance.id);
+	const backup = getBackupRecord(instance, pathValue(e, "backupId"));
+	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
+	const power = stopForFilesystemOperation(instance);
+	let restored = false;
+	try {
+		createBackupForInstance(findInstance(instance.id), authRecord, "pre-restore", false, true);
+		restoreArchive(findInstance(instance.id), backup);
+		restored = true;
+		log(`restored ${backup.id} into ${instance.id}`);
+	} finally {
+		if (restored) restartIfNeeded(instance.id, power);
+	}
+	return e.json(200, { status: "ok" });
 };
 
 //#endregion
@@ -410,11 +962,122 @@ const HandleInstanceDelete = (e) => {
 	log(`authRecord`, JSON.stringify(authRecord));
 	if (!authRecord) throw new BadRequestError(`Expected authRecord here`);
 	const record = $app.findRecordById("instances", id);
-	if (!record) throw new BadRequestError(`Instance ${id} not found.`);
+	if (!record) throw new BadRequestError(`Instance ${id} introuvable.`);
 	if (record.get("uid") !== authRecord.id) throw new BadRequestError(`Not authorized`);
-	if (record.getString("status").toLowerCase() !== "idle") throw new BadRequestError(`Instance must be shut down first.`);
+	if (record.getString("status").toLowerCase() !== "idle") throw new BadRequestError(`L'instance doit d'abord être arrêtée.`);
 	$app.delete(record);
 	return e.json(200, { status: "ok" });
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceDuplicate.ts
+const COPY_DIRS = [
+	"pb_data",
+	"pb_migrations",
+	"pb_public",
+	"pb_hooks"
+];
+const dataRoot = () => {
+	const envRoot = $os.getenv("DATA_ROOT");
+	if (envRoot) return envRoot;
+	const appDataDir = `${$app.dataDir()}`;
+	const inferred = appDataDir.replace(/\/mothership\/pb_data\/?$/, "");
+	if (inferred !== appDataDir) return inferred;
+	throw new Error("Impossible de trouver le dossier de donnees des instances.");
+};
+const assertSafeInstanceId = (id) => {
+	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
+};
+const instanceRoot = (id) => `${dataRoot()}/instances/${id}`;
+const pathExists = (path) => {
+	try {
+		$os.stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const copyDirectory = (source, target) => {
+	$os.mkdirAll(target, 493);
+	$os.cmd("cp", "-a", `${source}/.`, target).combinedOutput();
+};
+const copyInstanceFiles = (sourceId, targetId) => {
+	assertSafeInstanceId(sourceId);
+	assertSafeInstanceId(targetId);
+	const sourceRoot = instanceRoot(sourceId);
+	const targetRoot = instanceRoot(targetId);
+	$os.mkdirAll(targetRoot, 493);
+	for (const dir of COPY_DIRS) {
+		const source = `${sourceRoot}/${dir}`;
+		const target = `${targetRoot}/${dir}`;
+		$os.removeAll(target);
+		if (pathExists(source)) copyDirectory(source, target);
+		else $os.mkdirAll(target, 493);
+	}
+};
+const normalizeBaseSubdomain = (subdomain) => {
+	const clean = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+	const base = clean.match(/^[a-z]/) ? clean : `base-${clean}`;
+	return base.slice(0, 34).replace(/-+$/g, "") || "base";
+};
+const subdomainExists = (subdomain) => {
+	try {
+		$app.findFirstRecordByData("instances", "subdomain", subdomain);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const suggestDuplicateSubdomain = (sourceSubdomain) => {
+	const base = normalizeBaseSubdomain(sourceSubdomain);
+	const fixed = `${base.slice(0, 34).replace(/-+$/g, "")}-copy`;
+	if (fixed.match(/^[a-z][a-z0-9-]{2,39}$/) && !subdomainExists(fixed)) return fixed;
+	for (let i = 0; i < 25; i++) {
+		const suffix = $security.randomStringWithAlphabet(5 + Math.min(i, 4), "abcdefghijklmnopqrstuvwxyz0123456789");
+		const candidate = `${base.slice(0, 39 - suffix.length).replace(/-+$/g, "")}-${suffix}`;
+		if (candidate.match(/^[a-z][a-z0-9-]{2,39}$/) && !subdomainExists(candidate)) return candidate;
+	}
+	throw new BadRequestError("Impossible de generer un nom d'instance disponible.");
+};
+const HandleInstanceDuplicate = (e) => {
+	const log = mkLog(`POST:instance:duplicate`);
+	const authRecord = e.auth;
+	if (!authRecord) throw new BadRequestError(`Session utilisateur attendue`);
+	const sourceId = e.request.pathValue("id");
+	assertSafeInstanceId(sourceId);
+	const source = $app.findRecordById("instances", sourceId);
+	if (!source) throw new BadRequestError(`Instance ${sourceId} introuvable.`);
+	if (source.get("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError(`Non autorise`);
+	if (source.getBool("power") || source.getString("status").toLowerCase() !== "idle") throw new BadRequestError("Eteignez l'instance avant de dupliquer sa base.");
+	const collection = $app.findCollectionByNameOrId("instances");
+	const target = new Record(collection);
+	const targetSubdomain = suggestDuplicateSubdomain(source.getString("subdomain"));
+	target.set("uid", authRecord.id);
+	target.set("subdomain", targetSubdomain);
+	target.set("status", "idle");
+	target.set("power", false);
+	target.set("version", source.getString("version"));
+	target.set("dev", source.getBool("dev"));
+	target.set("syncAdmin", source.getBool("syncAdmin"));
+	target.set("autoVacuum", source.getBool("autoVacuum"));
+	target.set("secrets", source.get("secrets"));
+	target.set("webhooks", source.get("webhooks"));
+	try {
+		$app.save(target);
+		target.set("autoVacuum", source.getBool("autoVacuum"));
+		$app.save(target);
+		copyInstanceFiles(source.id, target.id);
+		log(`duplicated ${source.id} to ${target.id}`);
+	} catch (error$1) {
+		try {
+			if (target.id) $app.delete(target);
+		} catch {}
+		try {
+			if (target.id) $os.removeAll(instanceRoot(target.id));
+		} catch {}
+		throw new ApiError(500, `Impossible de dupliquer la base.`, { error: error$1 });
+	}
+	return e.json(200, { instance: target });
 };
 
 //#endregion
@@ -470,8 +1133,8 @@ const callCloudflareAPI = (endpoint, method, body, log) => {
 		const response = $http.send(config);
 		if (log) log(`Cloudflare API response:`, response);
 		return response;
-	} catch (error) {
-		if (log) log(`Cloudflare API error:`, error);
+	} catch (error$1) {
+		if (log) log(`Cloudflare API error:`, error$1);
 		return null;
 	}
 };
@@ -521,18 +1184,20 @@ const HandleInstanceUpdate = (e) => {
 	const record = $app.findRecordById("instances", id);
 	const authRecord = e.auth;
 	log(`authRecord`, JSON.stringify(authRecord));
-	if (!authRecord) throw new Error(`Expected authRecord here`);
-	if (record.get("uid") !== authRecord.id) throw new BadRequestError(`Not authorized`);
+	if (!authRecord) throw new Error(`Session utilisateur attendue`);
+	if (record.get("uid") !== authRecord.id) throw new BadRequestError(`Non autorisé`);
 	const oldCname = record.getString("cname").trim();
 	const newCname = cname !== null ? cname.trim() : null;
 	const cnameChanged = newCname !== null && oldCname !== newCname;
 	if (cnameChanged && newCname.length > 0) {
 		log(`CNAME changed from "${oldCname}" to "${newCname}" - adding to Cloudflare`);
-		if (createCloudflareCustomHostname(newCname, log)) log(`Cloudflare API call completed for "${newCname}" - frontend will poll for health`);
+		const createResponse = createCloudflareCustomHostname(newCname, log);
+		if (createResponse) log(`Cloudflare API call completed for "${newCname}" - frontend will poll for health`);
 	}
 	const recordAutoVacuum = record.getBool("autoVacuum");
-	if (subdomain !== null && subdomain !== record.getString("subdomain") || version !== null && version !== record.getString("version") || syncAdmin !== null && syncAdmin !== record.getBool("syncAdmin") || autoVacuum !== null && autoVacuum !== recordAutoVacuum || dev !== null && dev !== record.getBool("dev") || cnameChanged) {
-		if (record.getBool("power") || record.getString("status").toLowerCase() !== "idle") throw new BadRequestError(`Instance must be powered off first.`);
+	const advancedFieldChanging = subdomain !== null && subdomain !== record.getString("subdomain") || version !== null && version !== record.getString("version") || syncAdmin !== null && syncAdmin !== record.getBool("syncAdmin") || autoVacuum !== null && autoVacuum !== recordAutoVacuum || dev !== null && dev !== record.getBool("dev") || cnameChanged;
+	if (advancedFieldChanging) {
+		if (record.getBool("power") || record.getString("status").toLowerCase() !== "idle") throw new BadRequestError(`L'instance doit d'abord être éteinte.`);
 	}
 	const sanitized = removeEmptyKeys({
 		subdomain,
@@ -563,7 +1228,8 @@ const HandleMigrateCnamesToDomains = (_e) => {
 	const log = mkLog(`bootstrap:migrate-cnames`);
 	log(`Starting cname to domains migration`);
 	try {
-		if (!$app.findCollectionByNameOrId("domains")) {
+		const domainsCollection = $app.findCollectionByNameOrId("domains");
+		if (!domainsCollection) {
 			log(`Domains collection not found, skipping migration`);
 			return;
 		}
@@ -588,8 +1254,8 @@ const HandleMigrateCnamesToDomains = (_e) => {
 					domainExists = true;
 				} catch (e) {}
 				if (!domainExists) {
-					const domainsCollection = $app.findCollectionByNameOrId("domains");
-					const domainRecord = new Record(domainsCollection);
+					const domainsCollection$1 = $app.findCollectionByNameOrId("domains");
+					const domainRecord = new Record(domainsCollection$1);
 					domainRecord.set("instance", instanceId);
 					domainRecord.set("domain", cname);
 					domainRecord.set("active", instance.getBool("cname_active"));
@@ -597,8 +1263,8 @@ const HandleMigrateCnamesToDomains = (_e) => {
 					log(`Created domain record for ${cname}`);
 					cnameMigrated++;
 				}
-			} catch (error) {
-				log(`Failed to migrate cname for instance ${instance.id}:`, error);
+			} catch (error$1) {
+				log(`Failed to migrate cname for instance ${instance.id}:`, error$1);
 			}
 		});
 		log(`Phase 1 complete: migrated ${cnameMigrated} cnames to domains collection`);
@@ -628,13 +1294,13 @@ const HandleMigrateCnamesToDomains = (_e) => {
 					log(`Updated instance ${instanceId}: added ${missingIds.length} domain IDs to domains array`);
 					instancesUpdated++;
 				}
-			} catch (error) {
-				log(`Failed to update domains array for instance ${instanceId}:`, error);
+			} catch (error$1) {
+				log(`Failed to update domains array for instance ${instanceId}:`, error$1);
 			}
 		});
 		log(`Phase 2 complete: updated domains arrays for ${instancesUpdated} instances`);
-	} catch (error) {
-		log(`Error migrating cnames: ${error}`);
+	} catch (error$1) {
+		log(`Error migrating cnames: ${error$1}`);
 	}
 };
 
@@ -651,11 +1317,12 @@ const HandleMigrateInstanceVersions = (_e) => {
 		const newVersion = (() => {
 			if (v.startsWith(`~`)) {
 				const [major, minor] = v.slice(1).split(".");
-				return [
+				const newVersion$1 = [
 					major,
 					minor,
 					"*"
 				].join(".");
+				return newVersion$1;
 			} else if (v === `^0` || v === `0` || v === "1") return versions[0];
 			return v;
 		})();
@@ -684,7 +1351,8 @@ const mkAudit = (log, app) => {
 //#endregion
 //#region src/lib/handlers/instance/model/AfterCreate_notify_discord.ts
 const AfterCreate_notify_discord = (e) => {
-	const audit = mkAudit(mkLog(`instances:create:discord:notify`), $app);
+	const log = mkLog(`instances:create:discord:notify`);
+	const audit = mkAudit(log, $app);
 	const record = e.record;
 	if (!record) return;
 	const webhookUrl = process.env.DISCORD_STREAM_CHANNEL_URL;
@@ -698,8 +1366,8 @@ const AfterCreate_notify_discord = (e) => {
 			headers: { "content-type": "application/json" },
 			timeout: 5
 		});
-	} catch (e) {
-		audit(`ERROR`, `Instance creation discord notify failed with ${e}`);
+	} catch (e$1) {
+		audit(`ERROR`, `Instance creation discord notify failed with ${e$1}`);
 	}
 };
 
@@ -719,14 +1387,15 @@ const BeforeUpdate_cname = (e) => {
 	const newCname = record.get("cname").trim();
 	if (newCname.length > 0) {
 		const result = new DynamicModel({ id: "" });
-		if ((() => {
+		const inUse = (() => {
 			try {
 				$app.db().newQuery(`select id from instances where cname='${newCname}' and id <> '${id}'`).one(result);
-			} catch (e) {
+			} catch (e$1) {
 				return false;
 			}
 			return true;
-		})()) {
+		})();
+		if (inUse) {
 			const msg = `[ERROR] [${id}] Custom domain ${newCname} already in use.`;
 			log(`${msg}`);
 			throw new BadRequestError(msg);
@@ -842,12 +1511,12 @@ const HandleLemonSqueezySale = (e) => {
 		const userRec = (() => {
 			try {
 				return $app.findFirstRecordByData("users", "id", context.user_id);
-			} catch (e) {
+			} catch (e$1) {
 				throw new Error(`User ${context.user_id} not found`);
 			}
 		})();
 		log(`user record ok`, userRec);
-		const event_handler = {
+		const event_name_map = {
 			order_created: () => {
 				signup_finalizer();
 			},
@@ -860,10 +1529,11 @@ const HandleLemonSqueezySale = (e) => {
 			subscription_payment_refunded: () => {
 				signup_canceller();
 			}
-		}[context.event_name];
+		};
+		const event_handler = event_name_map[context.event_name];
 		if (!event_handler) throw new Error(`Unsupported event: ${context.event_name}`);
 		else log(`event handler ok`, event_handler);
-		const product_handler = {
+		const product_handler_map = {
 			[FOUNDER_ANNUAL_PV_ID]: () => {
 				userRec.set(`subscription`, `founder`);
 				userRec.set(`subscription_interval`, `year`);
@@ -909,7 +1579,8 @@ const HandleLemonSqueezySale = (e) => {
 				userRec.set(`subscription_interval`, `life`);
 				userRec.set(`subscription_quantity`, 250);
 			}
-		}[pv_id];
+		};
+		const product_handler = product_handler_map[pv_id];
 		if (!product_handler) throw new Error(`No product handler for ${pv_id}`);
 		else log(`product handler ok`, pv_id);
 		const signup_finalizer = () => {
@@ -977,7 +1648,8 @@ const HandleMailSend = (e) => {
 	log(`bind parsed`, JSON.stringify(data));
 	const { to, subject, body } = data;
 	try {
-		const skipReason = mailRecipientSkipReason($app.findFirstRecordByData("users", "email", to));
+		const user = $app.findFirstRecordByData("users", "email", to);
+		const skipReason = mailRecipientSkipReason(user);
 		if (skipReason) {
 			log(`skipped ${to}: ${skipReason}`);
 			return e.json(200, {
@@ -994,12 +1666,13 @@ const HandleMailSend = (e) => {
 			name: $app.settings().meta.senderName
 		},
 		to: [{ address: to }],
-		bcc: [process.env.TEST_EMAIL].filter((e) => !!e).map((e) => ({ address: e })),
+		bcc: [process.env.TEST_EMAIL].filter((e$1) => !!e$1).map((e$1) => ({ address: e$1 })),
 		subject,
 		html: body
 	});
 	$app.newMailClient().send(email);
-	log(`Sent to ${to}`);
+	const msg = `Sent to ${to}`;
+	log(msg);
 	return e.json(200, { status: "ok" });
 };
 
@@ -1035,9 +1708,11 @@ const HandleMetaUpdateAtBoot = (_e) => {
 //#region src/lib/handlers/mirror/lib/buildMirrorDump.ts
 const exportRecord = (record) => record.publicExport();
 const buildMirrorDump = (app) => {
+	const users = app.findRecordsByFilter(`users`, `verified = true`).filter((r) => !!r).map(exportRecord);
+	const instances = app.findAllRecords(`instances`, $dbx.exp(`instances.uid in (select id from users where verified = 1)`)).filter((r) => !!r).map(exportRecord);
 	return {
-		users: app.findRecordsByFilter(`users`, `verified = true`).filter((r) => !!r).map(exportRecord),
-		instances: app.findAllRecords(`instances`, $dbx.exp(`instances.uid in (select id from users where verified = 1)`)).filter((r) => !!r).map(exportRecord)
+		users,
+		instances
 	};
 };
 
@@ -1151,7 +1826,8 @@ const mkNotificationProcessor = (log, app, test = false) => (notificationRec) =>
 					timeout: 5
 				};
 				log(`sending discord message`, params);
-				log(`discord sent`, $http.send(params));
+				const res = $http.send(params);
+				log(`discord sent`, res);
 			}
 			break;
 		default: throw new Error(`Unsupported channel: ${channel}`);
@@ -1190,10 +1866,11 @@ const HandleProcessNotification = (e) => {
 	log({ notificationRec });
 	try {
 		$app.expandRecord(notificationRec, ["message_template"]);
-		if (!notificationRec.expandedOne(`message_template`)) throw new Error(`Missing message template`);
+		const messageTemplateRec = notificationRec.expandedOne(`message_template`);
+		if (!messageTemplateRec) throw new Error(`Missing message template`);
 		processNotification(notificationRec);
-	} catch (e) {
-		audit(`ERROR`, `${e}`, { notification: notificationRec.id });
+	} catch (e$1) {
+		audit(`ERROR`, `${e$1}`, { notification: notificationRec.id });
 	}
 };
 
@@ -1218,15 +1895,163 @@ const HandleUserWelcomeMessage = (e) => {
 		const uid = newModel.id;
 		notify(`email`, `welcome`, uid);
 		newModel.set(`welcome`, new DateTime());
-	} catch (e) {
-		audit(`ERROR`, `${e}`, { user: newModel.id });
+	} catch (e$1) {
+		audit(`ERROR`, `${e$1}`, { user: newModel.id });
 	}
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/auth.ts
+const requireOperatorAdmin = (e) => {
+	const authRecord = e.auth;
+	if (!authRecord) throw new UnauthorizedError("Authentification requise.");
+	if (!authRecord.getBool("superAdmin")) throw new ForbiddenError("Acces superadmin requis.");
+	return authRecord;
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/api.ts
+const readJsonBody = (e) => {
+	const rawBody = readerToString(e.request.body);
+	if (!rawBody.trim()) return {};
+	try {
+		return JSON.parse(rawBody);
+	} catch (error$1) {
+		throw new BadRequestError(`Impossible d'analyser la requete JSON.`, error$1);
+	}
+};
+const suggestUniqueAuthRecordUsername$1 = (collection, baseUsername) => {
+	let username = baseUsername;
+	for (let i = 0; i < 10; i++) {
+		try {
+			const total = $app.countRecords(collection, $dbx.exp("LOWER([[username]])={:username}", { username: username.toLowerCase() }));
+			if (total === 0) break;
+		} catch {}
+		username = baseUsername + $security.randomStringWithAlphabet(3 + i, "123456789");
+	}
+	return username;
+};
+const userExists = (email, exceptId = "") => {
+	try {
+		const user = $app.findFirstRecordByData("users", "email", email);
+		return user.id !== exceptId;
+	} catch {
+		return false;
+	}
+};
+const countInstancesForUser = (userId) => {
+	try {
+		return $app.countRecords("instances", $dbx.exp("uid = {:uid}", { uid: userId }));
+	} catch {
+		return 0;
+	}
+};
+const serializeUser = (record) => ({
+	id: record.id,
+	email: record.getString("email"),
+	username: record.getString("username"),
+	name: record.getString("name"),
+	verified: record.getBool("verified"),
+	superAdmin: record.getBool("superAdmin"),
+	subscription: record.getString("subscription") || "free",
+	subscription_interval: record.getString("subscription_interval"),
+	subscription_quantity: Number(record.get("subscription_quantity") || 0),
+	suspension: record.getString("suspension"),
+	created: record.getString("created"),
+	updated: record.getString("updated"),
+	instanceCount: countInstancesForUser(record.id)
+});
+const listOperatorUsers = () => $app.findRecordsByFilter("users", "id != \"\"", "-created").filter((record) => !!record).map(serializeUser);
+const ensureAnotherSuperAdminExists = (currentUserId) => {
+	const superAdmins = $app.findRecordsByFilter("users", "superAdmin = true").filter((record) => !!record);
+	if (superAdmins.length <= 1 && superAdmins[0]?.id === currentUserId) throw new BadRequestError("Impossible de retirer le dernier superadmin.");
+};
+const HandleOperatorAdminOverview = (e) => {
+	requireOperatorAdmin(e);
+	const users = listOperatorUsers();
+	const totalInstances = $app.countRecords("instances");
+	return e.json(200, {
+		settings: readOperatorSettings(),
+		users,
+		stats: {
+			totalUsers: users.length,
+			verifiedUsers: users.filter((user) => user.verified).length,
+			superAdmins: users.filter((user) => user.superAdmin).length,
+			totalInstances,
+			suspendedUsers: users.filter((user) => !!user.suspension).length
+		}
+	});
+};
+const HandleOperatorAdminCreateUser = (e) => {
+	const log = mkLog("operator-admin:create-user");
+	requireOperatorAdmin(e);
+	const settings = readOperatorSettings();
+	const body = readJsonBody(e);
+	const email = `${body.email || ""}`.trim().toLowerCase();
+	const password = `${body.password || ""}`.trim();
+	if (!email) throw new BadRequestError("L'email est obligatoire.");
+	if (userExists(email)) throw new BadRequestError("Ce compte existe deja.");
+	if (password.length < 8) throw new BadRequestError("Le mot de passe doit contenir au moins 8 caracteres.");
+	const collection = $app.findCollectionByNameOrId("users");
+	const record = new Record(collection);
+	const username = suggestUniqueAuthRecordUsername$1("users", "user" + $security.randomStringWithAlphabet(5, "123456789"));
+	record.set("username", username);
+	record.set("email", email);
+	record.set("subscription", body.subscription || settings.defaultSubscription);
+	record.set("subscription_quantity", body.subscription_quantity ?? settings.defaultUserQuota);
+	record.set("verified", body.verified ?? settings.autoVerifyUsers);
+	record.set("superAdmin", !!body.superAdmin);
+	record.set("suspension", `${body.suspension || ""}`.trim());
+	record.setPassword(password);
+	$app.save(record);
+	log(`created ${email}`);
+	if (!record.getBool("verified")) $mails.sendRecordVerification($app, record);
+	return e.json(200, { user: serializeUser(record) });
+};
+const HandleOperatorAdminUpdateUser = (e) => {
+	requireOperatorAdmin(e);
+	const id = e.request.pathValue("id");
+	if (!id) throw new BadRequestError("L'identifiant utilisateur est obligatoire.");
+	const body = readJsonBody(e);
+	const record = $app.findRecordById("users", id);
+	if (typeof body.email === "string") {
+		const email = body.email.trim().toLowerCase();
+		if (!email) throw new BadRequestError("L'email est obligatoire.");
+		if (userExists(email, id)) throw new BadRequestError("Cet email est deja utilise.");
+		record.set("email", email);
+	}
+	if (typeof body.password === "string" && body.password.trim()) {
+		const password = body.password.trim();
+		if (password.length < 8) throw new BadRequestError("Le mot de passe doit contenir au moins 8 caracteres.");
+		record.setPassword(password);
+	}
+	if (typeof body.verified === "boolean") record.set("verified", body.verified);
+	if (typeof body.subscription === "string") record.set("subscription", body.subscription);
+	if (typeof body.subscription_quantity !== "undefined") record.set("subscription_quantity", Math.max(0, Math.floor(Number(body.subscription_quantity) || 0)));
+	if (typeof body.suspension === "string") record.set("suspension", body.suspension.trim());
+	if (typeof body.superAdmin === "boolean") {
+		if (!body.superAdmin && record.getBool("superAdmin")) ensureAnotherSuperAdminExists(record.id);
+		record.set("superAdmin", body.superAdmin);
+	}
+	$app.save(record);
+	return e.json(200, { user: serializeUser(record) });
+};
+const HandleOperatorAdminUpdateSettings = (e) => {
+	requireOperatorAdmin(e);
+	const current = readOperatorSettings();
+	const body = readJsonBody(e);
+	const settings = writeOperatorSettings(normalizeOperatorSettings({
+		...current,
+		...body
+	}));
+	return e.json(200, { settings });
 };
 
 //#endregion
 //#region src/lib/handlers/outpost/api/HandleOutpostUnsubscribe.ts
 const HandleOutpostUnsubscribe = (e) => {
-	const audit = mkAudit(mkLog(`unsubscribe`), $app);
+	const log = mkLog(`unsubscribe`);
+	const audit = mkAudit(log, $app);
 	const id = e.request.url.query().get("e");
 	try {
 		const record = $app.findRecordById("users", id);
@@ -1248,7 +2073,7 @@ const HandleOutpostUnsubscribe = (e) => {
 		return e.html(200, `<p>${email} has been unsubscribed.`);
 	} catch (_err) {
 		audit("UNSUBSCRIBE_ERR", `User ${id} not found`);
-		return e.html(200, `<p>Looks like you're already unsubscribed.`);
+		return e.html(200, `<p>Vous êtes déjà désabonné.`);
 	}
 };
 
@@ -3232,7 +4057,7 @@ const wordList = [
 const shortestWordSize = wordList.reduce((shortestWord, currentWord) => currentWord.length < shortestWord.length ? currentWord : shortestWord).length;
 const longestWordSize = wordList.reduce((longestWord, currentWord) => currentWord.length > longestWord.length ? currentWord : longestWord).length;
 function generate(options) {
-	const { minLength, maxLength, ...rest } = options || {};
+	const { minLength, maxLength,...rest } = options || {};
 	function word() {
 		let min = typeof minLength !== "number" ? shortestWordSize : limitWordSize(minLength);
 		const max = typeof maxLength !== "number" ? longestWordSize : limitWordSize(maxLength);
@@ -3254,7 +4079,8 @@ function generate(options) {
 		return wordSize;
 	}
 	function randInt(lessThan) {
-		return Math.floor(Math.random() * lessThan);
+		const r = Math.random();
+		return Math.floor(r * lessThan);
 	}
 	if (options === void 0) return word();
 	if (typeof options === "number") options = { exactly: options };
@@ -3264,7 +4090,7 @@ function generate(options) {
 		options.max = options.exactly;
 	}
 	if (typeof options.wordsPerString !== "number") options.wordsPerString = 1;
-	if (typeof options.formatter !== "function") options.formatter = (word) => word;
+	if (typeof options.formatter !== "function") options.formatter = (word$1) => word$1;
 	if (typeof options.separator !== "string") options.separator = " ";
 	const total = options.min + randInt(options.max + 1 - options.min);
 	let results = [];
@@ -3290,9 +4116,9 @@ const HandleSignupCheck = (e) => {
 	const instanceName = (() => {
 		const name = (e.request.url.query().get("name") || "").trim();
 		if (name) {
-			if (name.match(/^[a-z][a-z0-9-]{2,39}$/) === null) throw error(`instanceName`, `invalid`, `Instance name must begin with a letter, be between 3-40 characters, and can only contain a-z, 0-9, and hyphen (-).`);
+			if (name.match(/^[a-z][a-z0-9-]{2,39}$/) === null) throw error(`instanceName`, `invalid`, `Le nom d'instance doit commencer par une lettre, contenir entre 3 et 40 caractères, et utiliser seulement a-z, 0-9 et le tiret (-).`);
 			if (isAvailable(name)) return name;
-			throw error(`instanceName`, `exists`, `Instance name ${name} is not available.`);
+			throw error(`instanceName`, `exists`, `Le nom d'instance ${name} n'est pas disponible.`);
 		} else {
 			let i = 0;
 			while (true) {
@@ -3308,46 +4134,45 @@ const HandleSignupCheck = (e) => {
 
 //#endregion
 //#region src/lib/handlers/signup/api/HandleSignupConfirm.ts
-const autoVerifySignups = () => `${process.env.PH_AUTO_VERIFY_SIGNUPS || ""}`.toLowerCase() === "true";
-const signupSubscriptionQuantity = () => {
-	const value = Number(process.env.PH_SIGNUP_SUBSCRIPTION_QUANTITY || "");
-	if (Number.isFinite(value) && value > 0) return value;
-	return autoVerifySignups() ? 250 : 0;
-};
 const suggestUniqueAuthRecordUsername = (collection, baseUsername) => {
 	let username = baseUsername;
 	for (let i = 0; i < 10; i++) {
 		try {
-			if ($app.countRecords(collection, $dbx.exp("LOWER([[username]])={:username}", { username: username.toLowerCase() })) === 0) break;
+			const total = $app.countRecords(collection, $dbx.exp("LOWER([[username]])={:username}", { username: username.toLowerCase() }));
+			if (total === 0) break;
 		} catch {}
 		username = baseUsername + $security.randomStringWithAlphabet(3 + i, "123456789");
 	}
 	return username;
 };
 const HandleSignupConfirm = (e) => {
+	const settings = readOperatorSettings();
+	if (!settings.publicSignupEnabled) throw new BadRequestError("La creation publique de compte est desactivee.");
 	const parsed = (() => {
 		const rawBody = readerToString(e.request.body);
 		try {
-			return JSON.parse(rawBody);
-		} catch (e) {
-			throw new BadRequestError(`Error parsing payload. You call this JSON? ${rawBody}`, e);
+			const parsed$1 = JSON.parse(rawBody);
+			return parsed$1;
+		} catch (e$1) {
+			throw new BadRequestError(`Impossible d'analyser la requête JSON. Corps reçu : ${rawBody}`, e$1);
 		}
 	})();
 	const email = parsed.email?.trim().toLowerCase();
 	const password = parsed.password?.trim();
 	const desiredInstanceName = parsed.instanceName?.trim();
 	const version = parsed.version?.trim() || listVersions()[0];
-	if (!email) throw error(`email`, "required", "Email is required");
-	if (!password) throw error(`password`, `required`, "Password is required");
-	if (!desiredInstanceName) throw error(`instanceName`, `required`, `Instance name is required`);
-	if ((() => {
+	if (!email) throw error(`email`, "required", "L'email est obligatoire");
+	if (!password) throw error(`password`, `required`, "Le mot de passe est obligatoire");
+	if (!desiredInstanceName) throw error(`instanceName`, `required`, `Le nom de l'instance est obligatoire`);
+	const userExists$1 = (() => {
 		try {
 			$app.findFirstRecordByData("users", "email", email);
 			return true;
 		} catch {
 			return false;
 		}
-	})()) throw error(`email`, `exists`, `That user account already exists. Try a password reset.`);
+	})();
+	if (userExists$1) throw error(`email`, `exists`, `Ce compte utilisateur existe déjà. Essayez une réinitialisation du mot de passe.`);
 	$app.runInTransaction((txApp) => {
 		const usersCollection = $app.findCollectionByNameOrId("users");
 		const instanceCollection = $app.findCollectionByNameOrId("instances");
@@ -3356,30 +4181,30 @@ const HandleSignupConfirm = (e) => {
 			const username = suggestUniqueAuthRecordUsername("users", "user" + $security.randomStringWithAlphabet(5, "123456789"));
 			user.set("username", username);
 			user.set("email", email);
-			user.set("subscription", "free");
-			user.set("subscription_quantity", signupSubscriptionQuantity());
-			if (autoVerifySignups()) user.set("verified", true);
+			user.set("subscription", settings.defaultSubscription);
+			user.set("subscription_quantity", settings.defaultUserQuota);
+			if (settings.autoVerifyUsers) user.set("verified", true);
 			user.setPassword(password);
 			txApp.save(user);
-		} catch (e) {
-			throw error(`email`, `fail`, `Could not create user: ${e}`);
+		} catch (e$1) {
+			throw error(`email`, `fail`, `Impossible de créer l'utilisateur : ${e$1}`);
 		}
 		try {
 			const instance = new Record(instanceCollection);
 			instance.set("subdomain", desiredInstanceName);
 			instance.set("uid", user.get("id"));
 			instance.set("status", "idle");
-			instance.set("power", true);
-			instance.set("syncAdmin", true);
-			instance.set("autoVacuum", true);
-			instance.set("dev", true);
+			instance.set("power", settings.defaultInstancePower);
+			instance.set("syncAdmin", settings.defaultSyncAdmin);
+			instance.set("autoVacuum", settings.defaultAutoVacuum);
+			instance.set("dev", settings.defaultInstanceDevMode);
 			instance.set("version", version);
 			txApp.save(instance);
-		} catch (e) {
-			if (`${e}`.match(/ UNIQUE /)) throw error(`instanceName`, `exists`, `Instance name was taken, sorry about that. Try another.`);
-			throw error(`instanceName`, `fail`, `Could not create instance: ${e}`);
+		} catch (e$1) {
+			if (`${e$1}`.match(/ UNIQUE /)) throw error(`instanceName`, `exists`, `Ce nom d'instance vient d'être pris. Essayez-en un autre.`);
+			throw error(`instanceName`, `fail`, `Impossible de créer l'instance : ${e$1}`);
 		}
-		if (!autoVerifySignups()) $mails.sendRecordVerification($app, user);
+		if (!settings.autoVerifyUsers) $mails.sendRecordVerification($app, user);
 	});
 	return e.json(200, { status: "ok" });
 };
@@ -3408,8 +4233,8 @@ const HandleSesError = (e) => {
 			suppressUserEmail(user);
 			$app.save(user);
 			audit("PBOUNCE", `User ${emailAddress} has been disabled`, extra);
-		} catch (e) {
-			audit("PBOUNCE_ERR", `${e}`, extra);
+		} catch (e$1) {
+			audit("PBOUNCE_ERR", `${e$1}`, extra);
 		}
 	};
 	const processComplaint = (emailAddress) => {
@@ -3422,7 +4247,7 @@ const HandleSesError = (e) => {
 			suppressUserEmail(user);
 			$app.save(user);
 			audit("COMPLAINT", `User ${emailAddress} has been unsubscribed`, extra);
-		} catch (e) {
+		} catch (e$1) {
 			audit("COMPLAINT_ERR", `${emailAddress} is not in the system.`, extra);
 		}
 	};
@@ -3479,7 +4304,7 @@ const HandleSesError = (e) => {
 /** JSVM-safe ssh-ed25519 public key parsing. Safe for pb_hooks (Goja) and Node/browser consumers. */
 const ED25519_ALGO = "ssh-ed25519";
 const ED25519_WIRE_KEY_LEN = 32;
-const ED25519_WIRE_LEN = 51;
+const ED25519_WIRE_LEN = 19 + ED25519_WIRE_KEY_LEN;
 const readUint32BE = (bytes, offset) => {
 	if (offset + 4 > bytes.length) throw new Error("Invalid public key encoding.");
 	return (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
@@ -3488,8 +4313,9 @@ const readSshString = (bytes, offset) => {
 	const length = readUint32BE(bytes, offset);
 	offset += 4;
 	if (length < 0 || offset + length > bytes.length) throw new Error("Invalid public key encoding.");
+	const value = bytes.slice(offset, offset + length);
 	return {
-		value: bytes.slice(offset, offset + length),
+		value,
 		nextOffset: offset + length
 	};
 };
@@ -3530,9 +4356,10 @@ const validateWire = (wire) => {
 const parseSshEd25519PublicKey = (input) => {
 	const trimmed = input.trim();
 	if (!trimmed) throw new Error("Public key is required.");
-	const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+	const lines = trimmed.split(/\r?\n/).map((line$1) => line$1.trim()).filter(Boolean);
 	if (lines.length > 1) throw new Error("Paste a single public key line only.");
-	const parts = (lines[0] ?? "").split(/\s+/).filter(Boolean);
+	const line = lines[0] ?? "";
+	const parts = line.split(/\s+/).filter(Boolean);
 	if (parts.length < 2) throw new Error("Public key must look like: ssh-ed25519 AAAA… comment");
 	const algo = parts[0];
 	const keyData = parts[1];
@@ -3540,8 +4367,9 @@ const parseSshEd25519PublicKey = (input) => {
 	const wire = decodeBase64(keyData);
 	validateWire(wire);
 	const comment = parts.slice(2).join(" ");
+	const normalized = comment ? `${ED25519_ALGO} ${keyData} ${comment}` : `${ED25519_ALGO} ${keyData}`;
 	return {
-		normalized: comment ? `${ED25519_ALGO} ${keyData} ${comment}` : `${ED25519_ALGO} ${keyData}`,
+		normalized,
 		wire
 	};
 };
@@ -3553,14 +4381,15 @@ const validateSshKeyRecord = (record, authId) => {
 	let parsed;
 	try {
 		parsed = parseSshEd25519PublicKey(record.getString("public_key"));
-	} catch (error) {
-		throw new BadRequestError(`${error}`);
+	} catch (error$1) {
+		throw new BadRequestError(`${error$1}`);
 	}
 	record.set("public_key", parsed.normalized);
-	if (!record.getString("fingerprint").trim().startsWith("SHA256:")) throw new BadRequestError("Invalid fingerprint.");
+	const fingerprint = record.getString("fingerprint").trim();
+	if (!fingerprint.startsWith("SHA256:")) throw new BadRequestError("Empreinte invalide.");
 	const allInstances = record.getBool("all_instances");
 	const instanceIds = record.getStringSlice("instances") || [];
-	if (!allInstances && instanceIds.length === 0) throw new BadRequestError("Select at least one instance or choose all instances.");
+	if (!allInstances && instanceIds.length === 0) throw new BadRequestError("Sélectionnez au moins une instance ou choisissez toutes les instances.");
 	if (!allInstances) for (const instanceId of instanceIds) {
 		const instance = $app.findRecordById("instances", instanceId);
 		if (instance.getString("uid") !== authId) {
@@ -3569,7 +4398,7 @@ const validateSshKeyRecord = (record, authId) => {
 				authId,
 				uid: instance.getString("uid")
 			});
-			throw new BadRequestError("One or more selected instances are not owned by you.");
+			throw new BadRequestError("Une ou plusieurs instances sélectionnées ne vous appartiennent pas.");
 		}
 	}
 	if (allInstances) record.set("instances", []);
@@ -3578,7 +4407,7 @@ const BeforeCreate_ssh_keys = (e) => {
 	const record = e.record;
 	if (!record) throw new BadRequestError("Missing record.");
 	const authRecord = e.auth;
-	if (!authRecord) throw new BadRequestError("Authentication required.");
+	if (!authRecord) throw new BadRequestError("Authentification requise.");
 	record.set("user", authRecord.id);
 	validateSshKeyRecord(record, authRecord.id);
 };
@@ -3586,8 +4415,8 @@ const BeforeUpdate_ssh_keys = (e) => {
 	const record = e.record;
 	if (!record) throw new BadRequestError("Missing record.");
 	const authRecord = e.auth;
-	if (!authRecord) throw new BadRequestError("Authentication required.");
-	if (record.getString("user") !== authRecord.id) throw new ForbiddenError("You can only update your own SSH keys.");
+	if (!authRecord) throw new BadRequestError("Authentification requise.");
+	if (record.getString("user") !== authRecord.id) throw new ForbiddenError("Vous ne pouvez modifier que vos propres clés SSH.");
 	validateSshKeyRecord(record, authRecord.id);
 };
 
@@ -3635,9 +4464,9 @@ const HandleStatsRefreshAtBoot = (_e) => {
 //#endregion
 //#region src/lib/handlers/user/api/HandleUserTokenRequest.ts
 const HandleUserTokenRequest = (e) => {
-	mkLog(`user-token`);
+	const log = mkLog(`user-token`);
 	const id = e.request.pathValue("id");
-	if (!id) throw new BadRequestError(`User ID is required.`);
+	if (!id) throw new BadRequestError(`L'identifiant utilisateur est obligatoire.`);
 	const rec = $app.findRecordById("users", id);
 	const tokenKey = rec.getString("tokenKey");
 	const passwordHash = rec.getString("password:hash");
@@ -3664,8 +4493,14 @@ exports.BeforeUpdate_cname = BeforeUpdate_cname;
 exports.BeforeUpdate_ssh_keys = BeforeUpdate_ssh_keys;
 exports.BeforeUpdate_version = BeforeUpdate_version;
 exports.HandleEdgeHeartbeat = HandleEdgeHeartbeat;
+exports.HandleInstanceBackupCreate = HandleInstanceBackupCreate;
+exports.HandleInstanceBackupDelete = HandleInstanceBackupDelete;
+exports.HandleInstanceBackupDownload = HandleInstanceBackupDownload;
+exports.HandleInstanceBackupRestore = HandleInstanceBackupRestore;
+exports.HandleInstanceBackupsList = HandleInstanceBackupsList;
 exports.HandleInstanceCreate = HandleInstanceCreate;
 exports.HandleInstanceDelete = HandleInstanceDelete;
+exports.HandleInstanceDuplicate = HandleInstanceDuplicate;
 exports.HandleInstanceUpdate = HandleInstanceUpdate;
 exports.HandleInstancesResetIdle = HandleInstancesResetIdle;
 exports.HandleInstancesRuntimeReset = HandleInstancesRuntimeReset;
@@ -3677,6 +4512,10 @@ exports.HandleMigrateCnamesToDomains = HandleMigrateCnamesToDomains;
 exports.HandleMigrateInstanceVersions = HandleMigrateInstanceVersions;
 exports.HandleMirrorData = HandleMirrorData;
 exports.HandleMirrorSync = HandleMirrorSync;
+exports.HandleOperatorAdminCreateUser = HandleOperatorAdminCreateUser;
+exports.HandleOperatorAdminOverview = HandleOperatorAdminOverview;
+exports.HandleOperatorAdminUpdateSettings = HandleOperatorAdminUpdateSettings;
+exports.HandleOperatorAdminUpdateUser = HandleOperatorAdminUpdateUser;
 exports.HandleOutpostUnsubscribe = HandleOutpostUnsubscribe;
 exports.HandleProcessNotification = HandleProcessNotification;
 exports.HandleProcessSingleNotification = HandleProcessSingleNotification;
@@ -3690,8 +4529,10 @@ exports.HandleUserWelcomeMessage = HandleUserWelcomeMessage;
 exports.HandleVersionsRequest = HandleVersionsRequest;
 exports.LIVE_PLATFORM_TOPIC = LIVE_PLATFORM_TOPIC;
 exports.LIVE_VIEW_STATS_TOPIC = LIVE_VIEW_STATS_TOPIC;
+exports.OPERATOR_SETTINGS_NAME = OPERATOR_SETTINGS_NAME;
 exports.broadcastLivePlatformStats = broadcastLivePlatformStats;
 exports.broadcastLiveViewStats = broadcastLiveViewStats;
+exports.defaultOperatorSettings = defaultOperatorSettings;
 exports.getLivePlatformStats = getLivePlatformStats;
 exports.getLiveViewStats = getLiveViewStats;
 exports.handleLivePlatformInstanceCreate = handleLivePlatformInstanceCreate;
@@ -3707,6 +4548,8 @@ exports.initLiveViewStatsAtBoot = initLiveViewStatsAtBoot;
 exports.markStaleEdges = markStaleEdges;
 exports.mkPublicStatsPath = mkPublicStatsPath;
 exports.normalizeInstanceStatus = normalizeInstanceStatus;
+exports.normalizeOperatorSettings = normalizeOperatorSettings;
+exports.readOperatorSettings = readOperatorSettings;
 exports.recountLivePlatformStats = recountLivePlatformStats;
 exports.refreshAndBroadcastLivePlatformStats = refreshAndBroadcastLivePlatformStats;
 exports.refreshAndBroadcastLiveViewStats = refreshAndBroadcastLiveViewStats;
@@ -3714,3 +4557,4 @@ exports.refreshLiveViewStats = refreshLiveViewStats;
 exports.refreshPublicStats = refreshPublicStats;
 exports.sendLivePlatformStatsToClient = sendLivePlatformStatsToClient;
 exports.sendLiveViewStatsToClient = sendLiveViewStatsToClient;
+exports.writeOperatorSettings = writeOperatorSettings;

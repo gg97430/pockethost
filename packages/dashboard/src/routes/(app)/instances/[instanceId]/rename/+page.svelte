@@ -28,7 +28,7 @@
     isButtonDisabled = true
 
     const instanceNameValidation = formSubdomain.trim().replace(/[0-9]/g, '')
-    const confirmVersionChange = confirm(`Are you sure you want to rename your instance to ${instanceNameValidation}?`)
+    const confirmVersionChange = confirm(`Voulez-vous vraiment renommer votre instance en ${instanceNameValidation} ?`)
 
     if (confirmVersionChange) {
       updateInstance({
@@ -38,7 +38,7 @@
         },
       })
         .then(() => {
-          successMessage = 'Instance renamed successfully'
+          successMessage = "L'instance a été renommée"
         })
         .catch((error) => {
           errorMessage = client().parseError(error).join('\n')
@@ -50,26 +50,26 @@
 </script>
 
 <FeatureTab
-  title="Rename Instance"
+  title="Renommer l'instance"
   documentation="/docs/rename-instance"
-  powerOffAction="rename this instance"
+  powerOffAction="renommer cette instance"
   {errorMessage}
   {successMessage}
   successFlash
 >
   <svelte:fragment slot="summary">
     <p>
-      Renaming your instance will cause it to become <strong>inaccessible</strong> by the old instance name. You also may
-      not be able to change it back if someone else chooses it.
+      Renommer votre instance la rendra <strong>inaccessible</strong> avec son ancien nom. Vous pourriez aussi ne pas
+      pouvoir revenir en arrière si quelqu'un d'autre choisit ce nom.
     </p>
   </svelte:fragment>
 
   <form class="flex rename-instance-form-container-query gap-4" onsubmit={onRename}>
     <div class="field flex-1">
-      <label class="field-label" for="rename-subdomain">Instance name</label>
+      <label class="field-label" for="rename-subdomain">Nom de l'instance</label>
       <wa-input
         id="rename-subdomain"
-        title="Only letters and dashes are allowed"
+        title="Seules les lettres et les tirets sont autorisés"
         type="text"
         value={formSubdomain}
         oninput={(e: Event) => (formSubdomain = (e.currentTarget as HTMLInputElement).value)}
@@ -78,7 +78,7 @@
       ></wa-input>
     </div>
 
-    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}>Rename Instance</wa-button>
+    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}>Renommer l'instance</wa-button>
   </form>
 </FeatureTab>
 

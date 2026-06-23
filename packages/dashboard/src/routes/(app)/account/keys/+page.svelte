@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>SSH Keys - PocketHost</title>
+  <title>Clés SSH - Gestion PocketBase</title>
 </svelte:head>
 
 <SshKeysPanel />

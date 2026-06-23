@@ -3,70 +3,70 @@ import regions from './regions.png'
 
 export const features = [
   {
-    title: 'Global Ingress',
+    title: 'Entrée globale',
     description:
-      'Fly.io edge locations worldwide terminate traffic close to your users, then route over a private network to PocketHost for low-latency access from anywhere.',
+      'Les edge locations Fly.io terminent le trafic au plus près de vos utilisateurs, puis routent via un réseau privé vers PocketHost pour un accès faible latence partout.',
     img: regions,
   },
   {
-    title: 'Risk-free Trial',
-    description: `Test-drive PocketHost for up to 7 days. Credit card required.`,
+    title: 'Essai sans risque',
+    description: `Testez PocketHost jusqu'à 7 jours. Carte bancaire requise.`,
   },
   {
-    title: 'Developer-Friendly Pricing',
-    description: `Get started for just $5 per instance. After 5 instances, it's free.`,
+    title: 'Tarifs pensés pour les développeurs',
+    description: `Commencez pour seulement 5 $ par instance. Après 5 instances, c'est gratuit.`,
   },
   {
-    title: 'Unmetered',
+    title: 'Non mesuré',
     description:
-      'Enjoy unmetered bandwidth, storage, and computational resources under our <a href="/docs/pricing-ethos" class="text-primary">fair use policy</a>.',
+      'Profitez d’une bande passante, d’un stockage et de ressources de calcul non mesurés dans le cadre de notre <a href="/docs/pricing-ethos" class="text-primary">politique d’utilisation raisonnable</a>.',
   },
 
   {
-    title: 'FTP access',
-    description: 'Easily access your data from any FTP client.',
+    title: 'Accès FTP',
+    description: "Accédez facilement à vos données depuis n'importe quel client FTP.",
   },
   {
-    title: 'PocketBase Versions',
-    description: `We support the latest patch of every minor release of PocketBase.`,
+    title: 'Versions PocketBase',
+    description: `Nous prenons en charge le dernier correctif de chaque version mineure de PocketBase.`,
   },
   {
-    title: 'Secure',
-    description: 'Infrastructure secured with RSA-2048 encryption and industry-standard security protocols.',
+    title: 'Sécurisé',
+    description: 'Infrastructure sécurisée avec chiffrement RSA-2048 et protocoles de sécurité standards.',
   },
 
   {
     title: 'Community',
-    description: `Access to <a href="${DISCORD_URL}" class="text-primary">Discord</a> with over 1,500 developers and technical resources.`,
+    description: `Accès au <a href="${DISCORD_URL}" class="text-primary">Discord</a> avec plus de 1 500 développeurs et ressources techniques.`,
   },
   {
-    title: 'Priority Support',
-    description: `Access to private support channels on <a href="${DISCORD_URL}" class="text-primary">Discord</a>.`,
+    title: 'Support prioritaire',
+    description: `Accès à des canaux de support privés sur <a href="${DISCORD_URL}" class="text-primary">Discord</a>.`,
   },
   {
-    title: 'Custom Domain',
-    description: 'Seamless custom domain integration for your PocketHost instances.',
+    title: 'Domaine personnalisé',
+    description: 'Intégration fluide de domaines personnalisés pour vos instances PocketHost.',
   },
   {
-    title: 'Lifetime Option',
-    description: 'Limited-time opportunity for lifetime Pro tier access (up to 250 instances) with a single payment.',
+    title: 'Option à vie',
+    description: "Offre limitée pour un accès Pro à vie (jusqu'à 250 instances) en un seul paiement.",
   },
   {
-    title: 'Reliable',
-    description: 'Industry-leading 99.95% uptime guarantee ensures consistent application availability.',
+    title: 'Fiable',
+    description: 'Une disponibilité garantie de 99,95 % assure une disponibilité constante de vos applications.',
   },
   {
-    title: 'Managed',
-    description: 'Comprehensive infrastructure management including scaling, backups, and maintenance operations.',
+    title: 'Géré',
+    description: "Gestion complète de l'infrastructure, incluant scaling, sauvegardes et maintenance.",
   },
   {
-    title: 'Affordable',
+    title: 'Abordable',
     description:
-      'Why waste time managing servers? Put your resources into building the next big thing. Your wallet (and your future app) will thank you.',
+      'Pourquoi perdre du temps à gérer des serveurs ? Mettez vos ressources dans la construction de votre prochaine grande idée. Votre budget vous dira merci.',
   },
   {
-    title: 'Open Source',
+    title: 'Open source',
     description:
-      'Your subscription directly supports the development of open-source PocketBase and PocketHost projects.',
+      'Votre abonnement soutient directement le développement des projets open source PocketBase et PocketHost.',
   },
 ]

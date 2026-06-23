@@ -13,11 +13,11 @@ export const isSshKeyUniqueViolation = (error: unknown) => {
   return Object.values(fields).some((field) => field?.code === 'validation_not_unique')
 }
 
-export const duplicateKeyMessage = (key: SshKeyFields) => `This public key is already saved as "${key.label}".`
+export const duplicateKeyMessage = (key: SshKeyFields) => `Cette clé publique est déjà enregistrée sous "${key.label}".`
 
 export const formatSshKeySaveError = (error: unknown, duplicateKey?: SshKeyFields) => {
   if (duplicateKey) return duplicateKeyMessage(duplicateKey)
-  if (isSshKeyUniqueViolation(error)) return 'This public key is already on your account.'
+  if (isSshKeyUniqueViolation(error)) return 'Cette clé publique est déjà sur votre compte.'
   const messages = [...new Set(client().parseError(error as Error))]
   return messages.join(' ') || `${error}`
 }

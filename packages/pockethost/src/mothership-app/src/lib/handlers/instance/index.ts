@@ -1,5 +1,7 @@
 export * from './api/HandleInstanceCreate'
+export * from './api/HandleInstanceBackups'
 export * from './api/HandleInstanceDelete'
+export * from './api/HandleInstanceDuplicate'
 export * from './api/HandleInstancesRuntimeReset'
 export * from './api/HandleInstanceUpdate'
 export * from './bootstrap/HandleInstancesResetIdle'

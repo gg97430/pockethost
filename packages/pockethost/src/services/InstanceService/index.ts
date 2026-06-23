@@ -155,7 +155,9 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
     const userInstanceLogger = InstanceLogWriter(instance.id, `exec`, systemInstanceLogger)
 
     dbg(preserved ? `Reattaching preserved container` : `Starting`)
-    userInstanceLogger.info(preserved ? `Instance reconnected after daemon restart.` : `Instance is starting.`)
+    userInstanceLogger.info(
+      preserved ? `Instance reconnectée après le redémarrage du daemon.` : `Démarrage de l'instance.`
+    )
 
     let _shutdownReason: Error | undefined
     let internalUrl: string | undefined
@@ -258,7 +260,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
           } catch {
             warn(`Could not fetch admin sync for ${id}; launching without ADMIN_SYNC (mothership may be unavailable)`)
             userInstanceLogger.info(
-              `Admin Sync skipped this launch because the control plane was unavailable. If admin login fails, power off and launch again.`
+              `La synchro admin a été ignorée sur ce lancement car le plan de contrôle était indisponible. Si la connexion admin échoue, éteignez puis relancez l'instance.`
             )
           }
         }
@@ -271,7 +273,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
       shutdown = () => {
         if (!lowerDrawbridge()) return
         dbg(`Shutting down instance ${id}`)
-        userInstanceLogger.info(`Instance is shutting down.`)
+        userInstanceLogger.info(`Arrêt de l'instance.`)
         updateInstanceStatus(id, InstanceStatus.Idle)
         if (!stopped()) {
           dbg(`Stopping container ${id}`)
@@ -291,7 +293,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
         if (shutdownInProgress) return
         dbg(`Instance exited unexpectedly with code ${code}`)
         lowerDrawbridge()
-        userInstanceLogger.info(`Instance stopped.`)
+        userInstanceLogger.info(`Instance arrêtée.`)
         updateInstanceStatus(id, InstanceStatus.Idle)
       })
 
@@ -299,8 +301,8 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
       await tryFetch(`${internalUrl}/api/health`, {
         preflight: async () => {
           const current = await mirror.getInstance(id)
-          if (current && !current.power) throw userError(`Instance powered off during startup`)
-          if (stopped()) throw userError(`Container stopped ${id}`)
+          if (current && !current.power) throw userError(`Instance éteinte pendant le démarrage`)
+          if (stopped()) throw userError(`Conteneur arrêté ${id}`)
           return started()
         },
         logger: systemInstanceLogger,
@@ -316,7 +318,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
         if (openRequestCount === 0 && getGatewayPending(id) === 0 && lastRequestAge > idleTtl) {
           dbg(`idle for ${idleTtl}, shutting down`)
           userInstanceLogger.info(
-            `Instance has been idle for ${DAEMON_PB_IDLE_TTL()}ms. Hibernating to conserve resources.`
+            `L'instance est inactive depuis ${DAEMON_PB_IDLE_TTL()} ms. Hibernation pour économiser les ressources.`
           )
           shutdown()
           return false
@@ -393,7 +395,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
       }
 
       throw userError(
-        `Could not launch container. Please review your instance logs at https://app.pockethost.io/app/instances/${instance.id} or contact support at https://pockethost.io/support. [${requestId}]`
+        `Impossible de lancer le conteneur. Consultez les logs de votre instance depuis le dashboard ou contactez le support. [${requestId}]`
       )
     })
   }
@@ -456,13 +458,13 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
 
     const instance = await mirror.getInstanceByHost(host)
     if (!instance) {
-      res.status(404).end(`${host} not found`)
+      res.status(404).end(`${host} introuvable`)
       return
     }
     logger.breadcrumb(`i:${instance.id}`)
     const owner = await mirror.getUser(instance.uid)
     if (!owner) {
-      throw new Error(`Instance owner is invalid`)
+      throw new Error(`Le propriétaire de l'instance est invalide`)
     }
     logger.breadcrumb(`u:${owner.id}`)
 
@@ -482,7 +484,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
         */
     dbg(`Checking for active instances`)
     if (owner.subscription_quantity === 0) {
-      throw userError(`Instances will not run until you <a href=${APP_URL(`access`)}>upgrade</a>`)
+      throw userError(`Les instances ne fonctionneront pas tant que vous n'aurez pas <a href=${APP_URL(`access`)}>changé d'offre</a>`)
     }
 
     /*
@@ -490,7 +492,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
         */
     dbg(`Checking for power`)
     if (!instance.power) {
-      throw userError(`This instance is powered off. See ${DOC_URL(`power`)} for more information.`)
+      throw userError(`Cette instance est éteinte. Consultez ${DOC_URL(`power`)} pour plus d'informations.`)
     }
 
     /*
@@ -498,7 +500,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
         */
     dbg(`Checking for verified account`)
     if (!owner.verified) {
-      throw userError(`Log in at ${APP_URL()} to verify your account.`)
+      throw userError(`Connectez-vous sur ${APP_URL()} pour vérifier votre compte.`)
     }
 
     if (vacuumLocks.isLocked(instance.id)) {
@@ -508,7 +510,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
       })
       if (!unlocked) {
         throw userError(
-          `This instance is temporarily unavailable due to database maintenance. Please try again in a few minutes.`
+          `Cette instance est temporairement indisponible en raison d'une maintenance de base de données. Veuillez réessayer dans quelques minutes.`
         )
       }
     }

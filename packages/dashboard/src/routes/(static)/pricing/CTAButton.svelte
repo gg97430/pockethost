@@ -20,7 +20,7 @@
     style="z-index: 1000"
     href={checkoutUrl}
   >
-    Unlock Access Now
+    Débloquer l'accès maintenant
   </wa-button>
 </UserLoggedIn>
 <UserLoggedOut>
@@ -30,6 +30,6 @@
     class={fixed ? 'w-full rounded-none fixed bottom-0' : ''}
     href="/get-started"
   >
-    Get Started
+    Commencer
   </wa-button>
 </UserLoggedOut>

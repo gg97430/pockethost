@@ -81,7 +81,7 @@
 
 <Card>
   <form class="wa-card-body" onsubmit={handleSubmit}>
-    <CardHeader>Choose a name for your PocketBase instance.</CardHeader>
+    <CardHeader>Choisissez un nom pour votre instance PocketBase.</CardHeader>
 
     <div class="flex rename-instance-form-container-query gap-2">
       <div class="min-w-0 flex-1">
@@ -97,7 +97,7 @@
         type="button"
         variant="neutral"
         appearance="outline"
-        aria-label="Regenerate Instance Name"
+        aria-label="Régénérer le nom de l'instance"
         onclick={handleInstanceNameRegeneration}
       >
         <wa-icon name="rotate"></wa-icon>
@@ -106,7 +106,7 @@
 
     <div style="font-size: 15px;" class="mb-4">
       {#if $instanceInfo.fetching}
-        Verifying...
+        Vérification...
       {:else if $instanceInfo.available}
         <span class="text-success"> https://{$instanceInfo.name}.{PUBLIC_APEX_DOMAIN} ✔︎</span>
       {:else}
@@ -122,13 +122,13 @@
     {/if}
 
     <div class="flex items-center justify-center gap-4">
-      <wa-button href="/dashboard" variant="neutral" class="flex-1">Cancel</wa-button>
+      <wa-button href="/dashboard" variant="neutral" class="flex-1">Annuler</wa-button>
 
       <wa-button type="submit" variant="brand" class="flex-1" disabled={isFormButtonDisabled}>
         {#if isSubmitting}
           <span class="inline-block w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
         {:else}
-          Create
+          Créer
           <wa-icon slot="end" name="arrow-right"></wa-icon>
         {/if}
       </wa-button>

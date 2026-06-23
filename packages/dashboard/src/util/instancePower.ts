@@ -27,10 +27,10 @@ export const getInstanceRuntimeState = (instance: Pick<InstanceFields, 'power' |
 }
 
 export const runtimeStateLabel: Record<InstanceRuntimeState, string> = {
-  running: 'Running',
-  sleeping: 'Sleeping',
-  starting: 'Starting',
-  vacuuming: 'Maintaining',
-  failed: 'Failed',
-  off: 'Off',
+  running: 'Actif',
+  sleeping: 'En veille',
+  starting: 'Démarrage',
+  vacuuming: 'Maintenance',
+  failed: 'Échec',
+  off: 'Éteint',
 }

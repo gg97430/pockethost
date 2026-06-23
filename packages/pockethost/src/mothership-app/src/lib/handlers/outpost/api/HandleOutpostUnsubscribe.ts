@@ -28,6 +28,6 @@ export const HandleOutpostUnsubscribe = (e: core.RequestEvent) => {
     return e.html(200, `<p>${email} has been unsubscribed.`)
   } catch (_err) {
     audit('UNSUBSCRIBE_ERR', `User ${id} not found`)
-    return e.html(200, `<p>Looks like you're already unsubscribed.`)
+    return e.html(200, `<p>Vous êtes déjà désabonné.`)
   }
 }

@@ -1,98 +1,98 @@
 ---
-title: Setting up a new email domain in Google Suite
-description: Learn how to set up an email domain in Google Suite
+title: Configurer un nouveau domaine email dans Google Suite
+description: Apprendre à configurer un domaine email dans Google Suite
 ---
 
-# Setting up a new email domain in Google Suite
+# Configurer un nouveau domaine email dans Google Suite
 
-The process of setting up a new email domain in Google Suite involves several steps. In this guide, we will walk you through the process, from adding the domain to activating Gmail and setting up a catch-all email. By following these steps, you'll be able to configure your email domain effectively and ensure smooth communication within your organization. Let's get started!
+La configuration d'un nouveau domaine email dans Google Suite se fait en plusieurs étapes. Ce guide couvre l'ajout du domaine, l'activation de Gmail et la mise en place d'une adresse catch-all. En suivant ces étapes, vous pourrez configurer correctement votre domaine email et assurer une communication fluide dans votre organisation.
 
 <!-- @import "[TOC]" {cmd="toc" depthFrom=2 depthTo=6 orderedList=false} -->
 
 <!-- code_chunk_output -->
 
-- [Add the domain](#add-the-domain)
-- [Domain Verification](#domain-verification)
-- [Activating Gmail](#activating-gmail)
-- [Adding a Catch-All Email](#adding-a-catch-all-email)
-- [Test Your Email Setup](#test-your-email-setup)
-- [Add a Sender Account to Gmail](#add-a-sender-account-to-gmail)
+- [Ajouter le domaine](#ajouter-le-domaine)
+- [Vérification du domaine](#vérification-du-domaine)
+- [Activer Gmail](#activer-gmail)
+- [Ajouter une adresse catch-all](#ajouter-une-adresse-catch-all)
+- [Tester la configuration email](#tester-la-configuration-email)
+- [Ajouter un compte d'expédition dans Gmail](#ajouter-un-compte-dexpédition-dans-gmail)
 
 <!-- /code_chunk_output -->
 
-## Add the domain
+## Ajouter le domaine
 
-Go to the [domains admin](https://admin.google.com/ac/domains/manage) and add a new domain.
+Allez dans l'[admin des domaines](https://admin.google.com/ac/domains/manage) et ajoutez un nouveau domaine.
 
 ![](2024-09-08-19-12-14.png)
 
-Set up an "alias domain," which involves a verification step where you need to update your DNS records. Otherwise, you may have to do the following steps manually.
+Configurez un "alias domain". Cette option implique une étape de vérification où vous devez mettre à jour vos enregistrements DNS. Sinon, vous devrez peut-être effectuer les étapes suivantes manuellement.
 
 ![](2024-09-08-19-04-47.png)
 
-## Domain Verification
+## Vérification du domaine
 
-If you're using Cloudflare as your DNS manager, Google will automatically recognize it and add the necessary DNS records.
+Si vous utilisez Cloudflare comme gestionnaire DNS, Google le reconnaîtra automatiquement et ajoutera les enregistrements DNS nécessaires.
 
 ![](2024-09-08-19-06-15.png)
 
 ![](2024-09-08-19-07-10.png)
 
-Then, wait for domain verification to complete. It should be fast.
+Ensuite, attendez la fin de la vérification du domaine. Cela devrait être rapide.
 
 ![](2024-09-08-19-07-35.png)
 
-## Activating Gmail
+## Activer Gmail
 
 ![](2024-09-08-19-11-38.png)
 
 ![](2024-09-08-19-12-59.png)
 
-Once again, Cloudflare makes it easy and automatic. Otherwise, this may involve manual steps if Google is not integrated with your DNS provider.
+Là encore, Cloudflare rend l'opération simple et automatique. Sinon, des étapes manuelles peuvent être nécessaires si Google n'est pas intégré à votre fournisseur DNS.
 
 ![](2024-09-08-19-14-04.png)
 
 ![](2024-09-08-19-15-06.png)
 
-## Adding a Catch-All Email
+## Ajouter une adresse catch-all
 
-I set up a catch-all email so that any email sent to `<anything>@yourdomain.com` is routed to `admin@yourdomain.com` if the specific email address doesn’t exist. This is optional, but you might want to consider what happens to unrecognized email addresses in your setup.
+Je configure une adresse catch-all pour que tout email envoyé à `<anything>@yourdomain.com` soit redirigé vers `admin@yourdomain.com` si l'adresse précise n'existe pas. C'est optionnel, mais il est utile de décider ce qui arrive aux adresses email non reconnues dans votre configuration.
 
-[This Google help article](https://apps.google.com/supportwidget/articlehome) covers it, but here it is below too:
+[Cet article d'aide Google](https://apps.google.com/supportwidget/articlehome) couvre le sujet, mais voici aussi les étapes :
 
-I like to go to [Default Routing](https://admin.google.com/ac/apps/gmail/defaultrouting) and add a rule:
+Allez dans [Default Routing](https://admin.google.com/ac/apps/gmail/defaultrouting) et ajoutez une règle :
 
 ![](2024-09-08-19-21-45.png)
 
-Use a regex to match the entire domain like `@yourdomain\.com$`. I also like to prepend `[CATCHALL] - ` to the subject so I know that it wasn't sent to my "real" address.
+Utilisez une regex pour cibler tout le domaine, par exemple `@yourdomain\.com$`. Vous pouvez aussi préfixer l'objet avec `[CATCHALL] - ` pour savoir que le message n'a pas été envoyé à votre adresse "réelle".
 
 ![](2024-09-08-19-25-59.png)
 
-Redirect the emails to your "real" email address:
+Redirigez les emails vers votre adresse "réelle" :
 
 ![](2024-09-08-19-25-14.png)
 
-Finally, make sure you only perform this on unrecognized email addresses.
+Enfin, assurez-vous d'appliquer cette règle uniquement aux adresses email non reconnues.
 
 ![](2024-09-08-19-24-55.png)
 
 ![](2024-09-08-19-51-48.png)
 
-## Test Your Email Setup
+## Tester la configuration email
 
-Send an email to yourself using the new domain to ensure that everything is working correctly.
+Envoyez-vous un email avec le nouveau domaine pour vérifier que tout fonctionne correctement.
 
-You may need to wait a bit for the MX records to propagate. Just because Google says everything is verified doesn't mean the Internet at large has received the memo.
+Il peut être nécessaire d'attendre un peu que les enregistrements MX se propagent. Le fait que Google indique que tout est vérifié ne veut pas dire que l'ensemble d'Internet a déjà reçu l'information.
 
 ![](2024-09-08-19-39-27.png)
 
-If you want to be extra sure, try sending from a completely different email provider like Proton or AOL.
+Pour vérifier plus largement, essayez d'envoyer un message depuis un fournisseur email totalement différent comme Proton ou AOL.
 
-Once you receive messages, you're all set!
+Dès que vous recevez les messages, la configuration est prête.
 
-## Add a Sender Account to Gmail
+## Ajouter un compte d'expédition dans Gmail
 
-Sometimes you might want to send email FROM your domain, such as replies or customer messages. To do that, go to your user settings in Gmail and add an account:
+Vous pouvez aussi vouloir envoyer des emails DEPUIS votre domaine, par exemple pour répondre ou contacter des clients. Pour cela, allez dans les paramètres utilisateur de Gmail et ajoutez un compte :
 
 ![](2024-09-08-19-56-56.png)
 

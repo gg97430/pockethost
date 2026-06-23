@@ -1,40 +1,40 @@
 ---
-title: S3 Storage
-description: Learn how to integrate S3-compatible storage with PocketBase to handle backups, restores, and file uploads while conserving local resources
+title: Stockage S3
+description: Apprendre à intégrer un stockage compatible S3 avec PocketBase pour gérer sauvegardes, restaurations et uploads tout en économisant les ressources locales
 ---
 
-# S3 Storage and PocketBase
+# Stockage S3 et PocketBase
 
-Using S3-compatible storage for PocketBase can help optimize your instance's resource management and portability. Here’s what you need to know about integrating S3 storage with PocketBase.
+Utiliser un stockage compatible S3 avec PocketBase peut optimiser la gestion des ressources et la portabilité de votre instance. Voici ce qu'il faut savoir pour intégrer S3 avec PocketBase.
 
 ![](2024-10-06-15-52-14.png)
 
-## Affordable S3-Compatible Storage
+## Stockage compatible S3 abordable
 
-One highly affordable option for S3-compatible storage is **iDrive**, which offers competitive pricing and reliable service. You can configure PocketBase to use iDrive or any other S3-compatible provider to store files, backups, and other resources.
+Une option très abordable pour le stockage compatible S3 est **iDrive**, qui propose des tarifs compétitifs et un service fiable. Vous pouvez configurer PocketBase pour utiliser iDrive ou tout autre fournisseur compatible S3 afin de stocker fichiers, sauvegardes et autres ressources.
 
-## What S3 Storage Supports
+## Ce que prend en charge le stockage S3
 
-S3 storage works seamlessly with PocketBase for the following use cases:
+Le stockage S3 fonctionne très bien avec PocketBase pour les usages suivants :
 
-- **Backups**: Store PocketBase backups in S3-compatible storage to keep them off your local instance.
-- **Restores**: Use S3 storage as a source when restoring backups to your PocketBase instance.
-- **File uploads**: Move your PocketBase file uploads to S3 to free up local storage.
+- **Sauvegardes** : stockez les sauvegardes PocketBase dans un stockage compatible S3 pour les sortir de l'instance locale.
+- **Restaurations** : utilisez S3 comme source lors de la restauration de sauvegardes vers votre instance PocketBase.
+- **Uploads de fichiers** : déplacez les fichiers uploadés par PocketBase vers S3 pour libérer du stockage local.
 
-By offloading these tasks to S3, you can reduce the burden on your PocketHost instance’s local storage.
+En déportant ces tâches vers S3, vous réduisez la charge sur le stockage local de votre instance PocketHost.
 
-## Storage Conservation
+## Économie de stockage
 
-Using S3 for files like uploads and backups helps conserve your local storage for more critical data, such as **databases and logs**, which must reside on your instance. This helps your PocketHost instance run more efficiently. Learn more about storage limits in [Limits](/docs/limits).
+Utiliser S3 pour les fichiers comme les uploads et sauvegardes permet de réserver le stockage local aux données critiques, comme les **bases de données et logs**, qui doivent rester sur votre instance. Votre instance PocketHost fonctionne ainsi plus efficacement. En savoir plus sur les limites de stockage dans [Limites](/docs/limits).
 
-## Migrating Files to S3
+## Migrer des fichiers vers S3
 
-If you need to move a large number of files from your PocketHost instance to S3, feel free to reach out to [PocketHost Support](/support) for assistance. They can help you streamline the migration process.
+Si vous devez déplacer beaucoup de fichiers depuis votre instance PocketHost vers S3, contactez le [support PocketHost](/support). Il peut vous aider à simplifier la migration.
 
-## Portability and Migration
+## Portabilité et migration
 
-By storing files in S3, your PocketBase instance becomes far more **portable**. If you ever decide to migrate away from PocketHost, having your files already stored in S3 makes it easier to transition to another hosting provider.
+En stockant les fichiers dans S3, votre instance PocketBase devient beaucoup plus **portable**. Si vous décidez un jour de quitter PocketHost, avoir vos fichiers déjà stockés sur S3 facilite la transition vers un autre hébergeur.
 
-## Important Backup Consideration
+## Point important sur les sauvegardes
 
-Be aware that **PocketBase backups do NOT include storage files** that have been moved to S3. When creating a backup, only the local database and file system are included. You’ll need to manage S3-stored files separately to ensure complete backup coverage.
+Attention : les **sauvegardes PocketBase n'incluent PAS les fichiers de stockage** déplacés vers S3. Lors d'une sauvegarde, seules la base locale et le système de fichiers local sont inclus. Vous devrez gérer séparément les fichiers stockés sur S3 pour obtenir une couverture complète.

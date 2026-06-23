@@ -1,11 +1,11 @@
 ---
-title: Dev Mode
-description: Learn how to enable Dev Mode for your PocketBase instance
+title: Mode dev
+description: Apprendre à activer le mode dev pour votre instance PocketBase
 ---
-# Dev Mode
+# Mode dev
 
 ![](dev-mode.png)
 
-Begining with PocketBase 0.20.1, you may supply a `--dev` flag to make PocketBase output debugging information to the console.
+Depuis PocketBase 0.20.1, vous pouvez fournir un flag `--dev` pour que PocketBase affiche les informations de débogage dans la console.
 
-PocketHost supports this through the Dev Mode switch. When running in Dev Mode, your instance logs will show all debugging output.
+PocketHost prend cela en charge via l'interrupteur Mode dev. Quand le mode dev est actif, les logs de votre instance affichent toutes les sorties de débogage.

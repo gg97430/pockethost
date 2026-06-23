@@ -15,22 +15,143 @@
   --wa-color-success: #1eb854;
   --wa-color-warning: #fbbf24;
   --wa-color-danger: #ef4444;
+  --app-bg: #111111;
+  --app-surface: rgb(17 17 17 / 0.92);
+  --app-surface-strong: rgb(0 0 0 / 0.35);
+  --app-surface-soft: rgb(255 255 255 / 0.04);
+  --app-surface-hover: rgb(255 255 255 / 0.08);
+  --app-text: rgb(255 255 255 / 0.9);
+  --app-text-strong: #ffffff;
+  --app-text-muted: rgb(255 255 255 / 0.62);
+  --app-text-faint: rgb(255 255 255 / 0.45);
+  --app-border: rgb(255 255 255 / 0.1);
+  --app-border-strong: rgb(255 255 255 / 0.22);
+  --app-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
+  --app-shadow-sm: 0 8px 24px rgb(0 0 0 / 0.18);
 }
 
+html[data-theme='dark'],
 .wa-dark {
   --wa-color-text-link: #1eb854;
+  color-scheme: dark;
 }
 
-/* Dark site defaults — keep in @layer base so Tailwind text-* utilities still win. */
+html[data-theme='light'] {
+  --app-bg: #f5f7f2;
+  --app-surface: rgb(255 255 255 / 0.96);
+  --app-surface-strong: rgb(255 255 255 / 0.9);
+  --app-surface-soft: rgb(20 32 24 / 0.045);
+  --app-surface-hover: rgb(20 32 24 / 0.075);
+  --app-text: rgb(20 32 24 / 0.88);
+  --app-text-strong: #142018;
+  --app-text-muted: rgb(20 32 24 / 0.64);
+  --app-text-faint: rgb(20 32 24 / 0.46);
+  --app-border: rgb(20 32 24 / 0.12);
+  --app-border-strong: rgb(20 32 24 / 0.24);
+  --app-shadow: 0 16px 40px rgb(20 32 24 / 0.12);
+  --app-shadow-sm: 0 8px 22px rgb(20 32 24 / 0.09);
+  --wa-color-text-link: #15803d;
+  color-scheme: light;
+}
+
+/* Site defaults — keep in @layer base so Tailwind utilities still win when needed. */
 @layer base {
   html {
-    background-color: #111111;
+    background-color: var(--app-bg);
   }
 
   body {
-    background-color: #111111;
-    color: rgb(255 255 255 / 0.88);
+    background-color: var(--app-bg);
+    color: var(--app-text);
   }
+}
+
+.app-body,
+.app-shell {
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.app-body {
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+html[data-theme='light'] [class~='bg-[#111111]'],
+html[data-theme='light'] [class~='bg-[#111111]/95'],
+html[data-theme='light'] [class~='bg-[#111111]/90'],
+html[data-theme='light'] [class~='bg-[#111111]/80'],
+html[data-theme='light'] [class~='bg-[#111111]/60'],
+html[data-theme='light'] [class~='bg-[#111111]/50'],
+html[data-theme='light'] [class~='bg-black/40'],
+html[data-theme='light'] [class~='bg-black/50'] {
+  background-color: var(--app-surface) !important;
+}
+
+html[data-theme='light'] [class~='bg-white/5'],
+html[data-theme='light'] [class~='bg-white/10'] {
+  background-color: var(--app-surface-soft) !important;
+}
+
+html[data-theme='light'] [class~='border-white/5'],
+html[data-theme='light'] [class~='border-white/10'],
+html[data-theme='light'] [class~='border-white/20'] {
+  border-color: var(--app-border) !important;
+}
+
+html[data-theme='light'] [class~='text-white'] {
+  color: var(--app-text-strong) !important;
+}
+
+html[data-theme='light'] [class~='text-white/90'],
+html[data-theme='light'] [class~='text-white/80'],
+html[data-theme='light'] [class~='text-white/75'],
+html[data-theme='light'] [class~='text-white/70'] {
+  color: var(--app-text) !important;
+}
+
+html[data-theme='light'] [class~='text-white/60'],
+html[data-theme='light'] [class~='text-white/55'],
+html[data-theme='light'] [class~='text-white/50'],
+html[data-theme='light'] [class~='text-white/45'],
+html[data-theme='light'] [class~='text-white/40'],
+html[data-theme='light'] [class~='text-white/30'] {
+  color: var(--app-text-muted) !important;
+}
+
+html[data-theme='light'] [class~='bg-primary'][class~='text-white'],
+html[data-theme='light'] [class~='bg-success'][class~='text-white'],
+html[data-theme='light'] [class~='bg-error'][class~='text-white'] {
+  color: #ffffff !important;
+}
+
+html[data-theme='light'] .auth-card {
+  border-color: var(--app-border);
+  background-color: var(--app-surface);
+  box-shadow: var(--app-shadow);
+}
+
+html[data-theme='light'] .auth-form-title,
+html[data-theme='light'] .auth-label {
+  color: var(--app-text-strong);
+}
+
+html[data-theme='light'] .auth-field,
+html[data-theme='light'] .auth-form wa-input::part(base) {
+  border-color: var(--app-border);
+  background-color: var(--app-surface-strong);
+  color: var(--app-text-strong);
+}
+
+html[data-theme='light'] .auth-field::placeholder {
+  color: var(--app-text-faint);
+}
+
+html[data-theme='light'] .auth-field-toggle,
+html[data-theme='light'] .auth-footer {
+  color: var(--app-text-muted);
 }
 
 .blog-card-link {

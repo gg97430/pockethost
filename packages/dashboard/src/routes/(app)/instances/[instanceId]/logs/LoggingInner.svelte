@@ -85,10 +85,10 @@
         size="small"
         onclick={() => (autoScroll = !autoScroll)}
       >
-        AutoScroll
+        Défilement auto
         <wa-icon slot="end" name={autoScroll ? 'arrow-down' : 'xmark'}></wa-icon>
       </wa-button>
-      <h3 class="font-bold text-lg pb-4">Instance Logging</h3>
+      <h3 class="font-bold text-lg pb-4">Logs de l'instance</h3>
 
       <div
         class="h-[70vh] overflow-y-scroll flex flex-col font-mono bg-black/40 rounded p-2"
@@ -106,18 +106,18 @@
     </div>
 
     <form method="dialog" class="mt-4">
-      <wa-button type="submit" variant="neutral" size="small">close</wa-button>
+      <wa-button type="submit" variant="neutral" size="small">fermer</wa-button>
     </form>
   </dialog>
 
   <div class="mockup-code relative">
     <div class="flex flex-row absolute top-4 right-4 gap-1">
       <wa-button variant="neutral" size="small" onclick={() => (autoScroll = !autoScroll)}>
-        AutoScroll
+        Défilement auto
         <wa-icon slot="end" name={autoScroll ? 'arrow-down' : 'xmark'}></wa-icon>
       </wa-button>
       <wa-button variant="neutral" size="small" onclick={handleFullScreenModal}>
-        Fullscreen
+        Plein écran
         <wa-icon slot="end" name="up-right-and-down-left-from-center"></wa-icon>
       </wa-button>
     </div>

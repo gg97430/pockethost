@@ -1,29 +1,29 @@
 ---
 title: Admin Sync
-description: Learn how Admin Sync works to keep your PocketBase admin account in sync with your pockethost.io credentials
+description: Comprendre comment Admin Sync synchronise votre compte admin PocketBase avec vos identifiants pockethost.io
 ---
 # Admin Sync
 
-Admin Sync ensures that your instance always has an admin account that matches the login credentials of your pockethost.io account.
+Admin Sync garantit que votre instance dispose toujours d'un compte admin correspondant aux identifiants de connexion de votre compte pockethost.io.
 
-## Enabling Admin Sync
+## Activer Admin Sync
 
 ![](admin-sync.png)
 
-When Admin Sync is enabled, your pockethost.io account credentials are automatically copied as an admin login to your instance before it launches.
+Quand Admin Sync est activé, les identifiants de votre compte pockethost.io sont automatiquement copiés comme identifiants admin dans votre instance avant son lancement.
 
-If you update your pockethost.io credentials while an instance is running, the new credentials will not be synced until the instance is restarted. To apply the changes immediately, [power down the instance](/docs/power) and relaunch it.
+Si vous modifiez vos identifiants pockethost.io pendant qu'une instance tourne, les nouveaux identifiants ne seront synchronisés qu'au redémarrage de l'instance. Pour appliquer immédiatement les changements, [éteignez l'instance](/docs/power) puis relancez-la.
 
-By default, Admin Sync is enabled, ensuring that when an instance is created, it has an admin account matching your pockethost.io login. This security feature prevents unauthorized users from creating the initial admin account.
+Par défaut, Admin Sync est activé. Ainsi, lorsqu'une instance est créée, elle possède un compte admin correspondant à votre connexion pockethost.io. Cette fonctionnalité de sécurité empêche des utilisateurs non autorisés de créer le compte admin initial.
 
-## Control plane unavailable
+## Plan de contrôle indisponible
 
-For performance, the edge launches your instance even when the PocketHost control plane (mothership) is briefly unavailable. Admin Sync may be skipped on that boot. Your instance keeps the admin credentials from its last successful sync.
+Pour les performances, l'edge lance votre instance même lorsque le plan de contrôle PocketHost (mothership) est brièvement indisponible. Admin Sync peut être ignoré sur ce démarrage. Votre instance conserve les identifiants admin de sa dernière synchronisation réussie.
 
-If admin login fails after such a launch, or you changed your pockethost.io password while the instance was off, [power down the instance](/docs/power) and launch it again once the control plane is healthy.
+Si la connexion admin échoue après un tel lancement, ou si vous avez changé votre mot de passe pockethost.io pendant que l'instance était éteinte, [éteignez l'instance](/docs/power) puis relancez-la quand le plan de contrôle est sain.
 
-## Disabling Admin Sync
+## Désactiver Admin Sync
 
 ![](admin-sync-off.png)
 
-When Admin Sync is disabled, your pockethost.io credentials will no longer be copied to your instance in future launches.
+Quand Admin Sync est désactivé, vos identifiants pockethost.io ne seront plus copiés dans votre instance lors des futurs lancements.

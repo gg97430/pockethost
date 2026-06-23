@@ -2,7 +2,7 @@
   import { DISCORD_URL } from '$lib/appEnv'
   import Check from './Check.svelte'
 
-  export let name = 'Plan Name'
+  export let name = "Nom de l'offre"
   export let active = false
   export let features: string[] = []
   export let upgradable = false
@@ -22,15 +22,15 @@
           {#if limit != startLimit}
             <div class="text-center text-primary text-2xl">
               <span class="line-through">{startLimit}</span>
-              <span class="text-error">{limit} remaining</span>
+              <span class="text-error">{limit} restantes</span>
             </div>
           {:else}
             <div class="text-center text-primary text-2xl">
-              {limit} remaining
+              {limit} restantes
             </div>
           {/if}
         {:else}
-          <div class="text-center text-error text-2xl">SOLD OUT</div>
+          <div class="text-center text-error text-2xl">ÉPUISÉ</div>
         {/if}
       {/if}
       <ul>
@@ -43,10 +43,10 @@
 
       <div class="mt-10">
         {#if active}
-          <div class="text-success text-center text-2xl">This is your current plan.</div>
+          <div class="text-success text-center text-2xl">C'est votre offre actuelle.</div>
           <p class="mt-10 text-white/70">
-            To change to a different plan, contact <a class="text-primary" href={`"${DISCORD_URL}"`}
-              ><code>.noaxis</code> on Discord</a
+            Pour changer d'offre, contactez <a class="text-primary" href={`"${DISCORD_URL}"`}
+              ><code>.noaxis</code> sur Discord</a
             >
           </p>
         {:else if prices.length > 0}
@@ -60,7 +60,7 @@
             {/each}
           </div>
           {#if !upgradable}
-            To change to this plan, <a href="/support" class="text-primary">contact support</a>
+            Cette offre n'est pas modifiable depuis l'interface interne.
           {/if}
         {/if}
       </div>

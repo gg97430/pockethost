@@ -10,13 +10,13 @@ export const HandleSignupCheck = (e: core.RequestEvent) => {
         throw error(
           `instanceName`,
           `invalid`,
-          `Instance name must begin with a letter, be between 3-40 characters, and can only contain a-z, 0-9, and hyphen (-).`
+          `Le nom d'instance doit commencer par une lettre, contenir entre 3 et 40 caractères, et utiliser seulement a-z, 0-9 et le tiret (-).`
         )
       }
       if (isAvailable(name)) {
         return name
       }
-      throw error(`instanceName`, `exists`, `Instance name ${name} is not available.`)
+      throw error(`instanceName`, `exists`, `Le nom d'instance ${name} n'est pas disponible.`)
     } else {
       let i = 0
       while (true) {

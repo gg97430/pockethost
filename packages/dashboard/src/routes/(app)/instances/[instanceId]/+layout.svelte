@@ -85,7 +85,7 @@
     ? ([
         {
           items: [
-            { href: base, label: 'Overview', icon: 'gauge-high', isActive: isOverviewActive },
+            { href: base, label: "Vue d'ensemble", icon: 'gauge-high', isActive: isOverviewActive },
             {
               href: `${base}/secrets`,
               label: 'Secrets',
@@ -101,15 +101,21 @@
             { href: `${base}/logs`, label: 'Logs', icon: 'scroll', isActive: sectionActive('logs') },
             { href: `${base}/ftp`, label: 'SFTP', icon: 'folder-open', isActive: sectionActive('ftp') },
             {
+              href: `${base}/backups`,
+              label: 'Sauvegardes',
+              icon: 'box-archive',
+              isActive: sectionActive('backups'),
+            },
+            {
               href: INSTANCE_ADMIN_URL($instance),
-              label: 'Admin',
+              label: 'Administration',
               imageSrc: '/images/pocketbase-logo.svg',
               external: true,
             },
           ],
         },
         {
-          title: 'Advanced',
+          title: 'Avancé',
           items: [
             {
               href: `${base}/version`,
@@ -119,27 +125,27 @@
             },
             {
               href: `${base}/domain`,
-              label: 'Custom Domain',
+              label: 'Domaine personnalisé',
               icon: 'globe',
               isActive: sectionActive('domain'),
             },
             {
               href: `${base}/admin-sync`,
-              label: 'Admin Sync',
+              label: 'Synchro admin',
               icon: 'arrows-rotate',
               isActive: sectionActive('admin-sync'),
             },
             {
               href: `${base}/auto-vacuum`,
-              label: 'Auto Vacuum',
+              label: 'Nettoyage auto',
               icon: 'broom',
               isActive: sectionActive('auto-vacuum'),
             },
-            { href: `${base}/dev`, label: 'Dev Mode', icon: 'code', isActive: sectionActive('dev') },
-            { href: `${base}/rename`, label: 'Rename', icon: 'pen', isActive: sectionActive('rename') },
+            { href: `${base}/dev`, label: 'Mode dev', icon: 'code', isActive: sectionActive('dev') },
+            { href: `${base}/rename`, label: 'Renommer', icon: 'pen', isActive: sectionActive('rename') },
             {
               href: `${base}/delete`,
-              label: 'Delete',
+              label: 'Supprimer',
               icon: 'trash',
               variant: 'danger',
               isActive: sectionActive('delete'),
@@ -151,7 +157,7 @@
 </script>
 
 <svelte:head>
-  <title>{isReady ? $instance.subdomain : 'Instance'} overview - PocketHost</title>
+  <title>{isReady ? $instance.subdomain : 'Instance'} - Gestion PocketBase</title>
 </svelte:head>
 
 {#if isReady}
@@ -161,7 +167,7 @@
     {sections}
     width="wide"
     backHref="/dashboard"
-    backLabel="All"
+    backLabel="Retour"
   >
     {#snippet mobileHeader()}
       <h1 class="text-lg font-bold text-white min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -204,9 +210,9 @@
 
     {#snippet alerts()}
       {#if isShuttingDown}
-        <AlertBar message="Shutting down instance. This usually takes a few seconds." type="warning" />
+        <AlertBar message="Arrêt de l'instance en cours. Cela prend généralement quelques secondes." type="warning" />
       {:else if isFullyOff}
-        <AlertBar message="This instance is turned off and will not respond to requests." type="warning" />
+        <AlertBar message="Cette instance est éteinte et ne répondra pas aux requêtes." type="warning" />
       {/if}
     {/snippet}
 
@@ -215,7 +221,7 @@
     {/key}
   </TabbedFeatureLayout>
 {:else if isLoading}
-  <div class="max-w-4xl mx-auto py-4 md:py-8 text-white/70">Loading instance...</div>
+  <div class="max-w-4xl mx-auto py-4 md:py-8 text-white/70">Chargement de l'instance...</div>
 {:else if isMissing}
-  <div class="max-w-4xl mx-auto py-4 md:py-8 text-white/70">Instance not found</div>
+  <div class="max-w-4xl mx-auto py-4 md:py-8 text-white/70">Instance introuvable</div>
 {/if}

@@ -20,7 +20,7 @@
 
     const trimmed = newEmail.trim()
     if (trimmed.toLowerCase() === $userStore?.email?.toLowerCase()) {
-      formErrors = ['New email must be different from your current email.']
+      formErrors = ["Le nouvel email doit être différent de l'email actuel."]
       return
     }
 
@@ -32,41 +32,41 @@
       if (error instanceof Error) {
         formErrors = client().parseError(error)
       } else {
-        formErrors = ['Something went wrong requesting your email change.']
+        formErrors = ["Une erreur est survenue pendant la demande de changement d'email."]
       }
     }
   }
 </script>
 
 <svelte:head>
-  <title>Change Email - PocketHost</title>
+  <title>Changer l'email - Gestion PocketBase</title>
 </svelte:head>
 
-<FeatureTab title="Change email">
+<FeatureTab title="Changer l'email">
   <div class="account-card">
     <div class="account-card-body">
       {#if userShouldCheckTheirEmail}
         <div class="text-center py-4">
-          <h2 class="text-lg font-semibold text-white mb-3">Check your email</h2>
+          <h2 class="text-lg font-semibold text-white mb-3">Consultez votre boîte mail</h2>
           <p class="text-white/80">
-            A confirmation link has been sent to <br /><strong class="text-white">{submittedEmail}</strong>
+            Un lien de confirmation a été envoyé à <br /><strong class="text-white">{submittedEmail}</strong>
           </p>
           <p class="text-sm text-neutral-400 mt-4">
-            Your current email stays active until you confirm from the new inbox with your password.
+            Votre email actuel reste actif jusqu'à la confirmation depuis la nouvelle boîte avec votre mot de passe.
           </p>
           <p class="mt-6">
-            <a href="/account" class="account-stat-link">Back to account</a>
+            <a href="/account" class="account-stat-link">Retour au compte</a>
           </p>
         </div>
       {:else}
         <form class="max-w-md" onsubmit={handleSubmit}>
           <p class="text-sm text-neutral-400 mb-6">
-            Enter your new email address. We will send a confirmation link there. Your current email stays active until
-            you confirm.
+            Saisissez votre nouvelle adresse email. Nous y enverrons un lien de confirmation. Votre email actuel reste
+            actif jusqu'à votre confirmation.
           </p>
 
           <div class="auth-field-group mb-4">
-            <label class="auth-label" for="newEmail">New email address</label>
+            <label class="auth-label" for="newEmail">Nouvelle adresse email</label>
             <wa-input
               type="email"
               id="newEmail"
@@ -85,10 +85,10 @@
 
           <div class="flex items-center gap-4 mt-6">
             <button type="submit" class="auth-submit" disabled={isFormButtonDisabled}>
-              Send confirmation link
+              Envoyer le lien de confirmation
               <wa-icon name="arrow-right"></wa-icon>
             </button>
-            <a href="/account" class="account-stat-link text-sm">Cancel</a>
+            <a href="/account" class="account-stat-link text-sm">Annuler</a>
           </div>
         </form>
       {/if}

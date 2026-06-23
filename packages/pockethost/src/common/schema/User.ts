@@ -30,6 +30,7 @@ export type UserFields<TExtra = {}> = BaseFields & {
   subscription_interval: SubscriptionInterval
   subscription_quantity: number
   suspension: string
+  superAdmin?: boolean
 } & TExtra
 
 export type WithCredentials = {

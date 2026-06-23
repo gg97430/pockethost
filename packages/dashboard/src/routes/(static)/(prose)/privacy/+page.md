@@ -1,120 +1,120 @@
 <div class="prose">
 
-# Privacy Policy
+# Politique de confidentialité
 
-**Last Updated: October 5, 2024**
+**Dernière mise à jour : 5 octobre 2024**
 
-At PocketHost, we are committed to protecting your privacy and ensuring the security of your data. This Privacy Policy outlines how we collect, use, and safeguard your information when you use our services.
+Chez PocketHost, nous nous engageons à protéger votre vie privée et à assurer la sécurité de vos données. Cette Politique de confidentialité explique comment nous collectons, utilisons et protégeons vos informations lorsque vous utilisez nos services.
 
 ## 1. Introduction
 
-PocketHost provides hosting services for PocketBase applications. By using our services, you agree to the collection and use of information in accordance with this policy.
+PocketHost fournit des services d'hébergement pour les applications PocketBase. En utilisant nos services, vous acceptez la collecte et l'utilisation des informations conformément à cette politique.
 
-## 2. Data Collection and Usage
+## 2. Collecte et utilisation des données
 
-### 2.1 Information We Collect
+### 2.1 Informations collectées
 
-- **Personal Information**: We collect only the personal information that you voluntarily provide to us, such as your email address. This information is necessary for account creation, authentication, and communication purposes.
+- **Informations personnelles** : nous collectons uniquement les informations personnelles que vous nous fournissez volontairement, comme votre adresse email. Ces informations sont nécessaires pour la création de compte, l'authentification et les communications.
 
-### 2.2 How We Use Your Information
+### 2.2 Utilisation de vos informations
 
-- **Communication**: Your email address is used solely for transactional communications (like account confirmations, password resets, and service notifications) and for sending you updates about our services.
+- **Communication** : votre adresse email est utilisée uniquement pour les communications transactionnelles (confirmations de compte, réinitialisations de mot de passe et notifications de service) et pour vous envoyer des informations sur nos services.
 
-- **No Third-Party Sales**: We do not sell or rent your personal information to any third parties.
+- **Aucune vente à des tiers** : nous ne vendons ni ne louons vos informations personnelles à des tiers.
 
-- **Authorized Third Parties**: We may share your information with third-party service providers who are authorized to communicate on our behalf, solely for the purpose of providing our services to you.
+- **Tiers autorisés** : nous pouvons partager vos informations avec des prestataires tiers autorisés à communiquer en notre nom, uniquement dans le but de vous fournir nos services.
 
-### 2.3 Aggregate Data
+### 2.3 Données agrégées
 
-- **Public Statistics**: We may publish aggregate data such as user counts, instance counts, and other platform statistics. This information does not include any personally identifiable information and is used to inform the public about our platform's usage.
+- **Statistiques publiques** : nous pouvons publier des données agrégées, comme le nombre d'utilisateurs, le nombre d'instances et d'autres statistiques de plateforme. Ces informations ne contiennent aucune donnée permettant de vous identifier personnellement et servent à informer le public sur l'utilisation de la plateforme.
 
-### 2.4 Anonymized Troubleshooting
+### 2.4 Dépannage anonymisé
 
-- **Community Support**: Occasionally, we may discuss particular user behaviors on platforms like Discord for troubleshooting purposes. These discussions are always conducted anonymously to protect your identity.
+- **Support communautaire** : il peut nous arriver d'évoquer certains comportements utilisateur sur des plateformes comme Discord à des fins de dépannage. Ces discussions sont toujours anonymisées pour protéger votre identité.
 
-## 3. Data Storage and Security
+## 3. Stockage et sécurité des données
 
-### 3.1 Hosting Environment
+### 3.1 Environnement d'hébergement
 
-We utilize trusted third-party providers, **DigitalOcean** and **Fly.io**, to host our infrastructure.
+Nous utilisons des prestataires tiers de confiance, **DigitalOcean** et **Fly.io**, pour héberger notre infrastructure.
 
-#### DigitalOcean and Fly.io Security Measures
+#### Mesures de sécurité de DigitalOcean et Fly.io
 
-- **At-Rest Encryption**: Both providers offer encryption of volume storage at rest, protecting data against unauthorized physical access.
+- **Chiffrement au repos** : les deux prestataires proposent le chiffrement du stockage des volumes au repos, ce qui protège les données contre les accès physiques non autorisés.
 
-- **Network Security**: Advanced network security measures like firewalls and intrusion detection systems are employed.
+- **Sécurité réseau** : des mesures avancées comme les pare-feu et les systèmes de détection d'intrusion sont utilisées.
 
-- **Compliance Standards**: They comply with industry-leading security certifications and regulations such as GDPR, ISO 27001, and SOC 2 Type II.
+- **Standards de conformité** : ils respectent des certifications et réglementations de sécurité reconnues, notamment le RGPD, ISO 27001 et SOC 2 Type II.
 
-- **Access Controls**: Strict access controls with multi-factor authentication and role-based permissions are in place.
+- **Contrôles d'accès** : des contrôles d'accès stricts sont en place, avec authentification multifacteur et permissions basées sur les rôles.
 
-- **Regular Backups and Redundancy**: Regular backups and redundant systems prevent data loss and ensure high availability.
+- **Sauvegardes régulières et redondance** : des sauvegardes régulières et des systèmes redondants préviennent la perte de données et assurent une haute disponibilité.
 
 ### 3.2 PocketBase Instances
 
-Each PocketBase instance runs in a secure Docker container with access only to its own data, enhancing security through isolation.
+Chaque instance PocketBase s'exécute dans un conteneur Docker sécurisé avec accès uniquement à ses propres données, ce qui renforce la sécurité par l'isolation.
 
-#### Data at Rest
+#### Données au repos
 
-- **Unencrypted Data Storage**: While VPS volumes are encrypted, data within each PocketBase instance—including SQLite databases and uploaded files—is stored unencrypted at rest due to PocketBase's lack of at-rest encryption support.
+- **Stockage non chiffré des données** : même si les volumes VPS sont chiffrés, les données dans chaque instance PocketBase, y compris les bases SQLite et les fichiers uploadés, sont stockées non chiffrées au repos, car PocketBase ne prend pas en charge le chiffrement au repos.
 
-- **Potential Risks**: A breach of administrative access to the VPS could potentially expose unencrypted user data within your PocketBase instance.
+- **Risques potentiels** : une compromission de l'accès administrateur au VPS pourrait exposer les données utilisateur non chiffrées présentes dans votre instance PocketBase.
 
-### 3.3 SSH Security and Data Encryption
+### 3.3 Sécurité SSH et chiffrement des données
 
-- **SSH Access**: Our servers are secured using 2048-bit SSH keys, ensuring that only authorized personnel can access them.
+- **Accès SSH** : nos serveurs sont sécurisés avec des clés SSH 2048 bits, afin que seul le personnel autorisé puisse y accéder.
 
-- **In-Flight Data Encryption**: All data transmitted between our servers is encrypted using industry-standard protocols, safeguarding against interception.
+- **Chiffrement des données en transit** : toutes les données transmises entre nos serveurs sont chiffrées avec des protocoles standards du secteur afin de les protéger contre l'interception.
 
-### 3.4 Use of Cloudflare
+### 3.4 Utilisation de Cloudflare
 
-We utilize **Cloudflare** services to enhance security and performance.
+Nous utilisons les services **Cloudflare** pour améliorer la sécurité et les performances.
 
-- **Caching**: Cloudflare provides intelligent caching to improve load times.
+- **Cache** : Cloudflare fournit un cache intelligent pour améliorer les temps de chargement.
 
-- **Origin Security**: Acts as a reverse proxy, offering DDoS mitigation, Web Application Firewall (WAF) protection, and SSL/TLS encryption.
+- **Sécurité de l'origine** : Cloudflare agit comme proxy inverse et fournit une mitigation DDoS, une protection Web Application Firewall (WAF) et un chiffrement SSL/TLS.
 
-- **SSL/TLS Encryption**: All connections between end-users and Cloudflare are encrypted, ensuring secure data transmission.
+- **Chiffrement SSL/TLS** : toutes les connexions entre les utilisateurs finaux et Cloudflare sont chiffrées, ce qui assure une transmission sécurisée des données.
 
-### 3.5 Recommendations for Enhanced Security
+### 3.5 Recommandations pour renforcer la sécurité
 
-- **Use of S3-Compatible Storage**: We strongly encourage users to configure PocketBase to use an S3-compatible storage service (like Amazon S3, Backblaze B2, or Wasabi) for file storage and backups, which offer encrypted at-rest storage.
+- **Utilisation d'un stockage compatible S3** : nous encourageons fortement les utilisateurs à configurer PocketBase avec un service de stockage compatible S3 (Amazon S3, Backblaze B2 ou Wasabi, par exemple) pour les fichiers et les sauvegardes, car ces services proposent un stockage chiffré au repos.
 
-- **Encrypted Backups**: Utilizing S3 storage for backups ensures that your data is encrypted during transit and at rest.
+- **Sauvegardes chiffrées** : utiliser un stockage S3 pour les sauvegardes garantit que vos données sont chiffrées pendant le transit et au repos.
 
-## 4. Cookies and Tracking Technologies
+## 4. Cookies et technologies de suivi
 
-- **Authentication and Analytics**: We use cookies to manage user authentication and gather analytics to improve our services.
+- **Authentification et analytics** : nous utilisons des cookies pour gérer l'authentification des utilisateurs et collecter des analytics afin d'améliorer nos services.
 
-- **No Ad Tracking**: We do not use cookies or scripts for ad tracking or any similar purposes.
+- **Aucun suivi publicitaire** : nous n'utilisons pas de cookies ni de scripts pour le suivi publicitaire ou des finalités similaires.
 
-- **Opt-Out**: You can configure your browser settings to refuse cookies, but this may affect the functionality of our services.
+- **Refus** : vous pouvez configurer votre navigateur pour refuser les cookies, mais cela peut affecter le fonctionnement de nos services.
 
-## 5. Data Sharing and Disclosure
+## 5. Partage et divulgation des données
 
-- **No Selling of Personal Data**: We do not sell or rent your personal information to anyone.
+- **Aucune vente de données personnelles** : nous ne vendons ni ne louons vos informations personnelles à qui que ce soit.
 
-- **Third-Party Service Providers**: We may share your information with third-party service providers who assist us in operating our services, under strict confidentiality agreements.
+- **Prestataires tiers** : nous pouvons partager vos informations avec des prestataires tiers qui nous aident à exploiter nos services, dans le cadre d'accords de confidentialité stricts.
 
-- **Legal Requirements**: We may disclose your information if required to do so by law or in response to valid requests by public authorities.
+- **Obligations légales** : nous pouvons divulguer vos informations si la loi l'exige ou en réponse à des demandes valides d'autorités publiques.
 
-## 6. User Rights
+## 6. Droits des utilisateurs
 
-- **Access and Correction**: You have the right to access and correct your personal data at any time.
+- **Accès et correction** : vous avez le droit d'accéder à vos données personnelles et de les corriger à tout moment.
 
-- **Data Portability**: You can request a copy of your data in a structured, machine-readable format.
+- **Portabilité des données** : vous pouvez demander une copie de vos données dans un format structuré et lisible par machine.
 
-- **Deletion**: You may request the deletion of your personal data, subject to certain legal obligations.
+- **Suppression** : vous pouvez demander la suppression de vos données personnelles, sous réserve de certaines obligations légales.
 
-## 7. Changes to This Privacy Policy
+## 7. Modifications de cette Politique de confidentialité
 
-We may update our Privacy Policy periodically. We will notify you of any significant changes by posting the new Privacy Policy on this page with an updated effective date.
+Nous pouvons mettre à jour cette Politique de confidentialité périodiquement. Nous vous informerons de tout changement significatif en publiant la nouvelle version sur cette page avec une date d'entrée en vigueur mise à jour.
 
-## 8. Contact Us
+## 8. Nous contacter
 
-If you have any questions or concerns about this Privacy Policy, please contact us at:
+Pour toute question ou préoccupation concernant cette Politique de confidentialité, contactez-nous :
 
-- **Email**: ben@pockethost.io
-- **Address**: PO Box 871, Reno NV 89501.
+- **Email** : ben@pockethost.io
+- **Adresse** : PO Box 871, Reno NV 89501.
 
 </div>

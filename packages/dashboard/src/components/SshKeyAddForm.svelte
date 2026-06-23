@@ -26,10 +26,10 @@
   $: keygenCommand = (() => {
     const email = $userStore?.email ?? 'you@example.com'
     const comment = email.replace(/"/g, '\\"')
-    return `ssh-keygen -t ed25519 -f ~/.ssh/pockethost_ed25519 -C "${comment}"`
+    return `ssh-keygen -t ed25519 -f ~/.ssh/gestion_pocketbase_ed25519 -C "${comment}"`
   })()
 
-  const showPubCommand = 'cat ~/.ssh/pockethost_ed25519.pub'
+  const showPubCommand = 'cat ~/.ssh/gestion_pocketbase_ed25519.pub'
 
   const instanceOptions = (): InstanceFields[] => Object.values($globalInstancesStore)
 
@@ -53,19 +53,19 @@
     saving = true
 
     if (!label.trim()) {
-      errorMessage = 'Label is required.'
+      errorMessage = 'Le libellé est obligatoire.'
       saving = false
       return
     }
 
     if (!publicKeyInput.trim()) {
-      errorMessage = 'Paste your ssh-ed25519 public key.'
+      errorMessage = 'Collez votre clé publique ssh-ed25519.'
       saving = false
       return
     }
 
     if (!allInstances && selectedInstanceIds.length === 0) {
-      errorMessage = 'Select at least one instance or choose all instances.'
+      errorMessage = 'Sélectionnez au moins une instance ou choisissez toutes les instances.'
       saving = false
       return
     }
@@ -130,12 +130,12 @@
 
 <wa-card class="border border-white/10 bg-[#111111]/60 overflow-hidden">
   <div class="wa-card-header">
-    <h3 class="text-base font-semibold text-white">Add SSH key</h3>
+    <h3 class="text-base font-semibold text-white">Ajouter une clé SSH</h3>
   </div>
 
   <div class="wa-card-section wa-card-section--lg wa-stack-lg">
     <div class="field">
-      <label class="field-label" for="{idPrefix}-key-label">Title</label>
+      <label class="field-label" for="{idPrefix}-key-label">Titre</label>
       <wa-input
         id="{idPrefix}-key-label"
         value={label}
@@ -146,7 +146,7 @@
 
     <div class="field">
       <div class="field-label-row">
-        <label class="field-label" for="{idPrefix}-public-key">Key</label>
+        <label class="field-label" for="{idPrefix}-public-key">Clé</label>
         {#if showKeygenHelp}
           <button
             type="button"
@@ -154,7 +154,7 @@
             aria-expanded={keyHelpOpen}
             onclick={() => (keyHelpOpen = !keyHelpOpen)}
           >
-            How?
+            Comment ?
           </button>
         {/if}
       </div>
@@ -163,7 +163,8 @@
           <CopyField text={keygenCommand} language={bash} embedded />
           <CopyField text={showPubCommand} language={bash} embedded />
           <p class="key-help-note">
-            Copy the <code>ssh-ed25519 …</code> line from <code>cat</code> and paste it into the Key field below.
+            Copiez la ligne <code>ssh-ed25519 …</code> affichée par <code>cat</code>, puis collez-la dans le champ Clé
+            ci-dessous.
           </p>
         </div>
       {/if}
@@ -177,7 +178,7 @@
     </div>
 
     <div class="field">
-      <span class="field-label">Instance access</span>
+      <span class="field-label">Accès aux instances</span>
       <div class="segmented segmented-compact mb-3">
         <button
           type="button"
@@ -185,7 +186,7 @@
           class:segmented-item-active={allInstances}
           onclick={() => (allInstances = true)}
         >
-          All instances
+          Toutes les instances
         </button>
         <button
           type="button"
@@ -193,7 +194,7 @@
           class:segmented-item-active={!allInstances}
           onclick={() => (allInstances = false)}
         >
-          Specific instances
+          Instances spécifiques
         </button>
       </div>
 
@@ -210,7 +211,7 @@
               <span>{instance.subdomain}</span>
             </label>
           {:else}
-            <p class="text-sm text-white/50 col-span-full py-2">No instances on your account yet.</p>
+            <p class="text-sm text-white/50 col-span-full py-2">Aucune instance sur votre compte pour le moment.</p>
           {/each}
         </div>
       {/if}
@@ -219,7 +220,7 @@
     <div class="pt-2 flex flex-wrap gap-3">
       <wa-button variant="brand" onclick={saveKey} disabled={saving}>
         <wa-icon slot="start" name="floppy-disk"></wa-icon>
-        {saving ? 'Saving…' : 'Add SSH key'}
+        {saving ? 'Enregistrement...' : 'Ajouter la clé SSH'}
       </wa-button>
     </div>
   </div>

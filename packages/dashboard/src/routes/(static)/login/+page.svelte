@@ -1,18 +1,25 @@
 <script lang="ts">
   import { browser } from '$app/environment'
+  import { goto } from '$app/navigation'
   import { page } from '$app/stores'
-  import InstanceGeneratorWidget from '../get-started/InstanceGeneratorWidget.svelte'
+  import { isAuthStateInitialized, isUserLoggedIn } from '$util/stores'
+  import LoginForm from '../get-started/LoginForm.svelte'
 
   $: emailChanged = browser && $page.url.searchParams.get('emailChanged') === '1'
+  $: if (browser && $isAuthStateInitialized && $isUserLoggedIn) {
+    goto('/dashboard')
+  }
 </script>
 
-<div class="w-full flex flex-col items-center justify-center px-4 md:px-16 py-10 md:py-16">
+<div class="w-full min-h-screen flex flex-col items-center justify-center px-4 py-8">
   {#if emailChanged}
     <div class="w-full max-w-md mb-4">
       <wa-callout variant="success" class="wa-callout-padded">
-        Email updated. Sign in with your new address.
+        Email mis à jour. Connectez-vous avec votre nouvelle adresse.
       </wa-callout>
     </div>
   {/if}
-  <InstanceGeneratorWidget login />
+  <div class="auth-card w-full max-w-md">
+    <LoginForm allowRegister={false} />
+  </div>
 </div>

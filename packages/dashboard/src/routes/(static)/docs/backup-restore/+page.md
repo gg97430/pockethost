@@ -1,42 +1,42 @@
 ---
-title: Backup and Restore
-description: Learn how to back up and restore your PocketBase instance
+title: Sauvegarde et restauration
+description: Apprendre à sauvegarder et restaurer votre instance PocketBase
 ---
-# Backing Up and Restoring
+# Sauvegarder et restaurer
 
-PocketBase offers built-in backup and restore features, making it easy to secure your data and recover from potential issues. However, there are important considerations and alternative methods to ensure your backups are safe and reliable.
+PocketBase propose des fonctionnalités intégrées de sauvegarde et de restauration, ce qui facilite la protection de vos données et la récupération en cas de problème. Il existe toutefois des points importants et des méthodes alternatives pour garantir des sauvegardes sûres et fiables.
 
-## Backup and Restore via Admin
+## Sauvegarde et restauration via l'admin
 
-PocketBase has a simple backup and restore feature available directly from the admin panel. You can create backups of your instance's data and restore from those backups when needed.
+PocketBase dispose d'une fonctionnalité simple de sauvegarde et restauration directement dans le panneau admin. Vous pouvez créer des sauvegardes des données de votre instance et les restaurer si nécessaire.
 
 ![](2024-10-06-15-45-55.png)
 
-- **No need to power off**: You can perform backups and restores through the admin panel without powering off your instance, ensuring minimal disruption to your application.
+- **Pas besoin d'éteindre** : vous pouvez effectuer sauvegardes et restaurations depuis le panneau admin sans éteindre votre instance, avec une interruption minimale.
 
-However, if your instance becomes unresponsive or the admin interface is inaccessible, you may need to use alternative methods for backing up and restoring.
+Si votre instance ne répond plus ou que l'interface admin est inaccessible, vous devrez peut-être utiliser d'autres méthodes de sauvegarde et restauration.
 
-## Backup and Restore via SFTP
+## Sauvegarde et restauration via SFTP
 
-If the admin panel’s backup and restore feature is unavailable or your instance is unresponsive, you can manually back up your data via [SFTP](/docs/ftp). This allows you to access all PocketBase files, including the database and uploads, so you can create manual backups and restore them if necessary.
+Si la fonctionnalité de sauvegarde/restauration du panneau admin est indisponible ou que votre instance ne répond plus, vous pouvez sauvegarder vos données manuellement via [SFTP](/docs/ftp). Cela donne accès à tous les fichiers PocketBase, y compris la base et les uploads, afin de créer et restaurer des sauvegardes manuelles.
 
-## S3 and Scheduled Backups
+## S3 et sauvegardes planifiées
 
-Automating your backups is a recommended practice, especially as your instance grows in complexity and usage. However, there are some important caveats:
+Automatiser vos sauvegardes est recommandé, surtout lorsque votre instance devient plus complexe et plus utilisée. Il y a toutefois quelques réserves importantes :
 
-- **Hibernation**: If your instance is in [hibernation](/docs/limits), automated backups may fail to execute. Waking up the instance on a schedule will not trigger any missed backup intervals. As your instance becomes busier, hibernation will become less frequent, minimizing this issue. To learn more, see [S3](/docs/s3) and [Limits](/docs/limits).
+- **Hibernation** : si votre instance est en [hibernation](/docs/limits), les sauvegardes automatisées peuvent ne pas s'exécuter. Réveiller l'instance selon un planning ne déclenchera pas les intervalles manqués. Plus votre instance sera active, moins l'hibernation sera fréquente, ce qui limite ce problème. Pour en savoir plus, consultez [S3](/docs/s3) et [Limites](/docs/limits).
 
-- **S3 backups**: Backing up to S3 (or another external storage solution) is highly recommended. Using S3 allows you to conserve your PocketHost storage space for critical resources such as your database and logs, which cannot be stored elsewhere. Files such as uploads and backups, on the other hand, can easily live on S3.
+- **Sauvegardes S3** : sauvegarder vers S3 (ou une autre solution de stockage externe) est fortement recommandé. S3 permet de préserver l'espace PocketHost pour les ressources critiques comme la base et les logs, qui ne peuvent pas être stockés ailleurs. Les fichiers comme uploads et sauvegardes peuvent en revanche très bien vivre sur S3.
 
-- **SFTP access to backups**: Note that backups stored in S3 are **not** accessible via SFTP. You will need to manage these backups directly through S3 or your chosen storage provider.
+- **Accès SFTP aux sauvegardes** : les sauvegardes stockées sur S3 ne sont **pas** accessibles via SFTP. Vous devrez les gérer directement via S3 ou votre fournisseur de stockage.
 
-## Best Practices
+## Bonnes pratiques
 
-To ensure your data is always secure:
+Pour garder vos données en sécurité :
 
-1. **Regularly back up** your instance using the admin panel or automated methods like S3.
-2. **Use external storage** (e.g., S3) for backups and file uploads to avoid consuming valuable PocketHost storage space.
-3. If automating backups, ensure your instance is awake and running during scheduled backup intervals.
-4. Keep in mind that **manual SFTP backups** are available if your instance becomes inaccessible via the admin panel.
+1. **Sauvegardez régulièrement** votre instance avec le panneau admin ou des méthodes automatisées comme S3.
+2. **Utilisez un stockage externe** (ex. S3) pour les sauvegardes et uploads afin d'éviter de consommer l'espace PocketHost.
+3. Si vous automatisez les sauvegardes, assurez-vous que votre instance est réveillée et active pendant les créneaux planifiés.
+4. Gardez en tête que les **sauvegardes SFTP manuelles** restent disponibles si votre instance devient inaccessible via le panneau admin.
 
-By following these practices, you can maintain a reliable backup strategy and ensure your data is safe.
+En suivant ces pratiques, vous gardez une stratégie de sauvegarde fiable et vos données en sécurité.

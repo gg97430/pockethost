@@ -1,19 +1,19 @@
 ---
-title: Accessing an Instance
-description: Learn how to access your PocketBase instance managed by PocketHost
+title: Accéder à une instance
+description: Apprendre à accéder à votre instance PocketBase gérée par PocketHost
 ---
-# Accessing an Instance
+# Accéder à une instance
 
-Your PocketBase instance managed by PocketHost can be accessed in several ways:
+Votre instance PocketBase gérée par PocketHost est accessible de plusieurs façons :
 
 1. `<uuid>.pockethost.io`
 2. `<subdomain>.pockethost.io`
-3. [SFTP file access](/docs/ftp) for direct file management
+3. [Accès fichiers SFTP](/docs/ftp) pour la gestion directe des fichiers
 
-Each PocketHost instance is assigned a permanent UUID, and a unique subdomain that you can customize and update at any time.
+Chaque instance PocketHost reçoit un UUID permanent et un sous-domaine unique que vous pouvez personnaliser et modifier à tout moment.
 
-> **Example:** I use PocketHost to run the backend for my web game, Harvest. I created a PocketHost instance and chose the subdomain `harvest`, making it accessible at `https://harvest.pockethost.io`. Since instances can be [renamed](/docs/rename-instance/), PocketHost also assigns a permanent UUID. In this case, the UUID is `mfsicdp6ia1zpiu`, so the instance is always accessible at `https://mfsicdp6ia1zpiu.pockethost.io`, regardless of subdomain changes.
+> **Exemple :** j'utilise PocketHost pour faire tourner le backend de mon jeu web, Harvest. J'ai créé une instance PocketHost et choisi le sous-domaine `harvest`, ce qui la rend accessible sur `https://harvest.pockethost.io`. Comme les instances peuvent être [renommées](/docs/rename-instance/), PocketHost attribue aussi un UUID permanent. Dans ce cas, l'UUID est `mfsicdp6ia1zpiu`, donc l'instance reste toujours accessible sur `https://mfsicdp6ia1zpiu.pockethost.io`, quels que soient les changements de sous-domaine.
 
-Custom domains are supported at the Pro level, and we manage SSL certificates for you. Learn more about setting up custom domains [here](/docs/custom-domain).
+Les domaines personnalisés sont disponibles avec l'offre Pro, et nous gérons les certificats SSL pour vous. En savoir plus sur la configuration des domaines personnalisés [ici](/docs/custom-domain).
 
-For direct file access, use [SFTP](/docs/ftp) with an SSH key to manage backups, uploads, hooks, and logs on your instance.
+Pour l'accès direct aux fichiers, utilisez [SFTP](/docs/ftp) avec une clé SSH afin de gérer sauvegardes, uploads, hooks et logs sur votre instance.

@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let title = 'Quick Reference'
+  export let title = 'Référence rapide'
   export let className = ''
 </script>
 

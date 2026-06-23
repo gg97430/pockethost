@@ -28,9 +28,9 @@
 <table class="table mb-8 w-full table-auto">
   <thead>
     <tr>
-      <th class="w-2/5 border-b-2 border-neutral text-left">Key</th>
-      <th class="w-2/5 border-b-2 border-neutral text-left">Value</th>
-      <th class="w-1/5 border-b-2 border-neutral text-right">Actions</th>
+      <th class="w-2/5 border-b-2 border-neutral text-left">Clé</th>
+      <th class="w-2/5 border-b-2 border-neutral text-left">Valeur</th>
+      <th class="w-1/5 border-b-2 border-neutral text-right">Action</th>
     </tr>
   </thead>
 
@@ -43,7 +43,7 @@
         </td>
         <td class="text-right">
           <wa-button
-            aria-label="Delete"
+            aria-label="Supprimer"
             onclick={handleDelete(item.name)}
             type="button"
             variant="warning"

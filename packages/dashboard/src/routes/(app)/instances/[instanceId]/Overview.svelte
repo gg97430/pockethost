@@ -20,41 +20,41 @@
 });`
 </script>
 
-<h2 class="text-xl font-bold text-white mb-6">Overview</h2>
+<h2 class="text-xl font-bold text-white mb-6">Vue d'ensemble</h2>
 
 <wa-card class="border border-white/10 bg-[#111111]/80 shadow-lg overflow-hidden">
   <div class="wa-card-body wa-card-body--lg wa-stack-lg">
     <div>
-      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">PocketBase URL</p>
+      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">URL PocketBase</p>
       <CodeSample code={url} language={plaintext} />
     </div>
 
     <div>
-      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">Installing PocketBase</p>
+      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">Installer PocketBase</p>
       <CodeSample code={installSnippet} />
     </div>
 
     <div>
-      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">Connecting to Your Instance</p>
+      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">Connexion à votre instance</p>
       <CodeSample code={connectionSnippet} />
     </div>
 
     <div>
-      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">Making Your First Query</p>
+      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-2">Première requête</p>
       <CodeSample code={firstQuerySnippet} />
     </div>
 
     <div class="pt-2 border-t border-white/10">
-      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-3">Additional Resources</p>
+      <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-3">Ressources supplémentaires</p>
       <ul class="space-y-2 text-sm">
         <li>
           <a href="https://pocketbase.io/docs/api-records/" target="_blank" class="text-primary hover:underline"
-            >PocketBase Web APIs</a
+            >API web PocketBase</a
           >
         </li>
         <li>
           <a href="https://www.npmjs.com/package/pocketbase" target="_blank" class="text-primary hover:underline"
-            >PocketBase NPM Package</a
+            >Package npm PocketBase</a
           >
         </li>
       </ul>

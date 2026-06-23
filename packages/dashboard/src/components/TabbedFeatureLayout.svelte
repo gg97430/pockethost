@@ -24,7 +24,7 @@
     sections = [],
     width = 'narrow',
     backHref,
-    backLabel = 'All',
+    backLabel = 'Toutes',
     children,
     mobileHeader,
     toolbar,
@@ -53,7 +53,7 @@
           {backLabel}
         </wa-button>
       {/if}
-      <button type="button" onclick={() => (sidebarOpen = !sidebarOpen)} aria-label="Toggle menu">
+      <button type="button" onclick={() => (sidebarOpen = !sidebarOpen)} aria-label="Basculer le menu">
         <wa-icon name="bars"></wa-icon>
       </button>
       {#if mobileHeader}

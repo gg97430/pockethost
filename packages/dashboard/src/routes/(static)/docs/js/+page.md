@@ -1,97 +1,97 @@
 ---
-title: Extending PocketBase via JavaScript
-description: Learn how to extend PocketBase via JavaScript using the PocketBase JSVM environment, including its differences from typical JavaScript environments
+title: Étendre PocketBase avec JavaScript
+description: Apprendre à étendre PocketBase avec JavaScript dans l'environnement JSVM de PocketBase, et comprendre ses différences avec les environnements JavaScript classiques
 ---
-# Extending PocketBase via JavaScript
+# Étendre PocketBase avec JavaScript
 
-PocketBase can be [extended via JavaScript](https://pocketbase.io/docs/js-overview/) using server-side scripts that allow you to customize and enhance the functionality of your application. These scripts are executed within the PocketBase server using a JavaScript Virtual Machine (JSVM) powered by [Goja](https://github.com/dop251/goja), a JavaScript interpreter written in Go.
+PocketBase peut être [étendu avec JavaScript](https://pocketbase.io/docs/js-overview/) grâce à des scripts côté serveur qui permettent de personnaliser et d'améliorer votre application. Ces scripts sont exécutés dans le serveur PocketBase au sein d'une machine virtuelle JavaScript (JSVM) basée sur [Goja](https://github.com/dop251/goja), un interpréteur JavaScript écrit en Go.
 
-However, it's important to understand that the PocketBase JSVM environment differs from typical JavaScript environments like the Browser API or Node.js. This guide will help you understand these differences and how to work effectively within the PocketBase JSVM environment.
+Il est important de comprendre que l'environnement JSVM de PocketBase diffère des environnements JavaScript classiques comme les API navigateur ou Node.js. Ce guide explique ces différences et montre comment travailler efficacement dans la JSVM PocketBase.
 
 <!-- @import "[TOC]" {cmd="toc" depthFrom=2 depthTo=2 orderedList=false} -->
 
 <!-- code_chunk_output -->
 
-- [Differences from Browser and Node.js APIs](#differences-from-browser-and-nodejs-apis)
-- [Missing Browser APIs](#missing-browser-apis)
-- [Process Object and Environment Variables](#process-object-and-environment-variables)
-- [No Promises or Asynchronous Code](#no-promises-or-asynchronous-code)
-- [CommonJS Modules Supported](#commonjs-modules-supported)
-- [Supported ECMAScript Features](#supported-ecmascript-features)
-- [Limitations in Feature Support](#limitations-in-feature-support)
-- [Handling Absence of Node.js Standard Modules](#handling-absence-of-nodejs-standard-modules)
+- [Différences avec les API navigateur et Node.js](#différences-avec-les-api-navigateur-et-nodejs)
+- [API navigateur absentes](#api-navigateur-absentes)
+- [Objet process et variables d'environnement](#objet-process-et-variables-denvironnement)
+- [Pas de Promises ni de code asynchrone](#pas-de-promises-ni-de-code-asynchrone)
+- [Modules CommonJS pris en charge](#modules-commonjs-pris-en-charge)
+- [Fonctionnalités ECMAScript prises en charge](#fonctionnalités-ecmascript-prises-en-charge)
+- [Limites de prise en charge](#limites-de-prise-en-charge)
+- [Absence des modules standards Node.js](#absence-des-modules-standards-nodejs)
 
 <!-- /code_chunk_output -->
 
 ---
 
-## Differences from Browser and Node.js APIs
+## Différences avec les API navigateur et Node.js
 
-The PocketBase JSVM environment does not include the full set of Browser APIs or Node.js APIs. Many global objects and functions that you might expect in those environments are not available.
+L'environnement JSVM de PocketBase n'inclut pas l'ensemble complet des API navigateur ni des API Node.js. Beaucoup d'objets et de fonctions globales attendus dans ces environnements ne sont pas disponibles.
 
-## Missing Browser APIs
+## API navigateur absentes
 
-- **`window` and `document` Objects**: Since the scripts run on the server, there is no Document Object Model (DOM) to interact with.
-- **Web APIs**: Functions like `fetch`, `alert`, `setTimeout`, and `setInterval` are not available.
-- **Event Listeners**: DOM event handling methods are absent.
-- **`require()` Support**: The `require()` function is supported in the PocketBase JSVM for loading modules. However, Node.js’s built-in modules (e.g., `fs`, `http`, `path`) are not available.
-- **No Node.js Standard Modules**: Code relying on core Node.js modules like `fs`, `http`, or `path` will not work in the PocketBase environment.
+- **Objets `window` et `document`** : comme les scripts tournent côté serveur, il n'y a pas de Document Object Model (DOM) à manipuler.
+- **API Web** : les fonctions comme `fetch`, `alert`, `setTimeout` et `setInterval` ne sont pas disponibles.
+- **Écouteurs d'événements** : les méthodes de gestion des événements DOM sont absentes.
+- **Prise en charge de `require()`** : la fonction `require()` est disponible dans la JSVM PocketBase pour charger des modules. En revanche, les modules intégrés de Node.js (ex. `fs`, `http`, `path`) ne sont pas disponibles.
+- **Pas de modules standards Node.js** : le code qui dépend de modules natifs Node.js comme `fs`, `http` ou `path` ne fonctionnera pas dans l'environnement PocketBase.
 
-  **Example of Unsupported Code:**
+  **Exemple de code non pris en charge :**
 
   ```javascript
-  // This will NOT work in PocketBase
-  const fs = require('fs') // Node.js module not available
+  // Ce code ne fonctionnera PAS dans PocketBase
+  const fs = require('fs') // module Node.js indisponible
   ```
 
-  There is an ongoing project, [pocketbase-node](https://www.npmjs.com/package/pocketbase-node), which aims to create a compatible subset of Node.js standard modules, making it easier to port Node.js code to the PocketBase JSVM.
+  Le projet [pocketbase-node](https://www.npmjs.com/package/pocketbase-node) vise à fournir un sous-ensemble compatible des modules standards Node.js, afin de faciliter le portage de code Node.js vers la JSVM PocketBase.
 
-- **Custom Modules**: You can use `require()` to load your own modules within the PocketBase environment. All modules you want to use must be explicitly provided by your codebase.
+- **Modules personnalisés** : vous pouvez utiliser `require()` pour charger vos propres modules dans l'environnement PocketBase. Tous les modules nécessaires doivent être fournis explicitement par votre codebase.
 
-  **Example of Supported Code:**
+  **Exemple de code pris en charge :**
 
   ```javascript
-  // This works if you provide your own 'utils.js' file
+  // Ce code fonctionne si vous fournissez votre propre fichier 'utils.js'
   const utils = require('./utils')
   ```
 
-## Process Object and Environment Variables
+## Objet process et variables d'environnement
 
-- **`process.env` Shim**: While the full `process` module is not available, PocketBase provides a shim for `process.env`. You can use `process.env` to access environment variables, similar to how you would in Node.js.
+- **Shim `process.env`** : même si le module `process` complet n'est pas disponible, PocketBase fournit un shim pour `process.env`. Vous pouvez utiliser `process.env` pour accéder aux variables d'environnement, comme dans Node.js.
 
-  **Example:**
+  **Exemple :**
 
   ```javascript
   const dbHost = process.env.DB_HOST || 'localhost'
   ```
 
-  However, the rest of the `process` object is not supported.
+  Le reste de l'objet `process` n'est toutefois pas pris en charge.
 
-## No Promises or Asynchronous Code
+## Pas de Promises ni de code asynchrone
 
-Goja, the JavaScript engine used by PocketBase, does not support Promises or asynchronous code. All code executed within the JSVM is synchronous.
+Goja, le moteur JavaScript utilisé par PocketBase, ne prend pas en charge les Promises ni le code asynchrone. Tout le code exécuté dans la JSVM est synchrone.
 
-### Implications:
+### Implications :
 
-- **No `Promise` Objects**: You cannot create or handle Promises.
-- **No `async`/`await` Syntax**: Asynchronous functions and the `await` keyword are not recognized.
-- **Synchronous Operations Only**: All operations must be handled synchronously.
+- **Pas d'objets `Promise`** : vous ne pouvez pas créer ni gérer de Promises.
+- **Pas de syntaxe `async`/`await`** : les fonctions asynchrones et le mot-clé `await` ne sont pas reconnus.
+- **Opérations synchrones uniquement** : toutes les opérations doivent être traitées de façon synchrone.
 
-**Example of Unsupported Code:**
+**Exemple de code non pris en charge :**
 
 ```javascript
-// This will NOT work in PocketBase JSVM
+// Ce code ne fonctionnera PAS dans la JSVM PocketBase
 async function fetchData() {
   const response = await fetch('https://api.example.com/data')
   return response.json()
 }
 ```
 
-## CommonJS Modules Supported
+## Modules CommonJS pris en charge
 
-PocketBase's Goja environment **does support CommonJS modules** via `require()`. This means you can organize your code into separate files and load them with `require()`. However, as mentioned earlier, Node.js’s built-in modules are not available, and all custom modules must be provided by you.
+L'environnement Goja de PocketBase **prend en charge les modules CommonJS** via `require()`. Vous pouvez donc organiser votre code dans plusieurs fichiers et les charger avec `require()`. En revanche, comme indiqué plus haut, les modules intégrés de Node.js ne sont pas disponibles, et tous les modules personnalisés doivent être fournis par votre projet.
 
-### Example of CommonJS Support:
+### Exemple de prise en charge CommonJS :
 
 ```javascript
 // utils.js
@@ -108,19 +108,19 @@ const utils = require('./utils')
 console.log(utils.greet('PocketBase'))
 ```
 
-## Supported ECMAScript Features
+## Fonctionnalités ECMAScript prises en charge
 
-Goja provides support for most of ECMAScript 2020 (ES11) and ES6 features, meaning you can use many modern JavaScript syntactic elements and functionalities.
+Goja prend en charge la plupart des fonctionnalités ECMAScript 2020 (ES11) et ES6. Vous pouvez donc utiliser de nombreuses syntaxes et fonctionnalités JavaScript modernes.
 
-### Supported Features Include:
+### Fonctionnalités disponibles :
 
-- **Arrow Functions**:
+- **Fonctions fléchées** :
 
   ```javascript
   const add = (a, b) => a + b
   ```
 
-- **Classes and Inheritance**:
+- **Classes et héritage** :
 
   ```javascript
   class Person {
@@ -137,20 +137,20 @@ Goja provides support for most of ECMAScript 2020 (ES11) and ES6 features, meani
   }
   ```
 
-- **Template Literals**:
+- **Template literals** :
 
   ```javascript
   const greeting = `Hello, ${name}!`
   ```
 
-- **Destructuring Assignment**:
+- **Affectation par déstructuration** :
 
   ```javascript
   const { x, y } = point
   const [first, second] = array
   ```
 
-- **Default Parameters**:
+- **Paramètres par défaut** :
 
   ```javascript
   function multiply(a, b = 1) {
@@ -158,26 +158,26 @@ Goja provides support for most of ECMAScript 2020 (ES11) and ES6 features, meani
   }
   ```
 
-- **Spread and Rest Operators**:
+- **Opérateurs spread et rest** :
 
   ```javascript
   const arr1 = [1, 2]
-  const arr2 = [...arr1, 3, 4] // Spread operator
+  const arr2 = [...arr1, 3, 4] // opérateur spread
 
   function sum(...numbers) {
-    // Rest operator
+    // opérateur rest
     return numbers.reduce((a, b) => a + b, 0)
   }
   ```
 
-- **Let and Const Declarations**:
+- **Déclarations let et const** :
 
   ```javascript
   let count = 0
   const PI = 3.1416
   ```
 
-- **Maps and Sets**:
+- **Maps et Sets** :
 
   ```javascript
   const map = new Map()
@@ -187,32 +187,32 @@ Goja provides support for most of ECMAScript 2020 (ES11) and ES6 features, meani
   set.add(1)
   ```
 
-- **Symbol Type**:
+- **Type Symbol** :
 
   ```javascript
   const sym = Symbol('description')
   ```
 
-- **Optional Chaining**:
+- **Chaînage optionnel** :
 
   ```javascript
   const street = user?.address?.street
   ```
 
-- **Nullish Coalescing Operator**:
+- **Opérateur de coalescence des nuls** :
 
   ```javascript
   const value = input ?? defaultValue
   ```
 
-## Limitations in Feature Support
+## Limites de prise en charge
 
-While Goja supports many ECMAScript features, there may be some limitations:
+Même si Goja prend en charge de nombreuses fonctionnalités ECMAScript, certaines limites existent :
 
-- **No BigInt Support**: The `BigInt` type is not supported.
-- **No Intl Object**: Internationalization features are unavailable.
-- **Limited Regular Expressions**: Some advanced regex features may not be fully supported.
+- **Pas de prise en charge de BigInt** : le type `BigInt` n'est pas disponible.
+- **Pas d'objet Intl** : les fonctionnalités d'internationalisation ne sont pas disponibles.
+- **Expressions régulières limitées** : certaines fonctionnalités regex avancées peuvent ne pas être entièrement prises en charge.
 
-## Handling Absence of Node.js Standard Modules
+## Absence des modules standards Node.js
 
-Since Node.js core modules are not available, you need to ensure that your code does not rely on them. If you need functionality provided by those modules, consider looking at [pocketbase-node](https://www.npmjs.com/package/pocketbase-node), which aims to provide a subset of Node.js modules compatible with PocketBase’s JSVM environment.
+Comme les modules natifs Node.js ne sont pas disponibles, assurez-vous que votre code n'en dépend pas. Si vous avez besoin de fonctionnalités fournies par ces modules, regardez [pocketbase-node](https://www.npmjs.com/package/pocketbase-node), qui vise à fournir un sous-ensemble de modules Node.js compatible avec l'environnement JSVM de PocketBase.

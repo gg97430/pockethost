@@ -8,7 +8,7 @@ export const HandleUserTokenRequest = (e: core.RequestEvent) => {
   // log({ id })
 
   if (!id) {
-    throw new BadRequestError(`User ID is required.`)
+    throw new BadRequestError(`L'identifiant utilisateur est obligatoire.`)
   }
 
   const rec = $app.findRecordById('users', id)

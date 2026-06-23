@@ -1,53 +1,53 @@
 ---
-title: Changing PocketBase Versions
-description: Learn how to upgrade and downgrade your Pocketbase version in Pockethost
+title: Changer de version PocketBase
+description: Apprendre à mettre à niveau ou rétrograder votre version PocketBase dans PocketHost
 ---
-# Changing PocketBase Versions
+# Changer de version PocketBase
 
-PocketHost supports the latest minor release of each PocketBase version (e.g., `0.16.*`), and you can update your instance to stay on the latest release. When changing PocketBase versions, whether upgrading or downgrading, it’s important to take precautions to ensure the stability of your instance and the integrity of your data.
+PocketHost prend en charge la dernière version mineure de chaque version PocketBase (ex. `0.16.*`), et vous pouvez mettre à jour votre instance pour rester sur la dernière release. Quand vous changez de version PocketBase, en montée comme en retour arrière, il est important de prendre des précautions pour préserver la stabilité de l'instance et l'intégrité des données.
 
-## Upgrade Strategy
+## Stratégie de mise à niveau
 
-Upgrading your instance to the latest version of PocketBase is straightforward but requires careful planning to avoid data loss or unexpected behavior. Here’s the recommended approach:
+Mettre votre instance à niveau vers la dernière version de PocketBase est simple, mais demande un peu de préparation pour éviter perte de données ou comportement inattendu. Approche recommandée :
 
-1. [Back up your instance](/docs/backup-restore) to ensure your data is safe.  
+1. [Sauvegardez votre instance](/docs/backup-restore) pour protéger vos données.
    ![](2024-10-06-15-31-47.png)
-2. **Create a second instance**: We recommend creating a second PocketHost instance and restoring your backup to it. This allows you to test the upgrade without affecting your live instance.
-3. Perform the upgrade on the second instance, ensuring all functionality is intact and working as expected.  
+2. **Créez une seconde instance** : nous recommandons de créer une seconde instance PocketHost et d'y restaurer votre sauvegarde. Cela permet de tester la mise à niveau sans toucher à l'instance en production.
+3. Effectuez la mise à niveau sur la seconde instance et vérifiez que tout fonctionne comme prévu.
    ![](version-change.png)
-4. Once you are confident that everything works correctly, upgrade your main instance.
-5. [Power off your instance](/docs/power) to make it live again after the upgrade.
+4. Quand vous êtes sûr que tout fonctionne, mettez à niveau votre instance principale.
+5. [Éteignez votre instance](/docs/power) pour la relancer après la mise à niveau.
 
-## Automatic Upgrade Steps
+## Étapes de mise à niveau automatique
 
-For most cases, automatic upgrades are possible by simply switching to the latest version:
+Dans la plupart des cas, une mise à niveau automatique se fait simplement en passant à la dernière version :
 
-1. [Back up your instance](/docs/backup-restore).  
+1. [Sauvegardez votre instance](/docs/backup-restore).
    ![](2024-10-06-15-31-47.png)
-2. Change to the latest supported version in the PocketHost dashboard (e.g., `0.16.*`).  
+2. Passez à la dernière version prise en charge dans le dashboard PocketHost (ex. `0.16.*`).
    ![](version-change.png)
-3. [Power off your instance](/docs/power) and restart it to apply the changes.
+3. [Éteignez votre instance](/docs/power) puis relancez-la pour appliquer les changements.
 
-## Manual Upgrade Steps (Rare Cases)
+## Étapes de mise à niveau manuelle (cas rares)
 
-If the automatic upgrade results in an unresponsive instance due to database schema issues, a manual upgrade is required:
+Si la mise à niveau automatique rend l'instance inaccessible à cause de problèmes de schéma de base, une mise à niveau manuelle est nécessaire :
 
-1. [Back up your instance](/docs/backup-restore) via the PocketBase admin.
-2. Download your database backup from the PocketBase admin.
-3. On your local machine, follow the necessary upgrade steps according to the [PocketBase documentation](https://pocketbase.io/docs/).
-4. Perform a backup locally after completing the upgrade.
-5. [Restore](/docs/backup-restore) the upgraded backup via the live PocketBase admin.
+1. [Sauvegardez votre instance](/docs/backup-restore) via l'admin PocketBase.
+2. Téléchargez votre sauvegarde de base depuis l'admin PocketBase.
+3. Sur votre machine locale, suivez les étapes de mise à niveau nécessaires selon la [documentation PocketBase](https://pocketbase.io/docs/).
+4. Faites une sauvegarde locale après la mise à niveau.
+5. [Restaurez](/docs/backup-restore) la sauvegarde mise à niveau via l'admin PocketBase live.
 
-## Important Notes
+## Notes importantes
 
-### Downgrading Versions
+### Rétrograder
 
-**Be cautious when downgrading** – PocketBase does not officially support downgrades. While downgrades may work in some cases, there is no guarantee they will succeed without causing issues. If you attempt to downgrade and run into problems, there is no official resolution path.
+**Soyez prudent avec les rétrogradations** : PocketBase ne prend pas officiellement en charge les retours arrière. Cela peut fonctionner dans certains cas, mais rien ne garantit que cela réussira sans problème. Si vous tentez une rétrogradation et rencontrez des erreurs, il n'existe pas de chemin de résolution officiel.
 
-### Testing Before Upgrading
+### Tester avant la mise à niveau
 
-To avoid potential disruptions, always create a second instance, restore your backup to it, and test the upgrade there first. This practice ensures you can catch any issues before applying changes to your live instance.
+Pour éviter les interruptions, créez toujours une seconde instance, restaurez-y votre sauvegarde et testez d'abord la mise à niveau dessus. Cette pratique permet de repérer les problèmes avant d'appliquer les changements à votre instance live.
 
-### System Table Migrations
+### Migrations des tables système
 
-When you upgrade to a new version, PocketBase may perform automatic migrations on system tables. These migrations are typically non-destructive, but you should proceed with caution and ensure you have a backup before applying any updates.
+Lors d'une mise à niveau, PocketBase peut effectuer des migrations automatiques sur les tables système. Ces migrations sont généralement non destructives, mais procédez avec prudence et assurez-vous d'avoir une sauvegarde avant toute mise à jour.

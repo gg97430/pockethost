@@ -1,11 +1,11 @@
 ---
-title: Custom Binaries
-description: Custom Binaries are not supported due to security concerns
+title: Binaires personnalisés
+description: Les binaires personnalisés ne sont pas pris en charge pour des raisons de sécurité
 ---
-# Custom Binaries
+# Binaires personnalisés
 
-Custom PocketBase binaries are currently not supported due to security concerns.
+Les binaires PocketBase personnalisés ne sont actuellement pas pris en charge pour des raisons de sécurité.
 
-If you're interested in this feature, please reach out to [support](/support) and make your case.
+Si cette fonctionnalité vous intéresse, contactez le [support](/support) et expliquez votre besoin.
 
-As an alternative, you can [extend PocketBase via JavaScript](/docs/js).
+Comme alternative, vous pouvez [étendre PocketBase avec JavaScript](/docs/js).

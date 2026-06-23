@@ -1,91 +1,91 @@
 ---
 title: FAQ
-description: Frequently Asked Questions about PocketHost
+description: Questions fréquentes sur PocketHost
 ---
 # FAQ
 
-## About
+## À propos
 
-### What is PocketHost?
+### Qu'est-ce que PocketHost ?
 
-[PocketHost](https://github.com/pockethost/pockethost) is an open-source, multitenant hosting platform designed for deploying and managing PocketBase backends. Licensed under the MIT license, PocketHost was created by [benallfree](https://github.com/benallfree) and is maintained by a community of contributors. Ben built PocketHost to simplify hosting for his personal and client projects, eliminating the need to set up hosting from scratch every time.
+[PocketHost](https://github.com/pockethost/pockethost) est une plateforme d'hébergement open source et multitenant conçue pour déployer et gérer des backends PocketBase. Sous licence MIT, PocketHost a été créé par [benallfree](https://github.com/benallfree) et est maintenu par une communauté de contributeurs. Ben a construit PocketHost pour simplifier l'hébergement de ses projets personnels et clients, sans devoir repartir de zéro à chaque fois.
 
-The goal of PocketHost is to provide a Firebase/Supabase-like experience where users can instantly provision new PocketBase instances.
+L'objectif de PocketHost est de fournir une expérience à la Firebase/Supabase, où les utilisateurs peuvent provisionner instantanément de nouvelles instances PocketBase.
 
-In addition to hosting, PocketHost supports services like backup, restore, SFTP access, static file hosting, and Node.js cloud workers. It aims to deliver a turnkey solution for quickly deploying small and medium-sized PocketBase projects with minimal setup.
+En plus de l'hébergement, PocketHost prend en charge sauvegarde, restauration, accès SFTP, hébergement de fichiers statiques et workers cloud Node.js. L'objectif est de fournir une solution clé en main pour déployer rapidement des projets PocketBase petits à moyens avec un minimum de configuration.
 
-### What is pockethost.io?
+### Qu'est-ce que pockethost.io ?
 
-[pockethost.io](https://pockethost.io) is the official hosting service powered by the open-source PocketHost project, also maintained by [benallfree](https://github.com/benallfree).
+[pockethost.io](https://pockethost.io) est le service d'hébergement officiel basé sur le projet open source PocketHost, également maintenu par [benallfree](https://github.com/benallfree).
 
-### What are the long-term plans?
+### Quels sont les plans à long terme ?
 
-PocketHost was created to serve the PocketBase community, combining the sovereignty benefits of self-hosting with the convenience of managed hosting.
+PocketHost a été créé pour servir la communauté PocketBase, en combinant les avantages de souveraineté de l'auto-hébergement avec le confort d'un hébergement géré.
 
-Development priorities are driven by personal and community needs, and contributions from everyone are encouraged.
+Les priorités de développement suivent les besoins personnels et communautaires, et les contributions de tous sont encouragées.
 
-Rest assured, you can always export your instance data and self-host if needed.
+Vous pouvez toujours exporter les données de votre instance et auto-héberger si nécessaire.
 
-## Data, Privacy, and Security
+## Données, confidentialité et sécurité
 
-### How stable is it?
+### Quelle est la stabilité ?
 
-pockethost.io and PocketHost are highly stable, with over 99.964% uptime (see [Status Page](https://status.pockethost.io/)). Any outages are documented in our [Discord Community](https://discord.gg/nVTxCMEcGT).
+pockethost.io et PocketHost sont très stables, avec plus de 99,964 % de disponibilité (voir la [page de statut](https://status.pockethost.io/)). Les incidents sont documentés dans notre [communauté Discord](https://discord.gg/nVTxCMEcGT).
 
-### How often does my data get backed up?
+### À quelle fréquence mes données sont-elles sauvegardées ?
 
-Data is backed up daily by us. You can also back up your data anytime using SFTP.
+Nous sauvegardons les données quotidiennement. Vous pouvez aussi sauvegarder vos données à tout moment avec SFTP.
 
-### Is my data safe and secure?
+### Mes données sont-elles en sécurité ?
 
-Yes, your data on pockethost.io is as secure as it would be on your own server—potentially more so, given that our infrastructure is rigorously tested. Access to the pockethost.io infrastructure is secured via SSH with RSA-2048 encryption.
+Oui, vos données sur pockethost.io sont aussi sécurisées que sur votre propre serveur, potentiellement davantage, car notre infrastructure est testée rigoureusement. L'accès à l'infrastructure pockethost.io est sécurisé via SSH avec chiffrement RSA-2048.
 
-While the data volume is not encrypted at the OS level (see [#143](https://github.com/benallfree/pockethost/issues/143) for details), the VPS itself is encrypted by Digital Ocean. You can always back up and download your data via [SFTP](/docs/ftp) using an SSH key registered in your account.
+Même si le volume de données n'est pas chiffré au niveau OS (voir [#143](https://github.com/benallfree/pockethost/issues/143)), le VPS lui-même est chiffré par Digital Ocean. Vous pouvez toujours sauvegarder et télécharger vos données via [SFTP](/docs/ftp) avec une clé SSH enregistrée dans votre compte.
 
-### Can I import data into PocketHost?
+### Puis-je importer des données dans PocketHost ?
 
-Yes, data import is possible via [SFTP](/docs/ftp/).
+Oui, l'import de données est possible via [SFTP](/docs/ftp/).
 
-### How do I migrate away from PocketHost and host PocketBase on my own?
+### Comment quitter PocketHost et héberger PocketBase moi-même ?
 
-You can use the SFTP feature to download and transfer all your data.
+Vous pouvez utiliser SFTP pour télécharger et transférer toutes vos données.
 
-## Pricing, Limits, and Usage Restrictions
+## Tarifs, limites et restrictions d'usage
 
-### How much does the service cost?
+### Combien coûte le service ?
 
-PocketHost offers flexible pricing tailored to how many PocketBase instances you need.  
-See the full details on the [Pricing Page](https://pockethost.io/pricing).
+PocketHost propose des tarifs flexibles selon le nombre d'instances PocketBase dont vous avez besoin.
+Consultez les détails sur la [page Tarifs](https://pockethost.io/pricing).
 
-### Usage Restrictions
-PocketHost enforces restrictions to ensure a fair and reliable experience for all users:
+### Restrictions d'usage
+PocketHost applique des restrictions pour garantir une expérience équitable et fiable à tous :
 
-**Fair Use**  
-Your app should consume roughly the same bandwidth, storage, and CPU as the average active app on our platform. Low-traffic apps coexist efficiently with high-traffic apps through dynamic resource management.
+**Utilisation raisonnable**
+Votre app doit consommer à peu près la même bande passante, le même stockage et le même CPU que l'app active moyenne de notre plateforme. Les apps à faible trafic coexistent efficacement avec les apps à fort trafic grâce à une gestion dynamique des ressources.
 
-**Prohibited Activities**  
-- Illegal content or content disallowed by our partners (e.g., payment/hosting providers)  
-- Spamming  
-- Crypto mining  
-- Any use other than hosting PocketBase for web or mobile applications  
-- Misuse of resources or activities that severely affect system performance or other users’ experience
+**Activités interdites**
+- Contenu illégal ou interdit par nos partenaires (ex. paiement/hébergement)
+- Spam
+- Minage crypto
+- Toute utilisation autre que l'hébergement de PocketBase pour applications web ou mobiles
+- Mauvaise utilisation des ressources ou activités qui dégradent fortement les performances système ou l'expérience des autres utilisateurs
 
-See the full details on [Terms of Service](https://pockethost.io/terms).
+Consultez les détails dans les [conditions d'utilisation](https://pockethost.io/terms).
 
 ## PocketBase
 
-### How does outgoing email work?
+### Comment fonctionne l'email sortant ?
 
-Currently, you need to configure your own outgoing email service ([SES recommended](https://pockethost.io/docs/ses)). We are tracking future plans for built-in SMTP support and discussing options [#154](https://github.com/benallfree/pockethost/discussions/154).
+Actuellement, vous devez configurer votre propre service d'email sortant ([SES recommandé](https://pockethost.io/docs/ses)). Nous suivons les plans futurs de support SMTP intégré et discutons des options dans [#154](https://github.com/benallfree/pockethost/discussions/154).
 
-### How does S3 storage work?
+### Comment fonctionne le stockage S3 ?
 
-You can set up S3 storage just like with a standalone PocketBase instance, though it’s often unnecessary, as our infrastructure already handles static asset hosting efficiently.
+Vous pouvez configurer un stockage S3 comme avec une instance PocketBase autonome, même si ce n'est souvent pas nécessaire, car notre infrastructure gère déjà efficacement l'hébergement des assets statiques.
 
-### What versions of PocketBase do you support, and how do I upgrade?
+### Quelles versions de PocketBase prenez-vous en charge, et comment mettre à niveau ?
 
-We support all versions of PocketBase. New versions are picked up automatically, and your instance will be upgraded with patch releases. However, upgrades across major versions are locked by default. Contact us if you wish to perform a major upgrade.
+Nous prenons en charge toutes les versions de PocketBase. Les nouvelles versions sont détectées automatiquement et votre instance peut recevoir les patch releases. Les mises à niveau majeures sont toutefois verrouillées par défaut. Contactez-nous si vous souhaitez effectuer une mise à niveau majeure.
 
-### Can I host custom PocketBase binaries or a custom Node.js backend?
+### Puis-je héberger des binaires PocketBase personnalisés ou un backend Node.js personnalisé ?
 
-Custom backend code is supported via `pb_hooks`. Support for custom PocketBase binaries and custom Node.js backends is in development.
+Le code backend personnalisé est pris en charge via `pb_hooks`. Le support des binaires PocketBase personnalisés et des backends Node.js personnalisés est en développement.

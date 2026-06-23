@@ -11,8 +11,8 @@
   let {
     action,
     poweredOffMessage = action
-      ? `Your instance must be powered off to ${action}.`
-      : 'Your instance must be powered off first.',
+      ? `Votre instance doit être éteinte pour ${action}.`
+      : "Votre instance doit d'abord être éteinte.",
   }: Props = $props()
 
   const power = $derived($instance?.power ?? false)
@@ -22,5 +22,5 @@
 {#if power && !isShuttingDown}
   <AlertBar message={poweredOffMessage} type="error" />
 {:else if isShuttingDown}
-  <AlertBar message="Instance is shutting down. Please wait until it has fully stopped." type="warning" />
+  <AlertBar message="L'instance est en cours d'arrêt. Attendez qu'elle soit complètement arrêtée." type="warning" />
 {/if}

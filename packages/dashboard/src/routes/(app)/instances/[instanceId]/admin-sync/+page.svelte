@@ -24,15 +24,16 @@
   }
 </script>
 
-<FeatureTab title="Admin Sync" documentation="/docs/admin-sync" powerOffAction="change Admin Sync" {errorMessage}>
+<FeatureTab title="Synchro admin" documentation="/docs/admin-sync" powerOffAction="modifier la synchro admin" {errorMessage}>
   <svelte:fragment slot="summary">
     <p>
-      Admin Sync ensures that your instance always has an admin account that matches the login credentials of your
-      pockethost.io account.
+      La synchro admin garantit que votre instance dispose toujours d'un compte admin correspondant aux identifiants de
+      votre compte.
     </p>
     <p class="text-white/60 text-sm mt-2">
-      For performance, the edge launches your instance even when the control plane is briefly unavailable. Admin Sync
-      may be skipped on that boot. If admin login fails afterward, power off and launch again.
+      Pour les performances, l'edge lance votre instance même lorsque le plan de contrôle est brièvement indisponible.
+      La synchro admin peut être ignorée sur ce démarrage. Si la connexion admin échoue ensuite, éteignez puis relancez
+      l'instance.
     </p>
   </svelte:fragment>
 

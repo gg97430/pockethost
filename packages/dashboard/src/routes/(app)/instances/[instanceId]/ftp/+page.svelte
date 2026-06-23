@@ -46,7 +46,8 @@
   $: instanceKeys = sshKeysForInstance(keys, $instance.id)
 
   const handleKeySaved = async () => {
-    successMessage = instanceKeys.length === 0 ? 'SSH key saved. You can connect below.' : 'SSH key saved.'
+    successMessage =
+      instanceKeys.length === 0 ? 'Clé SSH enregistrée. Vous pouvez vous connecter ci-dessous.' : 'Clé SSH enregistrée.'
     showAddForm = false
     await loadKeys()
   }
@@ -60,25 +61,25 @@
 </script>
 
 {#if loading}
-  <FeatureTab title="SFTP File Access" documentation="/docs/ftp">
+  <FeatureTab title="Accès fichiers SFTP" documentation="/docs/ftp">
     <div class="flex items-center gap-3 text-white/60 py-8">
       <wa-icon name="spinner" class="animate-spin"></wa-icon>
-      <span>Loading…</span>
+      <span>Chargement...</span>
     </div>
   </FeatureTab>
 {:else}
-  <FeatureTab title="SFTP File Access" documentation="/docs/ftp" bind:errorMessage {successMessage} successFlash>
+  <FeatureTab title="Accès fichiers SFTP" documentation="/docs/ftp" bind:errorMessage {successMessage} successFlash>
     <svelte:fragment slot="summary">
       {#if instanceKeys.length === 0}
         <p>
-          No SSH key on your account can access <strong>{$instance.subdomain}</strong> yet. Generate a key on your machine,
-          add one with access to this instance, then connect from the command below.
+          Aucune clé SSH de votre compte ne peut encore accéder à <strong>{$instance.subdomain}</strong>. Générez une clé
+          sur votre machine, ajoutez-en une avec accès à cette instance, puis connectez-vous avec la commande ci-dessous.
         </p>
       {:else}
         <p>
-          Access instance files over SFTP with an Ed25519 key from
-          <a href="/account/keys" class="text-primary">Account → Keys</a>. After connecting, run
-          <code>cd {$instance.subdomain}</code> to open this instance.
+          Accédez aux fichiers de l'instance en SFTP avec une clé Ed25519 depuis
+          <a href="/account/keys" class="text-primary">Compte → Clés</a>. Après la connexion, lancez
+          <code>cd {$instance.subdomain}</code> pour ouvrir cette instance.
         </p>
       {/if}
     </svelte:fragment>
@@ -87,18 +88,18 @@
       {#if instanceKeys.length === 0}
         <wa-callout variant="neutral" class="wa-callout-padded wa-callout-subtle-border">
           <wa-icon slot="icon" name="key"></wa-icon>
-          Add an SSH key with access to this instance to connect over SFTP.
+          Ajoutez une clé SSH avec accès à cette instance pour vous connecter en SFTP.
         </wa-callout>
       {/if}
     </svelte:fragment>
 
     {#if instanceKeys.length > 0}
       <div class="mb-6">
-        <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-3">Connection</p>
+        <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-3">Connexion</p>
         <table class="table table-sm w-full">
           <tbody>
             <tr>
-              <th>Server</th>
+              <th>Serveur</th>
               <td class="font-mono">{FTP_HOST}</td>
             </tr>
             <tr>
@@ -106,19 +107,19 @@
               <td class="font-mono">{SFTP_PORT}</td>
             </tr>
             <tr>
-              <th>Username</th>
+              <th>Nom d'utilisateur</th>
               <td class="font-mono">{email}</td>
             </tr>
             <tr>
-              <th>Protocol</th>
+              <th>Protocole</th>
               <td>SFTP</td>
             </tr>
             <tr>
-              <th>Authentication</th>
-              <td>Ed25519 SSH private key</td>
+              <th>Authentification</th>
+              <td>Clé privée SSH Ed25519</td>
             </tr>
             <tr>
-              <th>Instance folder</th>
+              <th>Dossier de l'instance</th>
               <td class="font-mono">{$instance.subdomain}</td>
             </tr>
           </tbody>
@@ -126,16 +127,15 @@
       </div>
 
       <div class="mb-6">
-        <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-3">CLI Sample</p>
+        <p class="text-xs font-medium uppercase tracking-wide text-white/50 mb-3">Exemple CLI</p>
         <CodeSample code={sftpCommand} language={bash} className="" />
         <p class="text-sm text-white/60 mt-3">
-          For Windows and other clients, consult
-          <a href="/docs/ftp" class="text-primary hover:underline">full documentation</a>.
+          Pour Windows et les autres clients, utilisez les mêmes paramètres avec une clé privée SSH Ed25519.
         </p>
       </div>
 
       <div class="mb-4 space-y-3">
-        <p class="text-xs font-medium uppercase tracking-wide text-white/50">Keys for this instance</p>
+        <p class="text-xs font-medium uppercase tracking-wide text-white/50">Clés de cette instance</p>
         {#each instanceKeys as key (key.id)}
           <div
             class="flex flex-col sm:flex-row sm:items-center gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 md:p-5"
@@ -170,13 +170,13 @@
         on:saved={handleKeySaved}
       />
       <div class="mt-3 mb-8">
-        <wa-button variant="neutral" appearance="plain" onclick={() => (showAddForm = false)}> Cancel </wa-button>
+        <wa-button variant="neutral" appearance="plain" onclick={() => (showAddForm = false)}> Annuler </wa-button>
       </div>
     {:else}
       <div class="mb-8">
         <wa-button variant="brand" onclick={() => (showAddForm = true)}>
           <wa-icon slot="start" name="plus"></wa-icon>
-          Add
+          Ajouter
         </wa-button>
       </div>
     {/if}

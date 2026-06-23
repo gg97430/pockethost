@@ -1,26 +1,26 @@
-# About PocketHost
+# À propos de PocketHost
 
-## Our Journey
+## Notre histoire
 
-PocketHost was founded in 2021 by [Ben Allfree](https://github.com/benallfree), a passionate developer seeking a more efficient way to manage **PocketBase** instances. Frustrated with the repetitive task of setting up PocketBase every time he started a new project, Ben created PocketHost to simplify this process not only for himself but for developers everywhere.
+PocketHost a été fondé en 2021 par [Ben Allfree](https://github.com/benallfree), un développeur passionné qui cherchait une façon plus efficace de gérer des instances **PocketBase**. Lassé de devoir configurer PocketBase à chaque nouveau projet, Ben a créé PocketHost pour simplifier ce processus, d'abord pour lui-même, puis pour les développeurs partout dans le monde.
 
-## Open Source Commitment
+## Engagement open source
 
-We believe in the power of collaboration and transparency. PocketHost is a completely open-source project licensed under the MIT License. This means you can inspect, modify, and contribute to the codebase, fostering a community-driven platform that continually evolves to meet the needs of its users.
+Nous croyons à la collaboration et à la transparence. PocketHost est un projet entièrement open source sous licence MIT. Vous pouvez inspecter, modifier et contribuer au code, ce qui favorise une plateforme portée par sa communauté et capable d'évoluer avec les besoins de ses utilisateurs.
 
-## Growth and Community
+## Croissance et communauté
 
-Since its inception, PocketHost has grown organically to serve over **10,000 users** worldwide. This incredible growth reflects our commitment to providing a simple, reliable, and efficient hosting solution for indie hackers, makers, and small businesses.
+Depuis sa création, PocketHost a grandi organiquement jusqu'à servir plus de **10 000 utilisateurs** dans le monde. Cette croissance reflète notre engagement à fournir une solution d'hébergement simple, fiable et efficace pour les développeurs indépendants, les makers et les petites entreprises.
 
-## Technology and Innovation
+## Technologie et innovation
 
-- **Docker Containerization**: We utilize a Docker containerized architecture to ensure isolation and security for each project hosted on our platform.
-- **Dynamic Resource Allocation**: Our innovative approach allows us to run thousands of instances on a single Virtual Private Server (VPS). This efficient use of resources ensures optimal performance and scalability for all users.
+- **Conteneurisation Docker** : nous utilisons une architecture conteneurisée avec Docker pour assurer l'isolation et la sécurité de chaque projet hébergé sur notre plateforme.
+- **Allocation dynamique des ressources** : notre approche permet d'exécuter des milliers d'instances sur un seul serveur privé virtuel (VPS). Cette utilisation efficace des ressources garantit de bonnes performances et une scalabilité adaptée à tous les utilisateurs.
 
-## Special Thanks
+## Remerciements
 
-We extend our heartfelt gratitude to **Gani** at [PocketBase](https://pocketbase.io/) for his unwavering support and invaluable advice. His contributions have been instrumental in shaping PocketHost into the robust platform it is today.
+Nous remercions chaleureusement **Gani** de [PocketBase](https://pocketbase.io/) pour son soutien constant et ses conseils précieux. Ses contributions ont joué un rôle essentiel dans la construction de la plateforme robuste qu'est PocketHost aujourd'hui.
 
-## Join Us
+## Rejoignez-nous
 
-PocketHost is more than just a hosting service; it's a community of creators and innovators. Whether you're developing your next big idea or need a reliable hosting solution for your business, we're here to support you every step of the way.
+PocketHost est plus qu'un service d'hébergement : c'est une communauté de créateurs et d'innovateurs. Que vous développiez votre prochaine grande idée ou que vous cherchiez une solution d'hébergement fiable pour votre activité, nous sommes là pour vous accompagner à chaque étape.

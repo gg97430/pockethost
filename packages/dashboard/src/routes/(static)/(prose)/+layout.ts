@@ -3,19 +3,19 @@ import type { LayoutLoad } from './$types'
 const pages: Record<string, { title: string; description: string }> = {
   '3.0': {
     title: 'PocketHost 3.0',
-    description: 'What is changing in PocketHost 3.0: SFTP, Flounder sunset, pricing, and how to get ready.',
+    description: 'Ce qui change avec PocketHost 3.0 : SFTP, fin de Flounder, tarifs et préparation.',
   },
   about: {
-    title: 'About PocketHost',
-    description: 'Our journey, open source commitment, and community.',
+    title: 'À propos de PocketHost',
+    description: 'Notre histoire, notre engagement open source et notre communauté.',
   },
   privacy: {
-    title: 'Privacy Policy',
-    description: 'PocketHost privacy policy.',
+    title: 'Politique de confidentialité',
+    description: 'Politique de confidentialité de PocketHost.',
   },
   terms: {
-    title: 'Terms of Service',
-    description: 'PocketHost terms of service.',
+    title: "Conditions d'utilisation",
+    description: "Conditions d'utilisation de PocketHost.",
   },
 }
 

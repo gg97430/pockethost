@@ -60,18 +60,18 @@ export function assertNotInstanceRootMutation(restOfVirtualPath: string[], insta
     !isAllowedInstanceRootDir(restOfVirtualPath[0]!) &&
     !isAllowedInstanceRootFile(restOfVirtualPath[0]!)
   ) {
-    throw new Error(`Accessing ${restOfVirtualPath[0]} is not allowed.`)
+    throw new Error(`L'accès à ${restOfVirtualPath[0]} n'est pas autorisé.`)
   }
 }
 
 export function assertNotInstanceRootMkdir(restOfVirtualPath: string[], instance?: { id: string }) {
   if (instance && restOfVirtualPath.length === 1 && !isAllowedInstanceRootDir(restOfVirtualPath[0]!)) {
-    throw new Error(`Cannot create directories at the instance root.`)
+    throw new Error(`Impossible de créer des dossiers à la racine de l'instance.`)
   }
 }
 
 export function assertNotInstanceRootDelete(restOfVirtualPath: string[], instance?: { id: string }) {
   if (instance && restOfVirtualPath.length === 1 && !isAllowedInstanceRootFile(restOfVirtualPath[0]!)) {
-    throw new Error(`Cannot remove ${restOfVirtualPath[0]} from the instance root.`)
+    throw new Error(`Impossible de supprimer ${restOfVirtualPath[0]} depuis la racine de l'instance.`)
   }
 }

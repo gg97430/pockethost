@@ -100,10 +100,10 @@
 {:else}
   <div in:slide={{ delay: 400 }} out:slide>
     <form class="auth-form" onsubmit={handleSubmit}>
-      <h2 class="auth-form-title">Create your first Instance, fast.</h2>
+      <h2 class="auth-form-title">Créez votre première instance, rapidement.</h2>
 
       <div class="auth-field-group">
-        <label class="auth-label" for="instance">Instance Name</label>
+        <label class="auth-label" for="instance">Nom de l'instance</label>
 
         <div class="flex gap-2">
           <wa-input
@@ -122,9 +122,9 @@
 
         <div class="text-sm text-white/70">
           {#if $instanceNameField === ''}
-            <span class="text-error">Please enter an instance name</span>
+            <span class="text-error">Veuillez saisir un nom d'instance</span>
           {:else if $instanceInfo.fetching}
-            Verifying...
+            Vérification...
           {:else if $instanceInfo.available}
             <span class="text-success"> https://{$instanceInfo.name}.{PUBLIC_APEX_DOMAIN} ✔︎</span>
           {:else if !$instanceInfo.available}
@@ -149,11 +149,11 @@
       </div>
 
       <div class="auth-field-group">
-        <label class="auth-label" for="password">Password</label>
+        <label class="auth-label" for="password">Mot de passe</label>
         <wa-input
           type="password"
           id="password"
-          placeholder="Password"
+          placeholder="Mot de passe"
           autocomplete="new-password"
           value={password}
           oninput={(e: Event) => (password = (e.currentTarget as HTMLInputElement).value)}
@@ -165,14 +165,14 @@
       <AlertBar message={formError} type="error" />
 
       <button type="submit" class="auth-submit" disabled={isFormButtonDisabled}>
-        Create
+        Créer
         <wa-icon name="arrow-right"></wa-icon>
       </button>
     </form>
 
     <div class="auth-footer">
-      Already have an account?
-      <button type="button" class="auth-footer-button" onclick={handleLoginClick}>Log in</button>
+      Vous avez déjà un compte ?
+      <button type="button" class="auth-footer-button" onclick={handleLoginClick}>Connexion</button>
     </div>
   </div>
 {/if}

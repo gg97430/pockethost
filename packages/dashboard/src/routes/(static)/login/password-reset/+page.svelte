@@ -25,9 +25,11 @@
     } catch (error) {
       userShouldCheckTheirEmail = false
       if (error instanceof Error) {
-        formError = client().parseError(error)[0] || `Something went wrong resetting your password. ${error.message}`
+        formError =
+          client().parseError(error)[0] ||
+          `Une erreur est survenue pendant la réinitialisation du mot de passe. ${error.message}`
       } else {
-        formError = 'Something went wrong resetting your password.'
+        formError = 'Une erreur est survenue pendant la réinitialisation du mot de passe.'
       }
     }
 
@@ -36,24 +38,24 @@
 </script>
 
 <svelte:head>
-  <title>Password Reset - PocketHost</title>
+  <title>Réinitialisation du mot de passe - Gestion PocketBase</title>
 </svelte:head>
 
 <div class="w-full flex items-center justify-center px-4 md:px-16 py-10 md:py-16">
   <div class="auth-card w-full max-w-md">
     {#if userShouldCheckTheirEmail}
       <div class="auth-form text-center">
-        <h2 class="auth-form-title">Check Your Email</h2>
+        <h2 class="auth-form-title">Consultez votre boîte mail</h2>
         <p class="text-white/80">
-          A verification link has been sent to <br /><strong class="text-white">{email}</strong>
+          Un lien de vérification a été envoyé à <br /><strong class="text-white">{email}</strong>
         </p>
       </div>
     {:else}
       <form class="auth-form" method="post" autocomplete="on" onsubmit={handleSubmit}>
-        <h2 class="auth-form-title">Password Reset</h2>
+        <h2 class="auth-form-title">Réinitialisation du mot de passe</h2>
 
         <div class="auth-field-group">
-          <label class="auth-label" for="email">Email address</label>
+          <label class="auth-label" for="email">Adresse email</label>
           <input
             type="email"
             id="email"
@@ -70,7 +72,7 @@
         <AlertBar message={formError} type="error" />
 
         <button type="submit" class="auth-submit" disabled={isFormButtonDisabled}>
-          Reset Password
+          Réinitialiser le mot de passe
           <wa-icon name="arrow-right"></wa-icon>
         </button>
       </form>

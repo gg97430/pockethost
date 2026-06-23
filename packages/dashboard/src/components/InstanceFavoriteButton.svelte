@@ -20,7 +20,7 @@
   type="button"
   class="instance-favorite-btn"
   class:instance-favorite-btn--active={isFavorite}
-  aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+  aria-label={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
   aria-pressed={isFavorite}
   onclick={handleClick}
   onkeydown={handleKeydown}
@@ -40,7 +40,7 @@
     border: none;
     border-radius: 0.375rem;
     background: transparent;
-    color: rgb(255 255 255 / 0.25);
+    color: var(--app-text-faint);
     cursor: pointer;
     transition:
       color 120ms ease,
@@ -48,8 +48,8 @@
   }
 
   .instance-favorite-btn:hover {
-    color: rgb(255 255 255 / 0.55);
-    background: rgb(255 255 255 / 0.06);
+    color: var(--app-text);
+    background: var(--app-surface-hover);
   }
 
   .instance-favorite-btn--active {
@@ -62,7 +62,7 @@
 
   .instance-favorite-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px rgb(255 255 255 / 0.2);
+    box-shadow: 0 0 0 2px rgb(30 184 84 / 0.3);
   }
 
   .instance-favorite-icon {

@@ -51,8 +51,8 @@
 </script>
 
 <div class="flex flex-col gap-2">
-  <wa-select {id} class="w-full" value={presetId} oninput={handlePresetChange} placeholder="Schedule (UTC)">
-    <wa-option value="" disabled>Select a schedule</wa-option>
+  <wa-select {id} class="w-full" value={presetId} oninput={handlePresetChange} placeholder="Planification (UTC)">
+    <wa-option value="" disabled>Choisir une planification</wa-option>
     {#each CRON_PRESETS as preset}
       <wa-option value={preset.id}>{preset.label}</wa-option>
     {/each}

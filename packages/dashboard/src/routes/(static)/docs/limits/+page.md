@@ -1,87 +1,87 @@
 ---
-title: Limits
-description: Learn about the limits enforced by PocketHost, including rate limiting, hibernation, usage limits, and prohibited content
+title: Limites
+description: Comprendre les limites appliquées par PocketHost, notamment rate limiting, hibernation, limites d'usage et contenus interdits
 ---
 
-# Limits
+# Limites
 
-PocketHost enforces several limits to ensure a fair and reliable experience for all users. Below are the key limitations and guidelines for usage.
+PocketHost applique plusieurs limites afin de garantir une expérience équitable et fiable pour tous les utilisateurs. Voici les principales limites et règles d'utilisation.
 
-## Rate Limiting
+## Rate limiting
 
-PocketHost implements multiple layers of rate limiting to ensure fair resource allocation and system stability.
+PocketHost applique plusieurs couches de rate limiting pour assurer une allocation équitable des ressources et la stabilité du système.
 
-### Cloudflare Edge Limits
+### Limites edge Cloudflare
 
-The first layer of rate limiting is imposed by **Cloudflare**, which restricts requests to **50 requests per 10 seconds per IP**. This is enforced at the edge before traffic reaches PocketHost infrastructure.
+La première couche est appliquée par **Cloudflare**, qui limite les requêtes à **50 requêtes par 10 secondes et par IP**. Cette limite est appliquée à l'edge avant que le trafic n'atteigne l'infrastructure PocketHost.
 
-### PocketHost Rate Limits
+### Limites PocketHost
 
-PocketHost enforces additional rate limits at the application level:
+PocketHost applique des limites supplémentaires au niveau applicatif :
 
-#### Hourly Request Limits
+#### Limites horaires
 
-- **1,000 requests per hour per IP address**
-- **10,000 requests per hour per instance**
+- **1 000 requêtes par heure et par adresse IP**
+- **10 000 requêtes par heure et par instance**
 
-These limits reset every hour and track the total number of requests made.
+Ces limites se réinitialisent chaque heure et suivent le nombre total de requêtes.
 
-#### Concurrent Request Limits
+#### Limites de requêtes simultanées
 
-- **5 simultaneous requests per IP address**
-- **50 simultaneous requests per instance**
+- **5 requêtes simultanées par adresse IP**
+- **50 requêtes simultanées par instance**
 
-These limits restrict the number of active requests that can be processed at the same time. Once a request completes, the slot becomes available for new requests.
+Ces limites restreignent le nombre de requêtes actives pouvant être traitées en même temps. Une fois une requête terminée, le slot redevient disponible.
 
-### Best Practices
+### Bonnes pratiques
 
-If you're making numerous requests from the client side, we recommend using the [Bottleneck NPM package](https://www.npmjs.com/package/bottleneck) to manage and throttle requests efficiently.
+Si vous faites beaucoup de requêtes côté client, nous recommandons le package NPM [Bottleneck](https://www.npmjs.com/package/bottleneck) pour gérer et limiter efficacement les appels.
 
-In general, exceeding the rate limit often indicates a coding issue. Another option is to write custom routes using [JS Hooks](/docs/programming) to perform bulk fetching and filtering server-side, which can be difficult to manage effectively on the client side.
+En général, dépasser les limites indique souvent un problème de code. Une autre option consiste à écrire des routes personnalisées avec les [hooks JS](/docs/programming) pour faire des récupérations et filtrages en masse côté serveur, ce qui peut être difficile à gérer efficacement côté client.
 
-### Server-Side Rendering (SSR) and Proxy Servers
+### Rendu côté serveur (SSR) et serveurs proxy
 
-If you're using a proxy server for Server-Side Rendering (SSR) purposes, all requests to PocketHost will appear to come from your server's IP address rather than your end users' IPs. This means your server will quickly hit the per-IP rate limits (1,000 requests/hour and 5 concurrent requests), affecting all your users.
+Si vous utilisez un serveur proxy pour du rendu côté serveur (SSR), toutes les requêtes vers PocketHost sembleront venir de l'adresse IP de votre serveur, et non des IP de vos utilisateurs. Votre serveur atteindra donc vite les limites par IP (1 000 requêtes/heure et 5 requêtes simultanées), ce qui affectera tous vos utilisateurs.
 
-**Our recommended solutions:**
+**Solutions recommandées :**
 
-1. **Switch to Client-Side Rendering (CSR)** - Make API calls directly from the browser instead of through your server
-2. **Use [PocketPages.dev](https://pocketpages.dev)** - A lightweight SSR solution that runs directly within PocketBase
+1. **Passer au rendu côté client (CSR)** - Faire les appels API directement depuis le navigateur plutôt que via votre serveur.
+2. **Utiliser [PocketPages.dev](https://pocketpages.dev)** - Une solution SSR légère qui tourne directement dans PocketBase.
 
-**If you must use a proxy server:**
+**Si vous devez utiliser un serveur proxy :**
 
-If neither of the above solutions work for your use case, you can configure your proxy to forward the real client IP addresses:
+Si aucune des solutions précédentes ne convient, vous pouvez configurer votre proxy pour transmettre les vraies adresses IP client :
 
-1. Configure your proxy server to send the `X-PocketHost-Client-IP` header with each request, containing the real client's IP address
-2. Contact [PocketHost Support](/support) to whitelist your proxy server's IP address
+1. Configurez votre serveur proxy pour envoyer l'en-tête `X-PocketHost-Client-IP` à chaque requête, avec la vraie IP du client.
+2. Contactez le [support PocketHost](/support) pour mettre l'adresse IP de votre proxy en liste blanche.
 
-Once whitelisted, PocketHost will use the IP from the `X-PocketHost-Client-IP` header for rate limiting instead of your proxy server's IP, ensuring each end user gets their own rate limit allocation.
+Une fois la liste blanche appliquée, PocketHost utilisera l'IP de l'en-tête `X-PocketHost-Client-IP` pour le rate limiting au lieu de l'IP de votre proxy, afin que chaque utilisateur final ait sa propre limite.
 
-### Special Cases
+### Cas particuliers
 
-In special cases, such as during conferences or events where a large amount of traffic originates from a single IP, we have ways to expand or bypass these rate limits. If this applies to you, please contact [PocketHost Support](/support).
+Dans certains cas, par exemple lors de conférences ou événements où beaucoup de trafic vient d'une seule IP, nous pouvons augmenter ou contourner ces limites. Si cela vous concerne, contactez le [support PocketHost](/support).
 
 ## Hibernation
 
-To conserve resources, PocketHost instances may enter a **hibernation** state during periods of inactivity. When in hibernation, your instance won't immediately respond to incoming requests but will wake up when a new request is received.
+Pour économiser les ressources, les instances PocketHost peuvent entrer en **hibernation** pendant les périodes d'inactivité. En hibernation, votre instance ne répond pas immédiatement aux requêtes entrantes, mais se réveille lorsqu'une nouvelle requête arrive.
 
-### Important Caveats:
+### Points importants :
 
-- **Scheduled Tasks and Backups**: Automated tasks like scheduled backups may fail to execute if the instance is in hibernation at the scheduled time. Waking up the instance on a schedule will not trigger any missed intervals. This is generally less of an issue as your instance grows and becomes more active. Check out [weboooks](/docs/webhooks) for an alternative means of running scheduled tasks that survive hibernation.
-- **Instance Waking**: While the instance will wake up for new requests, the first request after hibernation may experience a delay as the instance restarts.
+- **Tâches planifiées et sauvegardes** : les tâches automatisées, comme les sauvegardes planifiées, peuvent ne pas s'exécuter si l'instance est en hibernation au moment prévu. Réveiller l'instance selon un planning ne déclenche pas les intervalles manqués. C'est généralement moins problématique quand votre instance grandit et devient plus active. Consultez [webhooks](/docs/webhooks) pour une alternative aux tâches planifiées qui résiste à l'hibernation.
+- **Réveil de l'instance** : l'instance se réveille lors de nouvelles requêtes, mais la première requête après hibernation peut subir un délai pendant le redémarrage.
 
-## Usage Limits
+## Limites d'utilisation
 
-In addition to rate limits, we monitor:
+En plus des limites de requêtes, nous surveillons :
 
-- **Bandwidth** (both ingress and egress)
-- **Storage**
-- **CPU Usage**
+- **Bande passante** (entrante et sortante)
+- **Stockage**
+- **Utilisation CPU**
 
-We operate under a **Fair Use Policy** as outlined in our [Terms of Service](/terms). This means your usage is acceptable as long as it aligns with that of other users. If your usage significantly exceeds typical levels, we may contact you to discuss a resolution.
+Nous fonctionnons selon une **politique d'utilisation raisonnable**, décrite dans nos [conditions d'utilisation](/terms). Votre usage est acceptable tant qu'il reste aligné avec celui des autres utilisateurs. Si votre usage dépasse largement les niveaux habituels, nous pouvons vous contacter pour trouver une solution.
 
-In extreme cases, if the issue cannot be resolved and it negatively impacts other users, your instance may be suspended. In severe cases, we may be forced to delete data without providing a backup. While this is rare (it has only happened once due to an abusive situation), it’s important to stay within reasonable usage limits.
+Dans les cas extrêmes, si le problème ne peut pas être résolu et impacte négativement les autres utilisateurs, votre instance peut être suspendue. Dans les cas graves, nous pouvons être forcés de supprimer des données sans fournir de sauvegarde. C'est rare, mais il est important de rester dans des limites raisonnables.
 
-## Prohibited Content
+## Contenu interdit
 
-Our [Terms of Service](/terms) also outline additional limits, including restrictions on prohibited content and usage. Be sure to review these guidelines to ensure your instance complies with our policies.
+Nos [conditions d'utilisation](/terms) détaillent aussi d'autres limites, notamment les restrictions sur les contenus et usages interdits. Consultez-les pour vous assurer que votre instance respecte nos règles.

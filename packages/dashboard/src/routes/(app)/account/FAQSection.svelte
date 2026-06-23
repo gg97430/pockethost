@@ -4,66 +4,68 @@
 </script>
 
 <div class="mx-auto max-w-7xl divide-y divide-gray-500 px-6 py-24 sm:py-32 lg:px-8 lg:py-40">
-  <h2 class="text-2xl font-bold leading-10 tracking-tight">Frequently asked questions</h2>
+  <h2 class="text-2xl font-bold leading-10 tracking-tight">Questions fréquentes</h2>
 
   <dl class="mt-10 space-y-8 divide-y divide-gray-500">
-    <FAQItem question={`What is the "Legacy Plan"?`}>
+    <FAQItem question={`Qu'est-ce que l'offre "Legacy" ?`}>
       <p class="mb-4">
-        Legacy accounts have access to existing projects and features, but cannot create new projects or use new
-        features.
+        Les comptes Legacy ont accès aux projets et fonctionnalités existants, mais ne peuvent pas créer de nouveaux
+        projets ni utiliser les nouvelles fonctionnalités.
       </p>
       <p>
-        If you upgrade to a paid plan and then downgrade again, you will still have access to your Legacy projects and
-        features, but any new projects and features created on a paid plan will no longer work.
+        Si vous passez à une offre payante puis revenez ensuite en arrière, vous garderez accès à vos projets et
+        fonctionnalités Legacy, mais les nouveaux projets et fonctionnalités créés avec une offre payante ne
+        fonctionneront plus.
       </p>
     </FAQItem>
 
-    <FAQItem question="Giving Back to the Open Source Community">
+    <FAQItem question="Contribution à la communauté open source">
       <p class="mb-4">
-        PocketHost is committed to giving back to the open source community that helps create PocketHost and PocketBase.
+        La plateforme s'engage à contribuer à la communauté open source qui aide à faire évoluer PocketBase.
       </p>
       <p class="mb-4">
-        10% of net proceeds (after expenses) are donated back to the community. Specifically, PocketHost makes donations
-        to the PocketBase project and major contributors to the PocketHost project.
+        10 % du produit net (après dépenses) sont reversés à la communauté. Plus précisément, des dons sont faits au
+        projet PocketBase et à ses principaux contributeurs.
       </p>
-      <p>In addition, 1% of membership fees is collected by Stripe to reduce carbon footprints around the world.</p>
+      <p>De plus, 1 % des frais d'abonnement est collecté par Stripe pour réduire l'empreinte carbone dans le monde.</p>
     </FAQItem>
 
-    <FAQItem question="Fair Use Policy">
+    <FAQItem question="Politique d'utilisation raisonnable">
       <p class="mb-4">
-        When we say 'unlimited', we mean it in the Fair Use sense of the word. Obviously, everything has limits. In our
-        study of PocketHost usage patterns, we found that even the busiest and most successful PocketHost instances
-        rarely stress our system.
+        Quand nous disons "illimité", nous l'entendons au sens d'une utilisation raisonnable. Évidemment, tout a des
+        limites. En étudiant les usages de la plateforme, nous avons constaté que même les instances les plus
+        actives sollicitent rarement fortement notre système.
       </p>
       <p class="mb-4">
-        PocketHost is a haven for developers who want to launch and iterate quickly on ideas without worrying about
-        metering and infrastructure.
+        Gestion PocketBase est conçu pour les développeurs qui veulent lancer et itérer rapidement sur des idées sans se soucier
+        de la facturation à l'usage ni de l'infrastructure.
       </p>
       <p class="mb-4">
-        If your app gets big and it starts affecting the system, we'll talk about an enterprise plan or a dedicated
-        setup.
+        Si votre application grossit et commence à affecter le système, nous discuterons d'une offre entreprise ou d'une
+        configuration dédiée.
       </p>
       <p>
-        Please enjoy PocketHost knowing that you can use as much storage, bandwidth, and CPU as your application
-        requires under normal operating conditions. Let us handle the hosting so you can get back to work.
+        Utilisez vos instances en sachant que vous pouvez consommer autant de stockage, de bande passante et de CPU que
+        votre application le nécessite dans des conditions normales. Laissez-nous gérer l'hébergement pour que vous
+        puissiez vous remettre au travail.
       </p>
     </FAQItem>
 
-    <FAQItem question="Cancellation and Refunds">
-      <p class="mb-4">Short version: We only want your money if you are happy.</p>
+    <FAQItem question="Annulation et remboursements">
+      <p class="mb-4">Version courte : nous ne voulons votre argent que si vous êtes satisfait.</p>
       <p class="mb-4">
-        Long version: If you need to cancel your membership for any reason, please <a
+        Version longue : si vous devez annuler votre abonnement pour une raison quelconque, veuillez <a
           class="text-primary"
-          href={DISCORD_URL}>contact <code>.noaxis</code> on Discord</a
-        >. If you cancel within the first 5 days of a signup or renewal, we'll refund the full amount. Otherwise, we'll
-        pro-rate it. Sound good?
+          href={DISCORD_URL}>contacter <code>.noaxis</code> sur Discord</a
+        >. Si vous annulez dans les 5 premiers jours suivant une inscription ou un renouvellement, nous remboursons le
+        montant complet. Sinon, nous remboursons au prorata. Ça vous va ?
       </p>
       <p>
-        If you create additional instances and then downgrade to the free plan, the extra instances will remain
-        accessible in your dashboard, but they will not run.
+        Si vous créez des instances supplémentaires puis revenez à l'offre gratuite, les instances en trop resteront
+        accessibles dans votre dashboard, mais elles ne fonctionneront pas.
       </p>
     </FAQItem>
 
-    <!-- More questions... -->
+    <!-- Autres questions... -->
   </dl>
 </div>

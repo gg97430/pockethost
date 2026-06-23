@@ -1,29 +1,29 @@
 ---
-title: Power
-description: Learn how to power on and off your PocketBase instance using the PocketHost management console
+title: Alimentation
+description: Apprendre à allumer et éteindre votre instance PocketBase depuis la console de gestion PocketHost
 ---
-# Power
+# Alimentation
 
-## Power On
+## Allumer
 
 ![](power-on.png)
 
-To power on the instance, follow these steps:
+Pour allumer l'instance, suivez ces étapes :
 
-1. Open the instance management console.
-2. Locate the power button and click on it.
-3. The instance is now active.
+1. Ouvrez la console de gestion de l'instance.
+2. Trouvez le bouton d'alimentation et cliquez dessus.
+3. L'instance est maintenant active.
 
-Once powered on, your PocketBase instance will be able to receive requests and respond accordingly.
+Une fois allumée, votre instance PocketBase peut recevoir des requêtes et y répondre.
 
-## Power Off
+## Éteindre
 
 ![](power-off.png)
 
-To power off the instance, follow these steps:
+Pour éteindre l'instance, suivez ces étapes :
 
-1. Open the instance management console.
-2. Locate the power button and click on it.
-3. Wait for the instance to shut down.
+1. Ouvrez la console de gestion de l'instance.
+2. Trouvez le bouton d'alimentation et cliquez dessus.
+3. Attendez l'arrêt de l'instance.
 
-When the instance is powered off, no requests will be answered.
+Quand l'instance est éteinte, aucune requête ne reçoit de réponse.

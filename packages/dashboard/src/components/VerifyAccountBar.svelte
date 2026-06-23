@@ -16,7 +16,7 @@
       await resendVerificationEmail()
     } catch (error) {
       const e = error as Error
-      formError = `Something went wrong with sending the verification email. ${e.message}`
+      formError = `Une erreur est survenue pendant l'envoi de l'email de vérification. ${e.message}`
     }
 
     setTimeout(() => {
@@ -31,14 +31,14 @@
       <wa-icon slot="icon" name="envelope"></wa-icon>
       <div class="flex flex-col md:flex-row justify-between gap-4 w-full">
         <div class="flex gap-4 items-center text-start">
-          <div>Please verify your account by clicking the link in your email</div>
+          <div>Veuillez vérifier votre compte en cliquant sur le lien reçu par email</div>
         </div>
 
         <div class="text-right w-full md:w-auto">
           {#if isButtonProcessing}
             <wa-button variant="success" size="small" disabled>
               <wa-icon slot="start" name="check"></wa-icon>
-              Sent!
+              Envoyé !
             </wa-button>
           {:else}
             <wa-button
@@ -49,7 +49,7 @@
               class="w-full"
               onclick={handleClick}
             >
-              Resend Email
+              Renvoyer l'email
             </wa-button>
           {/if}
 

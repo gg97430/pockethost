@@ -1,59 +1,59 @@
 ---
 title: PocketHost 3.0
-description: What is changing in PocketHost 3.0. SFTP, Flounder sunset, pricing, and how to get ready.
+description: Ce qui change avec PocketHost 3.0 : SFTP, fin de Flounder, tarifs et préparation.
 ---
 
-# PocketHost 3.0 is coming
+# PocketHost 3.0 arrive
 
-We are lining up a major refresh of the platform. Nothing flips overnight, but several things you rely on today are changing. This page is the short version so you can get ready.
+Nous préparons une mise à jour majeure de la plateforme. Rien ne changera du jour au lendemain, mais plusieurs éléments que vous utilisez aujourd'hui évoluent. Cette page résume l'essentiel pour vous aider à vous préparer.
 
-For launch updates and deep dives on each change, follow the [PocketHost blog](/blog).
+Pour suivre les annonces de lancement et les détails de chaque changement, consultez le [blog PocketHost](/blog).
 
-## SFTP replaces FTPS
+## SFTP remplace FTPS
 
-**SFTP on port 2222** with Ed25519 SSH keys is the future for instance files. **FTPS on port 21** (email + password) is on a sunset path and will be removed after a grace period.
+**SFTP sur le port 2222** avec des clés SSH Ed25519 devient la méthode principale pour les fichiers d'instance. **FTPS sur le port 21** (email + mot de passe) entre en fin de vie et sera retiré après une période de grâce.
 
-**What works today**
+**Ce qui fonctionne aujourd'hui**
 
-- Manual uploads via SFTP. See [SFTP File Access](/docs/ftp) and register keys under [Account → Keys](/account/keys).
-- **`phio dev`**, **`phio deploy`**, and **`phio logs`** over SFTP. See [phio CLI](/docs/phio).
-- FTPS still works during the transition. New setups should use SFTP only.
+- Uploads manuels via SFTP. Consultez [Accès fichiers SFTP](/docs/ftp) et ajoutez vos clés dans [Compte → Clés](/account/keys).
+- **`phio dev`**, **`phio deploy`** et **`phio logs`** via SFTP. Consultez [phio CLI](/docs/phio).
+- FTPS fonctionne encore pendant la transition. Les nouvelles configurations doivent utiliser SFTP uniquement.
 
-**What is still in progress**
+**Ce qui est encore en cours**
 
-- GitHub Actions workflows that still target FTPS on port 21. Migrate to SFTP or use `phio deploy` in CI. See [phio CLI](/docs/phio).
+- Les workflows GitHub Actions qui ciblent encore FTPS sur le port 21. Migrez vers SFTP ou utilisez `phio deploy` en CI. Consultez [phio CLI](/docs/phio).
 
-More detail: [SFTP file access](/blog/sftp-file-access) · [FTPS sunset](/blog/ftps-sunset)
+Plus de détails : [accès fichiers SFTP](/blog/sftp-file-access) · [fin de FTPS](/blog/ftps-sunset)
 
-## Flounder lifetime is going away
+## L'accès à vie Flounder disparaît
 
-The **Flounder** one-time lifetime tier stops selling **July 1, 2026**.
+La formule **Flounder** à vie et paiement unique cesse d'être vendue le **1 juillet 2026**.
 
-- **Existing Flounder subscribers** stay grandfathered. Your hosting does not change.
-- **Accounts created before July 1** get a **30-day grace window** (through **July 31**) to buy Flounder if you still want it.
-- After that, new lifetime purchases are off the table.
+- Les **abonnés Flounder existants** conservent leur accès. Votre hébergement ne change pas.
+- Les **comptes créés avant le 1 juillet** disposent d'une **période de grâce de 30 jours** (jusqu'au **31 juillet**) pour acheter Flounder s'ils le souhaitent encore.
+- Après cela, les nouveaux achats à vie ne seront plus disponibles.
 
-If you have been thinking about Flounder, read the full timeline on the blog and check [pricing](/pricing) while it is still available.
+Si vous envisagiez Flounder, lisez le calendrier complet sur le blog et consultez les [tarifs](/pricing) tant que la formule est encore disponible.
 
-More detail: [Last call for Flounder lifetime access](/blog/flounder-lifetime-sunset)
+Plus de détails : [dernier appel pour l'accès à vie Flounder](/blog/flounder-lifetime-sunset)
 
-## Pricing is changing
+## Les tarifs changent
 
-Subscriptions are how we sustain hosting long term. We are retiring lifetime sales and rolling out **new monthly tiers** with clearer limits for **new customers**.
+Les abonnements sont ce qui nous permet de maintenir l'hébergement sur le long terme. Nous arrêtons les ventes à vie et lançons de **nouvelles formules mensuelles** avec des limites plus claires pour les **nouveaux clients**.
 
-**If you already subscribe, your billing does not change.** Same plan, same price. The new tiers apply to signups after we announce them, not to existing accounts.
+**Si vous avez déjà un abonnement, votre facturation ne change pas.** Même formule, même prix. Les nouvelles formules s'appliqueront aux inscriptions après leur annonce, pas aux comptes existants.
 
-We will post the new tier details on the [blog](/blog) before they go live for new customers.
+Nous publierons les détails des nouvelles formules sur le [blog](/blog) avant leur activation pour les nouveaux clients.
 
-## PocketBase v0.39 on the control plane
+## PocketBase v0.39 sur le plan de contrôle
 
-PocketHost 3.0 builds on a **mothership PocketBase v0.39** control plane. That upgrade may land before the public 3.0 launch. It unlocks newer control-plane APIs and keeps us aligned with current PocketBase releases. Instance version selection on your projects is a separate concern. We will communicate anything that affects your instances.
+PocketHost 3.0 s'appuie sur un plan de contrôle **mothership PocketBase v0.39**. Cette mise à niveau peut arriver avant le lancement public de la 3.0. Elle ouvre l'accès à des API de contrôle plus récentes et nous maintient alignés avec les versions actuelles de PocketBase. Le choix de version PocketBase pour vos projets reste un sujet séparé. Nous communiquerons clairement tout changement qui affecte vos instances.
 
-## What to do now
+## Que faire maintenant
 
-1. **Set up SFTP.** Generate an Ed25519 key, add it at [Account → Keys](/account/keys), and test a connection using [/docs/ftp](/docs/ftp).
-2. **Retire FTPS bookmarks.** Point clients and CI at SFTP when you can. Keep FTPS only where you still need it until deploy tooling catches up.
-3. **Decide on Flounder.** If lifetime Pro fits you, buy before **July 1** (or **July 31** if you already had an account on July 1).
-4. **Watch for updates.** Follow the [blog](/blog) and your account email for timelines as 3.0 rolls out.
+1. **Configurer SFTP.** Générez une clé Ed25519, ajoutez-la dans [Compte → Clés](/account/keys), puis testez une connexion avec [/docs/ftp](/docs/ftp).
+2. **Retirer les favoris FTPS.** Orientez vos clients et votre CI vers SFTP quand vous le pouvez. Gardez FTPS uniquement là où vous en avez encore besoin, le temps que vos outils de déploiement suivent.
+3. **Décider pour Flounder.** Si l'accès Pro à vie vous convient, achetez-le avant le **1 juillet** (ou avant le **31 juillet** si vous aviez déjà un compte au 1 juillet).
+4. **Surveiller les mises à jour.** Suivez le [blog](/blog) et les emails de votre compte pour les calendriers de déploiement de la 3.0.
 
-Questions? [Discord](https://discord.gg/nVTxCMEcGT) or [support](/support).
+Des questions ? [Discord](https://discord.gg/nVTxCMEcGT) ou [support](/support).

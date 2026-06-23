@@ -1,14 +1,14 @@
 ---
-title: Self Hosting
-description: Learn how to self-host PocketHost
+title: Auto-hébergement
+description: Apprendre à auto-héberger PocketHost
 ---
-# Self Hosting
+# Auto-hébergement
 
-PocketHost is designed to run full stack on your local development machine.
+PocketHost est conçu pour fonctionner en full stack sur votre machine de développement locale.
 
-We are working to make this as easy as possible, but currently it requires many steps to get set up. Self hosting is not recommended for the faint of heart.
+Nous travaillons à rendre cela aussi simple que possible, mais l'installation nécessite encore plusieurs étapes. L'auto-hébergement n'est pas recommandé si vous voulez une mise en place sans effort.
 
-## Getting started
+## Démarrage
 
 ```bash
 bunx pockethost --help

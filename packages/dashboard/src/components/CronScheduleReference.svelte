@@ -4,15 +4,15 @@
 
 <QuickReference>
   <p class="mb-3">
-    The schedule is a cron expression that defines when the webhook will be called in <strong>UTC time</strong>. For
-    example, <code>0 0 * * *</code> means every day at midnight UTC.
+    La planification est une expression cron qui définit quand le webhook sera appelé en <strong>heure UTC</strong>. Par
+    exemple, <code>0 0 * * *</code> signifie tous les jours à minuit UTC.
   </p>
   <table class="table table-sm w-full">
     <thead>
       <tr>
-        <th>Field</th>
-        <th>Allowed Values</th>
-        <th>Special Characters</th>
+        <th>Champ</th>
+        <th>Valeurs autorisées</th>
+        <th>Caractères spéciaux</th>
       </tr>
     </thead>
     <tbody>
@@ -22,55 +22,55 @@
         <td><code>,</code> <code>-</code> <code>*</code> <code>/</code></td>
       </tr>
       <tr>
-        <td><code>Hour</code></td>
+        <td><code>Heure</code></td>
         <td>0-23</td>
         <td><code>,</code> <code>-</code> <code>*</code> <code>/</code></td>
       </tr>
       <tr>
-        <td><code>Day of Month</code></td>
+        <td><code>Jour du mois</code></td>
         <td>1-31</td>
         <td><code>,</code> <code>-</code> <code>*</code> <code>/</code> <code>?</code> <code>L</code> <code>W</code></td
         >
       </tr>
       <tr>
-        <td><code>Month</code></td>
-        <td>1-12 or JAN-DEC</td>
+        <td><code>Mois</code></td>
+        <td>1-12 ou JAN-DEC</td>
         <td><code>,</code> <code>-</code> <code>*</code> <code>/</code></td>
       </tr>
       <tr>
-        <td><code>Day of Week</code></td>
-        <td>0-6 or SUN-SAT</td>
+        <td><code>Jour de la semaine</code></td>
+        <td>0-6 ou SUN-SAT</td>
         <td><code>,</code> <code>-</code> <code>*</code> <code>/</code> <code>?</code> <code>L</code> <code>#</code></td
         >
       </tr>
     </tbody>
   </table>
   <div class="mt-3">
-    <strong>Common Macros:</strong>
+    <strong>Macros courantes :</strong>
     <ul class="list-disc pl-6 mt-1">
-      <li><code>@yearly</code>: <code>0 0 1 1 *</code> (once a year at midnight, Jan 1)</li>
-      <li><code>@annually</code>: <code>0 0 1 1 *</code> (same as <code>@yearly</code>)</li>
-      <li><code>@monthly</code>: <code>0 0 1 * *</code> (once a month at midnight, first day)</li>
-      <li><code>@weekly</code>: <code>0 0 * * 0</code> (once a week at midnight, Sunday)</li>
-      <li><code>@daily</code>: <code>0 0 * * *</code> (once a day at midnight)</li>
-      <li><code>@midnight</code>: <code>0 0 * * *</code> (same as <code>@daily</code>)</li>
-      <li><code>@hourly</code>: <code>0 * * * *</code> (once an hour at minute 0)</li>
+      <li><code>@yearly</code>: <code>0 0 1 1 *</code> (une fois par an à minuit, le 1er janvier)</li>
+      <li><code>@annually</code>: <code>0 0 1 1 *</code> (identique à <code>@yearly</code>)</li>
+      <li><code>@monthly</code>: <code>0 0 1 * *</code> (une fois par mois à minuit, le premier jour)</li>
+      <li><code>@weekly</code>: <code>0 0 * * 0</code> (une fois par semaine à minuit, le dimanche)</li>
+      <li><code>@daily</code>: <code>0 0 * * *</code> (une fois par jour à minuit)</li>
+      <li><code>@midnight</code>: <code>0 0 * * *</code> (identique à <code>@daily</code>)</li>
+      <li><code>@hourly</code>: <code>0 * * * *</code> (une fois par heure à la minute 0)</li>
     </ul>
   </div>
 
   <div class="mt-3">
-    <strong>Practical Examples:</strong>
+    <strong>Exemples pratiques :</strong>
     <ul class="list-disc pl-6 mt-1">
-      <li><code>0 9 * * 1-5</code> - Every weekday at 9:00 AM</li>
-      <li><code>0 12 * * 1</code> - Every Monday at noon</li>
-      <li><code>0 0 1 * *</code> - First day of every month at midnight</li>
-      <li><code>0 18 * * 5</code> - Every Friday at 6:00 PM</li>
-      <li><code>30 2 * * *</code> - Every day at 2:30 AM</li>
-      <li><code>0 */6 * * *</code> - Every 6 hours (00:00, 06:00, 12:00, 18:00)</li>
-      <li><code>0 0 * * 0</code> - Every Sunday at midnight</li>
-      <li><code>0 8 15 * *</code> - 15th of every month at 8:00 AM</li>
-      <li><code>0 0 1 1 *</code> - New Year's Day at midnight</li>
-      <li><code>0 12 * * 0,6</code> - Weekends at noon</li>
+      <li><code>0 9 * * 1-5</code> - Chaque jour ouvré à 9 h</li>
+      <li><code>0 12 * * 1</code> - Chaque lundi à midi</li>
+      <li><code>0 0 1 * *</code> - Premier jour de chaque mois à minuit</li>
+      <li><code>0 18 * * 5</code> - Chaque vendredi à 18 h</li>
+      <li><code>30 2 * * *</code> - Chaque jour à 2 h 30</li>
+      <li><code>0 */6 * * *</code> - Toutes les 6 heures (00:00, 06:00, 12:00, 18:00)</li>
+      <li><code>0 0 * * 0</code> - Chaque dimanche à minuit</li>
+      <li><code>0 8 15 * *</code> - Le 15 de chaque mois à 8 h</li>
+      <li><code>0 0 1 1 *</code> - Jour de l'An à minuit</li>
+      <li><code>0 12 * * 0,6</code> - Week-end à midi</li>
     </ul>
   </div>
 </QuickReference>

@@ -1,29 +1,29 @@
 ---
-title: Extending PocketBase with JSVM
-description: Learn how to extend PocketBase with JSVM, plugins, and server-side rendering using PocketPages
+title: Étendre PocketBase avec JSVM
+description: Apprendre à étendre PocketBase avec JSVM, des plugins et du rendu côté serveur avec PocketPages
 ---
-# Programming and Extending PocketBase with JSVM
+# Programmer et étendre PocketBase avec JSVM
 
-PocketBase is not just a simple backend solution—it offers powerful capabilities for extending its functionality through JavaScript, specifically using the **Goja engine** and its **JSVM** (JavaScript Virtual Machine). This allows developers to add custom logic, plugins, and server-side rendering to their applications, making PocketBase a highly versatile platform.
+PocketBase n'est pas seulement une solution backend simple : il offre de puissantes capacités d'extension via JavaScript, notamment avec le **moteur Goja** et sa **JSVM** (JavaScript Virtual Machine). Cela permet d'ajouter logique personnalisée, plugins et rendu côté serveur à vos applications, ce qui rend PocketBase très polyvalent.
 
-## A Growing Ecosystem
+## Un écosystème en croissance
 
-The **PocketBase ecosystem** is expanding rapidly, making it easier to enhance your applications in a modular and scalable way. A key project in this space is **[pocketpages.dev](https://pocketpages.dev)**: a platform for building classic server-side rendered (SSR) pages with PocketBase. By leveraging PocketBase’s **JSVM** and the Goja engine, developers can serve SSR content, delivering a seamless experience for static or dynamic web pages directly from PocketBase.
+L'**écosystème PocketBase** se développe rapidement, ce qui facilite l'amélioration des applications de manière modulaire et scalable. Un projet important est **[pocketpages.dev](https://pocketpages.dev)** : une plateforme pour construire des pages classiques rendues côté serveur (SSR) avec PocketBase. Grâce à la **JSVM** de PocketBase et au moteur Goja, les développeurs peuvent servir du contenu SSR et proposer une expérience fluide pour des pages statiques ou dynamiques directement depuis PocketBase.
 
-## Extending PocketBase with JSVM
+## Étendre PocketBase avec JSVM
 
-PocketBase’s **JSVM** makes it possible to run custom JavaScript code directly within your PocketBase instance. This can be used for a wide range of tasks, from extending API functionality to adding business logic that runs server-side. With the JSVM feature, you can write JavaScript code that interacts with PocketBase’s core services, hooks, and events.
+La **JSVM** de PocketBase permet d'exécuter du code JavaScript personnalisé directement dans votre instance PocketBase. Elle peut servir à beaucoup de tâches, de l'extension d'API à l'ajout de logique métier côté serveur. Avec la JSVM, vous pouvez écrire du JavaScript qui interagit avec les services, hooks et événements internes de PocketBase.
 
-### Use Cases for JSVM
+### Cas d'usage de JSVM
 
-- **Custom API Routes**: Use the JSVM to define and execute custom routes that go beyond the default PocketBase APIs. This enables more sophisticated data manipulation, custom validation, and complex business logic.
-- **Hooks and Triggers**: Integrate **JavaScript hooks** into your application to trigger actions in response to database changes, such as sending notifications when records are updated or applying complex validation before data is written.
+- **Routes API personnalisées** : utilisez la JSVM pour définir et exécuter des routes personnalisées au-delà des API PocketBase par défaut. Cela permet des manipulations de données plus avancées, des validations personnalisées et une logique métier complexe.
+- **Hooks et déclencheurs** : intégrez des **hooks JavaScript** à votre application pour déclencher des actions lors de changements en base, par exemple envoyer des notifications lors de mises à jour ou appliquer des validations complexes avant l'écriture des données.
 
-- **Reusable Modules**: Package custom logic as JavaScript modules in `pb_hooks` and share patterns across instances. The JSVM makes it straightforward to build reusable server-side code for PocketBase.
+- **Modules réutilisables** : empaquetez votre logique personnalisée comme modules JavaScript dans `pb_hooks` et partagez des patterns entre instances. La JSVM rend simple la création de code serveur réutilisable pour PocketBase.
 
-## Hosting Static and SSR Content
+## Héberger du contenu statique et SSR
 
-**PocketHost** is an excellent choice for hosting both static/SSG (Static Site Generation) and SSR (Server-Side Rendered) content. With **PocketPages.dev** and similar technologies, you can combine the power of PocketBase’s JSVM and server-side rendering to deliver fully dynamic web applications.
+**PocketHost** est un excellent choix pour héberger du contenu statique/SSG (Static Site Generation) comme du contenu SSR (Server-Side Rendered). Avec **PocketPages.dev** et des technologies similaires, vous pouvez combiner la JSVM de PocketBase et le rendu côté serveur pour livrer des applications web entièrement dynamiques.
 
-- **Static Content**: PocketHost supports static files and SSG, making it ideal for static websites or single-page applications.
-- **Server-Side Rendering (SSR)**: By using PocketPages and PocketBase’s JavaScript capabilities, you can serve SSR pages directly from your backend. This provides the advantages of SEO and faster initial page loads for dynamic content.
+- **Contenu statique** : PocketHost prend en charge les fichiers statiques et le SSG, idéal pour les sites statiques ou applications monopage.
+- **Rendu côté serveur (SSR)** : avec PocketPages et les capacités JavaScript de PocketBase, vous pouvez servir des pages SSR directement depuis votre backend. Vous profitez ainsi d'un meilleur SEO et de chargements initiaux plus rapides pour les contenus dynamiques.

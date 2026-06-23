@@ -1,20 +1,20 @@
 ---
-title: Deleting an Instance
-description: Learn how to delete a PocketBase instance
+title: Supprimer une instance
+description: Apprendre à supprimer une instance PocketBase
 ---
-# Deleting an Instance
+# Supprimer une instance
 
-Deleting an instance will immediately power it down and permanently remove all associated data.
+Supprimer une instance l'éteint immédiatement et supprime définitivement toutes les données associées.
 
-Before you can delete an instance, it must first be [powered off](/docs/power).
+Avant de pouvoir supprimer une instance, elle doit d'abord être [éteinte](/docs/power).
 
-Once deleted, the following will be permanently erased:
+Une fois supprimés, les éléments suivants sont effacés définitivement :
 
-- Your subdomain
-- All files in `pb_data/*`
-- All files in `pb_public/*`
-- All files in `pb_migrations/*`
-- All files in `pb_static/*`
+- Votre sous-domaine
+- Tous les fichiers dans `pb_data/*`
+- Tous les fichiers dans `pb_public/*`
+- Tous les fichiers dans `pb_migrations/*`
+- Tous les fichiers dans `pb_static/*`
 
 ![](first-power-off.png)
 

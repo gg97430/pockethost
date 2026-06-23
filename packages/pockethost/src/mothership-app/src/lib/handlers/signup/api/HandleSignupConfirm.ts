@@ -1,13 +1,6 @@
 import { listVersions } from '$util/versions'
+import { readOperatorSettings } from '../../operatorAdmin/operatorSettings'
 import { error } from '../error'
-
-const autoVerifySignups = () => `${process.env.PH_AUTO_VERIFY_SIGNUPS || ''}`.toLowerCase() === 'true'
-
-const signupSubscriptionQuantity = () => {
-  const value = Number(process.env.PH_SIGNUP_SUBSCRIPTION_QUANTITY || '')
-  if (Number.isFinite(value) && value > 0) return value
-  return autoVerifySignups() ? 250 : 0
-}
 
 const suggestUniqueAuthRecordUsername = (collection: string, baseUsername: string) => {
   let username = baseUsername
@@ -25,13 +18,18 @@ const suggestUniqueAuthRecordUsername = (collection: string, baseUsername: strin
 }
 
 export const HandleSignupConfirm = (e: core.RequestEvent) => {
+  const settings = readOperatorSettings()
+  if (!settings.publicSignupEnabled) {
+    throw new BadRequestError('La creation publique de compte est desactivee.')
+  }
+
   const parsed = (() => {
     const rawBody = readerToString(e.request.body)
     try {
       const parsed = JSON.parse(rawBody)
       return parsed
     } catch (e) {
-      throw new BadRequestError(`Error parsing payload. You call this JSON? ${rawBody}`, e)
+      throw new BadRequestError(`Impossible d'analyser la requête JSON. Corps reçu : ${rawBody}`, e)
     }
   })()
   const email = parsed.email?.trim().toLowerCase()
@@ -40,15 +38,15 @@ export const HandleSignupConfirm = (e: core.RequestEvent) => {
   const version = parsed.version?.trim() || listVersions()[0]
 
   if (!email) {
-    throw error(`email`, 'required', 'Email is required')
+    throw error(`email`, 'required', "L'email est obligatoire")
   }
 
   if (!password) {
-    throw error(`password`, `required`, 'Password is required')
+    throw error(`password`, `required`, 'Le mot de passe est obligatoire')
   }
 
   if (!desiredInstanceName) {
-    throw error(`instanceName`, `required`, `Instance name is required`)
+    throw error(`instanceName`, `required`, `Le nom de l'instance est obligatoire`)
   }
 
   const userExists = (() => {
@@ -61,7 +59,7 @@ export const HandleSignupConfirm = (e: core.RequestEvent) => {
   })()
 
   if (userExists) {
-    throw error(`email`, `exists`, `That user account already exists. Try a password reset.`)
+    throw error(`email`, `exists`, `Ce compte utilisateur existe déjà. Essayez une réinitialisation du mot de passe.`)
   }
 
   $app.runInTransaction((txApp) => {
@@ -76,15 +74,15 @@ export const HandleSignupConfirm = (e: core.RequestEvent) => {
       )
       user.set('username', username)
       user.set('email', email)
-      user.set('subscription', 'free')
-      user.set('subscription_quantity', signupSubscriptionQuantity())
-      if (autoVerifySignups()) {
+      user.set('subscription', settings.defaultSubscription)
+      user.set('subscription_quantity', settings.defaultUserQuota)
+      if (settings.autoVerifyUsers) {
         user.set('verified', true)
       }
       user.setPassword(password)
       txApp.save(user)
     } catch (e) {
-      throw error(`email`, `fail`, `Could not create user: ${e}`)
+      throw error(`email`, `fail`, `Impossible de créer l'utilisateur : ${e}`)
     }
 
     try {
@@ -92,20 +90,20 @@ export const HandleSignupConfirm = (e: core.RequestEvent) => {
       instance.set('subdomain', desiredInstanceName)
       instance.set('uid', user.get('id'))
       instance.set('status', 'idle')
-      instance.set('power', true)
-      instance.set('syncAdmin', true)
-      instance.set('autoVacuum', true)
-      instance.set('dev', true)
+      instance.set('power', settings.defaultInstancePower)
+      instance.set('syncAdmin', settings.defaultSyncAdmin)
+      instance.set('autoVacuum', settings.defaultAutoVacuum)
+      instance.set('dev', settings.defaultInstanceDevMode)
       instance.set('version', version)
       txApp.save(instance)
     } catch (e) {
       if (`${e}`.match(/ UNIQUE /)) {
-        throw error(`instanceName`, `exists`, `Instance name was taken, sorry about that. Try another.`)
+        throw error(`instanceName`, `exists`, `Ce nom d'instance vient d'être pris. Essayez-en un autre.`)
       }
-      throw error(`instanceName`, `fail`, `Could not create instance: ${e}`)
+      throw error(`instanceName`, `fail`, `Impossible de créer l'instance : ${e}`)
     }
 
-    if (!autoVerifySignups()) {
+    if (!settings.autoVerifyUsers) {
       $mails.sendRecordVerification($app, user)
     }
   })

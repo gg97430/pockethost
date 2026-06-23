@@ -1,11 +1,11 @@
 ---
-title: Creating an Instance
-description: Learn how to create a new PocketBase instance
+title: Créer une instance
+description: Apprendre à créer une nouvelle instance PocketBase
 ---
-# Creating an Instance
+# Créer une instance
 
 ![](create-instance.png)
 
-Each PocketHost instance runs on its own unique subdomain. To create a new instance, simply go to [Create New Instance](/instances/new).
+Chaque instance PocketHost fonctionne sur son propre sous-domaine unique. Pour créer une nouvelle instance, allez simplement sur [Nouvelle instance](/instances/new).
 
-Choose a unique name for your instance, and that’s it! Your new PocketBase instance will be up and running in no time.
+Choisissez un nom unique pour votre instance, et c'est tout. Votre nouvelle instance PocketBase sera opérationnelle rapidement.

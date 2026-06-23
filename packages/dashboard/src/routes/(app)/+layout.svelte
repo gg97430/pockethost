@@ -4,25 +4,16 @@
   import { userStore } from '$util/stores'
 
   $: maxInstances = $userStore?.subscription_quantity
+  $: isSuperAdmin = !!$userStore?.superAdmin
 </script>
 
 <div class="px-4 md:px-20 relative z-10 max-w-content mx-auto pt-6 md:pt-10">
   <UserLoggedIn>
-    {#if maxInstances === 0}
+    {#if maxInstances === 0 && !isSuperAdmin}
       <wa-callout variant="warning" class="wa-callout-padded py-2 mt-2">
         <span class="flex-1 text-sm flex text-white text-start items-center justify-start gap-4">
-          Instances will not run until you upgrade.
+          Ce compte n'a pas encore de quota d'instances. Ajustez `subscription_quantity` dans l'admin PocketBase.
         </span>
-        <wa-button
-          slot="actions"
-          href="/access"
-          variant="neutral"
-          size="small"
-          appearance="outline"
-          aria-label="Upgrade"
-        >
-          Upgrade
-        </wa-button>
       </wa-callout>
     {/if}
     <slot />
@@ -32,15 +23,11 @@
       <div class="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-white/5">
         <wa-icon name="lock" class="text-xl text-neutral-400"></wa-icon>
       </div>
-      <h2 class="mb-2 text-lg font-semibold text-white">Sign in required</h2>
+      <h2 class="mb-2 text-lg font-semibold text-white">Connexion requise</h2>
       <p class="mb-6 max-w-sm text-sm text-neutral-400">
-        Log in to manage your PocketBase instances and account settings.
+        Connectez-vous pour gérer vos instances PocketBase et les paramètres de votre compte.
       </p>
-      <wa-button href="/login" variant="brand">Log in</wa-button>
-      <p class="mt-4 text-sm text-neutral-500">
-        No account?
-        <a href="/get-started" class="text-primary hover:text-secondary hover:underline">Get started</a>
-      </p>
+      <wa-button href="/login" variant="brand">Connexion</wa-button>
     </div>
   </UserLoggedOut>
 </div>

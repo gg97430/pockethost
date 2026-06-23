@@ -1,45 +1,45 @@
 ---
-title: Outgoing Email in PocketBase
-description: Learn how to configure outgoing email in PocketBase using Amazon SES or Google Suite for reliable delivery
+title: Email sortant dans PocketBase
+description: Apprendre à configurer l'email sortant dans PocketBase avec Amazon SES ou Google Suite pour une livraison fiable
 ---
-# Outgoing Email in PocketBase
+# Email sortant dans PocketBase
 
-Reliable outgoing email is crucial for many applications, and PocketBase provides flexible options for sending emails. However, ensuring consistent and reliable email delivery can be complex due to factors like spam filters, sender reputation, and email authentication. This guide will help you navigate these challenges and recommend two trusted solutions: **Amazon SES** and **Google Suite**.
+L'email sortant fiable est crucial pour beaucoup d'applications, et PocketBase propose des options flexibles pour envoyer des emails. Garantir une livraison constante et fiable peut toutefois être complexe à cause des filtres anti-spam, de la réputation d'expéditeur et de l'authentification email. Ce guide vous aide à gérer ces sujets et recommande deux solutions fiables : **Amazon SES** et **Google Suite**.
 
-## Configuring Outgoing Email in PocketBase
+## Configurer l'email sortant dans PocketBase
 
 ![](2024-10-06-15-28-02.png)
 
-PocketBase includes a **testing feature** to verify that your outgoing email setup is functioning correctly. You can use it to send test emails and ensure that:
+PocketBase inclut une **fonction de test** pour vérifier que votre configuration d'email sortant fonctionne correctement. Vous pouvez l'utiliser pour envoyer des emails de test et vérifier que :
 
-- Emails are delivered to the recipient’s inbox.
-- The sender’s name and email address are correctly displayed.
+- Les emails arrivent dans la boîte de réception du destinataire.
+- Le nom et l'adresse email de l'expéditeur s'affichent correctement.
 
-### Steps for Testing
+### Étapes de test
 
-1. Configure your outgoing email settings with your chosen service (SES, Google Suite, or another provider).
-2. Use PocketBase’s email testing feature to send a test email.
-3. Verify that the email is received and that the **From** name and email address are correct.
-4. Check if the email landed in the inbox and not the spam folder. If emails are going to spam, review your authentication setup (SPF, DKIM, etc.).
+1. Configurez l'email sortant avec le service choisi (SES, Google Suite ou autre fournisseur).
+2. Utilisez la fonction de test email de PocketBase pour envoyer un email de test.
+3. Vérifiez que l'email est reçu et que le nom et l'adresse **From** sont corrects.
+4. Vérifiez que l'email arrive en boîte de réception et non dans les spams. Si les emails vont en spam, revoyez votre configuration d'authentification (SPF, DKIM, etc.).
 
-This testing process helps ensure that your outgoing email configuration is working as expected before going live.
+Ce processus permet de s'assurer que la configuration d'email sortant fonctionne comme prévu avant la mise en production.
 
-## Recommended Services
+## Services recommandés
 
 ### Amazon SES
 
-Amazon Simple Email Service (SES) is a powerful and cost-effective email-sending platform. It’s designed for high scalability and reliability, making it a great option for handling transactional emails, password resets, and more. You can follow the setup guide at [Amazon SES](/docs/ses) to integrate it with your PocketBase instance.
+Amazon Simple Email Service (SES) est une plateforme d'envoi d'emails puissante et économique. Elle est conçue pour être scalable et fiable, ce qui en fait une bonne option pour les emails transactionnels, réinitialisations de mot de passe, etc. Suivez le guide [Amazon SES](/docs/ses) pour l'intégrer à votre instance PocketBase.
 
 ### Google Suite
 
-Google Suite (now known as Google Workspace) provides professional email services using your custom domain. It's ideal if you want to ensure that your emails come from a trusted provider while using Google’s secure infrastructure. You can find a step-by-step guide for integration at [Google Suite Email Setup](/docs/gs-gmail).
+Google Suite (désormais Google Workspace) fournit des services email professionnels avec votre domaine personnalisé. C'est idéal si vous voulez envoyer depuis un fournisseur reconnu tout en utilisant l'infrastructure sécurisée de Google. Un guide pas à pas est disponible ici : [Configuration email Google Suite](/docs/gs-gmail).
 
-## Complexity of Reliable Outgoing Email
+## Complexité d'un email sortant fiable
 
-Sending reliable outgoing email isn’t as simple as just hitting "send." Email deliverability can be affected by:
+Envoyer des emails sortants fiables ne se limite pas à cliquer sur "envoyer". La délivrabilité peut être affectée par :
 
-- **Spam filters**: Emails may be flagged as spam if not properly configured.
-- **Authentication**: Implementing DKIM, SPF, and DMARC protocols is essential for ensuring your emails are trusted by recipients.
-- **Sender reputation**: Consistent, high-quality email sending helps build a good sender reputation, which is vital for long-term reliability.
+- **Filtres anti-spam** : les emails peuvent être marqués comme spam si la configuration est incorrecte.
+- **Authentification** : DKIM, SPF et DMARC sont essentiels pour que vos emails soient considérés comme fiables.
+- **Réputation d'expéditeur** : des envois réguliers et de qualité construisent une bonne réputation, indispensable à long terme.
 
-Using trusted providers like Amazon SES and Google Suite can help you navigate these complexities by leveraging their expertise in handling email infrastructure.
+Utiliser des fournisseurs reconnus comme Amazon SES et Google Suite aide à gérer ces complexités grâce à leur expertise d'infrastructure email.

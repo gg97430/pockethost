@@ -29,14 +29,14 @@
 </script>
 
 <svelte:head>
-  <title>{subdomain} secrets - PocketHost</title>
+  <title>Secrets de {subdomain} - Gestion PocketBase</title>
 </svelte:head>
 
 <FeatureTab title="Secrets" documentation="/docs/secrets">
   <svelte:fragment slot="summary">
     <p>
-      These secrets are forwarded to your <code>pocketbase</code> process as environment variables. They are also
-      accessible from any <code>pb_hooks</code> you have created.
+      Ces secrets sont transmis à votre processus <code>pocketbase</code> comme variables d'environnement. Ils sont
+      aussi accessibles depuis tous les <code>pb_hooks</code> que vous avez créés.
     </p>
   </svelte:fragment>
 
@@ -44,7 +44,7 @@
     {#if $items.length === 0}
       <wa-callout variant="brand" class="wa-callout-padded wa-callout-brand-accent">
         <wa-icon slot="icon" name="user-secret"></wa-icon>
-        <span>No secrets yet. Create your first secret to get started.</span>
+        <span>Aucun secret pour le moment. Créez votre premier secret pour commencer.</span>
       </wa-callout>
     {/if}
   </svelte:fragment>

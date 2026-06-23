@@ -1,39 +1,39 @@
 ---
-title: Publishing Static Assets
-description: Host static files on PocketHost or publish them directly to Cloudflare to avoid waking hibernated instances
+title: Publier des assets statiques
+description: Héberger des fichiers statiques sur PocketHost ou les publier directement sur Cloudflare pour éviter de réveiller les instances hibernées
 ---
-# Publishing Static Assets
+# Publier des assets statiques
 
-PocketHost instances can host static assets. Upload files to `pb_public` via [SFTP](/docs/ftp) or [phio](/docs/phio) and PocketBase serves them over HTTPS on your instance subdomain or [custom domain](/docs/custom-domain).
+Les instances PocketHost peuvent héberger des assets statiques. Envoyez les fichiers dans `pb_public` via [SFTP](/docs/ftp) ou [phio](/docs/phio), et PocketBase les servira en HTTPS sur le sous-domaine de votre instance ou votre [domaine personnalisé](/docs/custom-domain).
 
-## Hosting on PocketHost
+## Héberger sur PocketHost
 
-Static files from `pb_public` are served through PocketHost's edge and cached on the **Cloudflare CDN**. That is good for performance: repeat visitors get fast responses from the cache.
+Les fichiers statiques de `pb_public` sont servis via l'edge PocketHost et mis en cache sur le **CDN Cloudflare**. C'est bon pour les performances : les visiteurs récurrents obtiennent des réponses rapides depuis le cache.
 
-It also has a downside. A **cache miss** (first request for a file, or after the cache expires) reaches your instance. If the instance is [hibernated](/docs/limits), that request **wakes it up** and counts toward usage. A busy site with many assets, or traffic that regularly misses cache, can keep your instance awake more than you expect.
+Il y a aussi un inconvénient. Un **cache miss** (première requête pour un fichier, ou après expiration du cache) atteint votre instance. Si l'instance est en [hibernation](/docs/limits), cette requête **la réveille** et compte dans l'usage. Un site actif avec beaucoup d'assets, ou un trafic qui rate régulièrement le cache, peut garder votre instance réveillée plus que prévu.
 
-For small projects, prototypes, or apps where a few cache misses are fine, hosting everything on PocketHost is simple and works well.
+Pour les petits projets, prototypes ou apps où quelques cache misses ne posent pas problème, tout héberger sur PocketHost est simple et fonctionne bien.
 
-## Publishing to Cloudflare directly
+## Publier directement sur Cloudflare
 
-If you can host your frontend or static assets on **Cloudflare** (Pages, R2, Workers, or another Cloudflare product that fits your stack), we recommend doing so when it makes sense for your project.
+Si vous pouvez héberger votre frontend ou vos assets statiques sur **Cloudflare** (Pages, R2, Workers ou un autre produit adapté à votre stack), nous le recommandons lorsque c'est pertinent pour votre projet.
 
-Benefits:
+Avantages :
 
-- Static traffic stays on Cloudflare's CDN and does not wake your PocketHost instance.
-- Your PocketBase backend stays idle until API or auth traffic arrives.
-- You can split domains cleanly: the app on your main site, the database API on a subdomain.
+- Le trafic statique reste sur le CDN Cloudflare et ne réveille pas votre instance PocketHost.
+- Votre backend PocketBase reste inactif jusqu'à l'arrivée de trafic API ou auth.
+- Vous pouvez séparer proprement les domaines : l'app sur le site principal, l'API base de données sur un sous-domaine.
 
-### Suggested DNS layout
+### Structure DNS suggérée
 
-Point your **main site** (or app hostname) at Cloudflare where you deploy static assets. CNAME your **PocketHost instance** to a backend subdomain, for example:
+Faites pointer votre **site principal** (ou hostname d'app) vers Cloudflare, où vous déployez les assets statiques. Faites un CNAME de votre **instance PocketHost** vers un sous-domaine backend, par exemple :
 
 | Host | Target |
 | ---- | ------ |
-| `yoursite.com` (or `www.yoursite.com`) | Your Cloudflare Pages / static host |
+| `yoursite.com` (ou `www.yoursite.com`) | Votre hébergement Cloudflare Pages / statique |
 | `db.yoursite.com` | `your-instance.pockethost.io` |
 
-Add `db.yoursite.com` as a [custom domain](/docs/custom-domain) on the instance in the dashboard. In your frontend, point the PocketBase client at the backend URL:
+Ajoutez `db.yoursite.com` comme [domaine personnalisé](/docs/custom-domain) sur l'instance depuis le dashboard. Dans votre frontend, pointez le client PocketBase vers l'URL backend :
 
 ```ts
 import PocketBase from 'pocketbase'
@@ -41,13 +41,13 @@ import PocketBase from 'pocketbase'
 const client = new PocketBase('https://db.yoursite.com')
 ```
 
-Configure CORS on PocketBase (or in `pb_hooks`) so your Cloudflare-hosted origin can call the API.
+Configurez CORS dans PocketBase (ou dans `pb_hooks`) pour que votre origine hébergée sur Cloudflare puisse appeler l'API.
 
-## When to use which
+## Quand utiliser quelle approche
 
-| Approach | Good for |
+| Approche | Adapté pour |
 | -------- | -------- |
-| **`pb_public` on PocketHost** | Small sites, admin-only UIs, hooks-only backends, quick prototypes |
-| **Cloudflare + `db.*` subdomain** | SPAs, marketing sites, high static traffic, keeping the instance hibernated between API calls |
+| **`pb_public` sur PocketHost** | Petits sites, interfaces admin-only, backends uniquement avec hooks, prototypes rapides |
+| **Cloudflare + sous-domaine `db.*`** | SPA, sites marketing, fort trafic statique, instance hibernée entre les appels API |
 
-You can mix both: ship a minimal admin or health page in `pb_public` and host the main app on Cloudflare.
+Vous pouvez combiner les deux : publier une page admin ou health minimale dans `pb_public` et héberger l'app principale sur Cloudflare.

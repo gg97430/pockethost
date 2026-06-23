@@ -4,48 +4,48 @@
       name: 'Riddge Mussington',
       title: '',
       quote:
-        "I use pockethost for a couple projects and I think you would be hard pressed to find a better hosted provider for pocketbase projects. It is very easy to use and setup and secure by default because it uses pocketbase under the hood, it's also very fast at shipping pocketbase updates and maintaining uptime and fixing issues, it's truly a god chosen database, I'm currently building my next side hustle with it so I can't wait for it to grow larger",
+        "J'utilise PocketHost pour plusieurs projets et je pense qu'il serait difficile de trouver un meilleur hébergeur pour des projets PocketBase. C'est très simple à utiliser et à configurer, sécurisé par défaut grâce à PocketBase, et les mises à jour PocketBase arrivent vite avec une bonne disponibilité.",
     },
     {
       name: 'H.Mohamed',
       title: '',
-      quote: 'Great BaaS option.',
+      quote: 'Excellente option BaaS.',
     },
     {
       name: 'Damian Kennedy',
-      title: 'Building AIAutomations',
-      quote: `Brilliant convenient for rapid serverless data store in combo with Vercel. Don't need the costly Postgres or upstash setup`,
+      title: 'Créateur de AIAutomations',
+      quote: `Très pratique pour mettre en place rapidement un stockage serverless avec Vercel. Pas besoin d'un setup Postgres ou Upstash coûteux.`,
     },
     {
       name: 'Olivier Mills',
-      title: 'Web developer, idea maker',
-      quote: 'Amazing tool for fast deploy!',
+      title: "Développeur web, créateur d'idées",
+      quote: 'Outil incroyable pour déployer vite !',
     },
     {
       name: 'Stephane Roux',
-      title: 'Altar JS founder',
-      quote: 'Absolutely amazing. Building web applications just got better.',
+      title: 'Fondateur de Altar JS',
+      quote: 'Absolument incroyable. Construire des applications web vient de devenir plus agréable.',
     },
     {
       name: 'Giovanni Cruz',
-      title: 'Software developer',
-      quote: 'Been inlove with this from the first moment I used it. Excellent offering.',
+      title: 'Développeur logiciel',
+      quote: "J'ai adoré dès la première utilisation. Excellente offre.",
     },
     {
       name: 'Anele Mbanga',
-      title: 'Software Engineer, Explorer, Inventor',
-      quote: 'Very simple, effective, and generous!',
+      title: 'Ingénieure logiciel, exploratrice, inventrice',
+      quote: 'Très simple, efficace et généreux !',
     },
     {
       name: 'Saif-Alislam Dekna',
-      title: 'A Dreamer, young pilot, and entrepreneur',
+      title: 'Rêveur, jeune pilote et entrepreneur',
       quote: '',
     },
   ]
 </script>
 
 <div class="flex flex-col items-center gap-12 mb-20 px-4 py-12">
-  <h2 class="text-4xl font-bold text-center text-white tracking-tight">What Our Users Say</h2>
+  <h2 class="text-4xl font-bold text-center text-white tracking-tight">Ce que disent nos utilisateurs</h2>
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl w-full">
     {#each testimonials as testimonial}
       <div

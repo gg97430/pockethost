@@ -1,11 +1,11 @@
 ---
-title: Rename an Instance
-description: Learn how to rename your PocketHost instance subdomain
+title: Renommer une instance
+description: Apprendre à renommer le sous-domaine de votre instance PocketHost
 ---
-# Rename an Instance
+# Renommer une instance
 
-PocketHost instances can always be accessed via their permanent link, such as `https://mfsicdp6ia1zpiu.pockethost.io`, but you can also access them through a convenient subdomain like `https://harvest.pockethost.io`.
+Les instances PocketHost restent toujours accessibles via leur lien permanent, comme `https://mfsicdp6ia1zpiu.pockethost.io`, mais vous pouvez aussi les utiliser via un sous-domaine pratique comme `https://harvest.pockethost.io`.
 
-The subdomain is unique across all of PocketHost, but you can change it at any time. When you change your subdomain, the old one becomes available for others to claim. Be sure to choose wisely if you plan to release it.
+Le sous-domaine est unique sur tout PocketHost, mais vous pouvez le modifier à tout moment. Quand vous changez de sous-domaine, l'ancien redevient disponible pour les autres. Choisissez donc avec soin avant de le libérer.
 
 ![](rename-instance.png)

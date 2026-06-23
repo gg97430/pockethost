@@ -1,65 +1,65 @@
 ---
-title: SFTP File Access
-description: Access PocketBase instance files over SFTP with Ed25519 SSH keys on macOS, Windows, and Linux
+title: Accès fichiers SFTP
+description: Accéder aux fichiers des instances PocketBase en SFTP avec des clés SSH Ed25519 sur macOS, Windows et Linux
 ---
-# SFTP File Access
+# Accès fichiers SFTP
 
-PocketHost provides **SFTP** access to your instance files. This replaces legacy **FTPS** (FTP over TLS on port 21) as the recommended way to upload hooks, migrations, and backups.
+PocketHost fournit un accès **SFTP** aux fichiers de votre instance. Cela remplace l'ancien **FTPS** (FTP over TLS sur le port 21) comme méthode recommandée pour envoyer hooks, migrations et sauvegardes.
 
-Authentication is **Ed25519 SSH keys only**. There is no password login on SFTP. Manage keys under **[Account → Keys](/account/keys)** in the dashboard.
+L'authentification se fait **uniquement par clés SSH Ed25519**. Il n'y a pas de connexion par mot de passe en SFTP. Gérez les clés dans **[Compte → Clés](/account/keys)** dans le dashboard.
 
-> **FTPS is deprecated.** Explicit FTPS on port 21 still works with your PocketHost email and password for now, but we are sunsetting it. Use SFTP for all new setups. See the [SFTP announcement](/blog/sftp-file-access).
+> **FTPS est déprécié.** Le FTPS explicite sur le port 21 fonctionne encore pour le moment avec votre email et mot de passe PocketHost, mais il sera retiré. Utilisez SFTP pour toute nouvelle configuration. Voir [l'annonce SFTP](/blog/sftp-file-access).
 
-## Connection settings
+## Paramètres de connexion
 
-Use these values in every client:
+Utilisez ces valeurs dans chaque client :
 
-| Setting | Value |
+| Paramètre | Valeur |
 | ------- | ----- |
-| Protocol | **SFTP** (SSH File Transfer Protocol). Not FTP, not FTPS. |
-| Host | `ftp.pockethost.io` |
+| Protocole | **SFTP** (SSH File Transfer Protocol). Pas FTP, pas FTPS. |
+| Hôte | `ftp.pockethost.io` |
 | Port | `2222` |
-| Username | Your PocketHost **email address** |
-| Authentication | **SSH private key** (Ed25519) |
-| Password | Leave blank (not used) |
+| Nom d'utilisateur | Votre **adresse email** PocketHost |
+| Authentification | **Clé privée SSH** (Ed25519) |
+| Mot de passe | Laisser vide (non utilisé) |
 
-Each SSH key can access **all instances** on your account or a **specific subset** you choose when creating the key.
+Chaque clé SSH peut accéder à **toutes les instances** de votre compte ou à un **sous-ensemble précis** choisi lors de la création de la clé.
 
-## 1. Create an SSH key
+## 1. Créer une clé SSH
 
-Generate an Ed25519 key on your machine (if you do not have one yet):
+Générez une clé Ed25519 sur votre machine si vous n'en avez pas encore :
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/pockethost_ed25519 -C "you@example.com"
 ```
 
-Set restrictive permissions on macOS and Linux:
+Appliquez des permissions restrictives sur macOS et Linux :
 
 ```bash
 chmod 600 ~/.ssh/pockethost_ed25519
 ```
 
-Open **[Account → Keys](/account/keys)** in the dashboard:
+Ouvrez **[Compte → Clés](/account/keys)** dans le dashboard :
 
-1. Enter a **title** (for example `MacBook` or `GitHub Actions`).
-2. Paste the contents of `~/.ssh/pockethost_ed25519.pub` (starts with `ssh-ed25519`).
-3. Choose **all instances** or specific instances, then click **Add SSH key**.
+1. Saisissez un **titre** (par exemple `MacBook` ou `GitHub Actions`).
+2. Collez le contenu de `~/.ssh/pockethost_ed25519.pub` (commence par `ssh-ed25519`).
+3. Choisissez **toutes les instances** ou des instances spécifiques, puis cliquez sur **Ajouter la clé SSH**.
 
-Keep the file **without** `.pub` as your private key. PocketHost stores only the public key.
+Gardez le fichier **sans** `.pub` comme clé privée. PocketHost ne stocke que la clé publique.
 
-## 2. Connect from the command line
+## 2. Se connecter en ligne de commande
 
-### macOS and Linux
+### macOS et Linux
 
-OpenSSH ships with macOS and most Linux distributions.
+OpenSSH est inclus avec macOS et la plupart des distributions Linux.
 
-One-off connection:
+Connexion ponctuelle :
 
 ```bash
 sftp -i ~/.ssh/pockethost_ed25519 -P 2222 you@example.com@ftp.pockethost.io
 ```
 
-Add `~/.ssh/config` for a short alias:
+Ajoutez `~/.ssh/config` pour créer un alias court :
 
 ```sshconfig
 Host pockethost
@@ -70,19 +70,19 @@ Host pockethost
   IdentitiesOnly yes
 ```
 
-Then connect with:
+Puis connectez-vous avec :
 
 ```bash
 sftp pockethost
 ```
 
-Upload a hook with `scp`:
+Envoyez un hook avec `scp` :
 
 ```bash
 scp -i ~/.ssh/pockethost_ed25519 -P 2222 ./pb_hooks/myhook.pb.js you@example.com@ftp.pockethost.io:your-instance/pb_hooks/
 ```
 
-Sync a folder with `rsync` (macOS: install via Homebrew if missing):
+Synchronisez un dossier avec `rsync` (macOS : installez-le via Homebrew s'il manque) :
 
 ```bash
 rsync -avz -e "ssh -i ~/.ssh/pockethost_ed25519 -p 2222" ./pb_hooks/ you@example.com@ftp.pockethost.io:your-instance/pb_hooks/
@@ -90,58 +90,58 @@ rsync -avz -e "ssh -i ~/.ssh/pockethost_ed25519 -p 2222" ./pb_hooks/ you@example
 
 ### Windows
 
-**Option A: OpenSSH (Windows 10/11)** — built in. Enable *Settings → Apps → Optional features → OpenSSH Client* if needed.
+**Option A : OpenSSH (Windows 10/11)** — intégré. Activez *Settings → Apps → Optional features → OpenSSH Client* si nécessaire.
 
-Save your private key to `C:\Users\YourName\.ssh\pockethost_ed25519`.
+Enregistrez votre clé privée dans `C:\Users\YourName\.ssh\pockethost_ed25519`.
 
-PowerShell or Command Prompt:
+PowerShell ou invite de commandes :
 
 ```powershell
 sftp -i C:\Users\YourName\.ssh\pockethost_ed25519 -P 2222 you@example.com@ftp.pockethost.io
 ```
 
-**Option B: PuTTY / PuTTYgen** — if your key is in OpenSSH format, use **Conversions → Import key** in PuTTYgen and save a `.ppk` file. In PuTTY: Connection → SSH → Auth → Credentials → Private key file. Host `ftp.pockethost.io`, port `2222`. PuTTY does not include SFTP file browsing; pair with **WinSCP** (see below) or use OpenSSH `sftp`.
+**Option B : PuTTY / PuTTYgen** — si votre clé est au format OpenSSH, utilisez **Conversions → Import key** dans PuTTYgen puis enregistrez un fichier `.ppk`. Dans PuTTY : Connection → SSH → Auth → Credentials → Private key file. Hôte `ftp.pockethost.io`, port `2222`. PuTTY n'inclut pas de navigation fichiers SFTP ; utilisez-le avec **WinSCP** (voir plus bas) ou utilisez OpenSSH `sftp`.
 
-**Option C: WSL** — use the macOS/Linux instructions inside your Linux distro.
+**Option C : WSL** — utilisez les instructions macOS/Linux dans votre distribution Linux.
 
-## 3. GUI and IDE clients
+## 3. Clients graphiques et IDE
 
-All clients use the same host, port, username, and private key from [Connection settings](#connection-settings). Protocol must be **SFTP**, not FTP or FTPS.
+Tous les clients utilisent les mêmes hôte, port, nom d'utilisateur et clé privée que dans [Paramètres de connexion](#paramètres-de-connexion). Le protocole doit être **SFTP**, pas FTP ni FTPS.
 
 ### Cyberduck (macOS, Windows)
 
-1. **Open Connection** → protocol **SFTP (SSH File Transfer Protocol)**.
-2. Server: `ftp.pockethost.io`, Port: `2222`, Username: your email.
-3. Click **SSH Private Key** and choose your private key file (`.pem` or OpenSSH format without extension).
-4. Connect. You land at `/` with one folder per instance you can access.
+1. **Open Connection** → protocole **SFTP (SSH File Transfer Protocol)**.
+2. Server : `ftp.pockethost.io`, Port : `2222`, Username : votre email.
+3. Cliquez sur **SSH Private Key** et choisissez votre clé privée (`.pem` ou format OpenSSH sans extension).
+4. Connectez-vous. Vous arrivez dans `/` avec un dossier par instance accessible.
 
 ### FileZilla (macOS, Windows, Linux)
 
 1. **File → Site Manager → New Site**.
-2. Protocol: **SFTP - SSH File Transfer Protocol**.
-3. Host: `ftp.pockethost.io`, Port: `2222`, Logon Type: **Key file**.
-4. User: your email. Key file: path to your private key.
-5. Connect.
+2. Protocol : **SFTP - SSH File Transfer Protocol**.
+3. Host : `ftp.pockethost.io`, Port : `2222`, Logon Type : **Key file**.
+4. User : votre email. Key file : chemin vers votre clé privée.
+5. Connectez-vous.
 
 ### WinSCP (Windows)
 
-1. New session → **SFTP** file protocol.
-2. Host: `ftp.pockethost.io`, Port: `2222`, User: your email.
-3. **Advanced → SSH → Authentication** → Private key file (`.ppk` or OpenSSH; WinSCP can convert on import).
-4. Save and login.
+1. Nouvelle session → protocole fichier **SFTP**.
+2. Host : `ftp.pockethost.io`, Port : `2222`, User : votre email.
+3. **Advanced → SSH → Authentication** → Private key file (`.ppk` ou OpenSSH ; WinSCP peut convertir à l'import).
+4. Enregistrez puis connectez-vous.
 
 ### Transmit (macOS)
 
-1. New server → **SFTP**.
-2. Address: `ftp.pockethost.io:2222`, User: your email.
-3. Keys tab → import or select your private key.
-4. Connect.
+1. Nouveau serveur → **SFTP**.
+2. Adresse : `ftp.pockethost.io:2222`, User : votre email.
+3. Onglet Keys → importez ou sélectionnez votre clé privée.
+4. Connectez-vous.
 
 ### VS Code
 
-Install an SFTP extension such as [SFTP](https://marketplace.visualstudio.com/items?itemName=Natizyskunk.sftp) or [SSH FS](https://marketplace.visualstudio.com/items?itemName=Kelvin.vscode-sshfs).
+Installez une extension SFTP comme [SFTP](https://marketplace.visualstudio.com/items?itemName=Natizyskunk.sftp) ou [SSH FS](https://marketplace.visualstudio.com/items?itemName=Kelvin.vscode-sshfs).
 
-Example `sftp.json` (SFTP extension) for syncing `pb_hooks`:
+Exemple `sftp.json` (extension SFTP) pour synchroniser `pb_hooks` :
 
 ```json
 {
@@ -156,62 +156,62 @@ Example `sftp.json` (SFTP extension) for syncing `pb_hooks`:
 }
 ```
 
-Adjust `remotePath` to your instance subdomain and folder.
+Adaptez `remotePath` au sous-domaine et au dossier de votre instance.
 
 ### JetBrains IDEs (IntelliJ, WebStorm, etc.)
 
 1. **Tools → Deployment → Configuration**.
-2. Add **SFTP** server: `ftp.pockethost.io`, port `2222`, user = email.
-3. **SSH configuration** → authentication type **Key pair**, private key file = your key.
-4. Map local project folder to `/your-instance/pb_hooks` (or another path).
+2. Ajoutez un serveur **SFTP** : `ftp.pockethost.io`, port `2222`, user = email.
+3. **SSH configuration** → type d'authentification **Key pair**, private key file = votre clé.
+4. Mappez le dossier projet local vers `/your-instance/pb_hooks` ou un autre chemin.
 
-## Instance layout
+## Structure de l'instance
 
-After login you see a directory for each instance your key can access. Folder names are your instance **subdomains** (for example `harvest`), not UUIDs. `cd` into one to reach the usual PocketBase folders:
+Après connexion, vous voyez un dossier pour chaque instance accessible par votre clé. Les noms de dossiers sont les **sous-domaines** des instances (par exemple `harvest`), pas les UUID. Faites `cd` dans un dossier pour accéder aux dossiers PocketBase habituels :
 
-| Directory | Description |
+| Dossier | Description |
 | --------- | ----------- |
-| `pb_hooks` | PocketBase JS hooks ([docs](https://pocketbase.io/docs/js-overview/)) |
-| `pb_migrations` | Migration files ([docs](https://pocketbase.io/docs/migrations/)) |
-| `pb_public` | Static public files |
-| `pb_data` | Database and uploads ([docs](https://pocketbase.io/docs/going-to-production/)) |
-| `pb_data/backups` | PocketBase backups |
-| `pb_data/storage` | Uploaded files ([docs](https://pocketbase.io/docs/files-handling/)) |
+| `pb_hooks` | Hooks JS PocketBase ([docs](https://pocketbase.io/docs/js-overview/)) |
+| `pb_migrations` | Fichiers de migration ([docs](https://pocketbase.io/docs/migrations/)) |
+| `pb_public` | Fichiers publics statiques |
+| `pb_data` | Base de données et uploads ([docs](https://pocketbase.io/docs/going-to-production/)) |
+| `pb_data/backups` | Sauvegardes PocketBase |
+| `pb_data/storage` | Fichiers uploadés ([docs](https://pocketbase.io/docs/files-handling/)) |
 
-The instance root is **virtual**. You only see these standard folders, not arbitrary new top-level directories.
+La racine de l'instance est **virtuelle**. Vous ne voyez que ces dossiers standards, pas de nouveaux dossiers arbitraires au premier niveau.
 
-**Power off** your instance before modifying `pb_data` (same rule as the dashboard). Other folders can be edited while the instance is running.
+**Éteignez** votre instance avant de modifier `pb_data` (même règle que dans le dashboard). Les autres dossiers peuvent être édités pendant que l'instance tourne.
 
-## Troubleshooting
+## Dépannage
 
 ### Permission denied (publickey)
 
-- Confirm the public key is saved under **[Account → Keys](/account/keys)**.
-- Username must be your **email**, not your instance subdomain.
-- Key must be **Ed25519** (`ssh-ed25519`).
-- Check the key is allowed to access the instance (all instances vs specific list).
-- Point the client at the correct private key file. If OpenSSH offers the wrong key, add `IdentitiesOnly yes` under the host in `~/.ssh/config`.
+- Vérifiez que la clé publique est enregistrée dans **[Compte → Clés](/account/keys)**.
+- Le nom d'utilisateur doit être votre **email**, pas le sous-domaine de l'instance.
+- La clé doit être **Ed25519** (`ssh-ed25519`).
+- Vérifiez que la clé est autorisée à accéder à l'instance (toutes les instances ou liste spécifique).
+- Pointez le client vers la bonne clé privée. Si OpenSSH propose la mauvaise clé, ajoutez `IdentitiesOnly yes` sous l'hôte dans `~/.ssh/config`.
 
-### Connection refused or timeout
+### Connexion refusée ou timeout
 
-- Port must be **2222**, not 21 or 22.
-- Host is `ftp.pockethost.io`, not `your-instance.pockethost.io`.
+- Le port doit être **2222**, pas 21 ni 22.
+- L'hôte est `ftp.pockethost.io`, pas `your-instance.pockethost.io`.
 
-### Unknown host key on first connect
+### Clé d'hôte inconnue à la première connexion
 
-OpenSSH prompts to verify the server host key the first time you connect. That is expected. Type `yes` to continue, or add the host to `~/.ssh/known_hosts` via your client's trust flow. GUI clients (Cyberduck, FileZilla, WinSCP) show a similar fingerprint prompt.
+OpenSSH demande de vérifier la clé d'hôte du serveur lors de la première connexion. C'est normal. Tapez `yes` pour continuer, ou ajoutez l'hôte à `~/.ssh/known_hosts` via le flux de confiance de votre client. Les clients graphiques (Cyberduck, FileZilla, WinSCP) affichent une demande d'empreinte similaire.
 
-### OpenSSH post-quantum warning
+### Avertissement post-quantique OpenSSH
 
-Recent OpenSSH clients may warn that the connection is not using a post-quantum key exchange algorithm. That refers to transport encryption, not your SSH key. It is safe to connect. We will upgrade when our SFTP stack supports hybrid PQ KEX. Details in the [SFTP blog post](/blog/sftp-file-access).
+Les clients OpenSSH récents peuvent prévenir que la connexion n'utilise pas d'algorithme d'échange de clés post-quantique. Cela concerne le chiffrement de transport, pas votre clé SSH. Vous pouvez vous connecter. Nous mettrons à jour lorsque notre stack SFTP prendra en charge le KEX hybride PQ. Détails dans [l'article SFTP](/blog/sftp-file-access).
 
-## Legacy FTPS
+## Ancien FTPS
 
-FTPS on port 21 (explicit TLS, email + password) remains available during the migration period. Do not use it for new projects. It will be removed after a documented sunset period.
+FTPS sur le port 21 (TLS explicite, email + mot de passe) reste disponible pendant la période de migration. Ne l'utilisez pas pour les nouveaux projets. Il sera retiré après une période de fin documentée.
 
-## Automated deploy (phio and CI)
+## Déploiement automatisé (phio et CI)
 
-For day-to-day development, use **[phio](/docs/phio)** to link a project, watch local files, and sync over SFTP:
+Pour le développement quotidien, utilisez **[phio](/docs/phio)** pour lier un projet, surveiller les fichiers locaux et synchroniser via SFTP :
 
 ```bash
 phio login
@@ -219,6 +219,6 @@ phio link my-instance
 phio dev
 ```
 
-phio manages its own Ed25519 deploy key (labeled **`Phio`** under Account → Keys). You do not need a separate key for phio unless you want scoped CI access.
+phio gère sa propre clé de déploiement Ed25519 (libellée **`Phio`** dans Compte → Clés). Vous n'avez pas besoin d'une clé séparée pour phio sauf si vous voulez un accès CI restreint.
 
-For GitHub Actions, either run **`phio deploy`** with `PHIO_USERNAME` / `PHIO_PASSWORD` secrets (see [phio CLI](/docs/phio)), or migrate [SamKirkland/FTP-Deploy-Action](https://github.com/SamKirkland/FTP-Deploy-Action) from FTPS on port 21 to SFTP on port 2222 with an Ed25519 private key. See **[FTPS sunset](/blog/ftps-sunset)** for the migration timeline.
+Pour GitHub Actions, lancez **`phio deploy`** avec les secrets `PHIO_USERNAME` / `PHIO_PASSWORD` (voir [phio CLI](/docs/phio)), ou migrez [SamKirkland/FTP-Deploy-Action](https://github.com/SamKirkland/FTP-Deploy-Action) de FTPS sur le port 21 vers SFTP sur le port 2222 avec une clé privée Ed25519. Voir **[fin de FTPS](/blog/ftps-sunset)** pour le calendrier de migration.

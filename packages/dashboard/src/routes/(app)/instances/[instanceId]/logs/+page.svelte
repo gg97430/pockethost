@@ -9,13 +9,13 @@
 </script>
 
 <svelte:head>
-  <title>{subdomain} logging - PocketHost</title>
+  <title>Logs de {subdomain} - Gestion PocketBase</title>
 </svelte:head>
 
 <FeatureTab title="Logs" documentation="/docs/logs">
   <svelte:fragment slot="summary">
     <p>
-      Instance logs appear here in realtime, including <code>console.log</code> from JavaScript hooks.
+      Les logs de l'instance apparaissent ici en temps réel, y compris les <code>console.log</code> des hooks JavaScript.
     </p>
   </svelte:fragment>
 

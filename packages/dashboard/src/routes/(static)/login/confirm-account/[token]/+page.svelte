@@ -11,7 +11,7 @@
 
   onMount(() => {
     if (!token) {
-      formError = 'Invalid link'
+      formError = 'Lien invalide'
     } else {
       try {
         confirmVerification(token).then(() => {
@@ -19,20 +19,20 @@
         })
       } catch (error) {
         const e = error as Error
-        formError = `Something went wrong with confirming your account. ${e.message}`
+        formError = `Une erreur est survenue pendant la confirmation de votre compte. ${e.message}`
       }
     }
   })
 </script>
 
 <svelte:head>
-  <title>Confirming Your Account - PocketHost</title>
+  <title>Confirmation de votre compte - Gestion PocketBase</title>
 </svelte:head>
 
 <div class="min-h-screen flex items-center justify-center">
   <wa-card class="w-96 bg-zinc-900 mx-auto shadow-xl overflow-hidden">
     <div class="wa-card-body text-center">
-      <h2 class="mb-4">Confirming Your Account</h2>
+      <h2 class="mb-4">Confirmation de votre compte</h2>
 
       {#if formError}
         <div in:slide>
@@ -46,7 +46,7 @@
           class="inline-block w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto"
           role="status"
         >
-          <span class="sr-only">Loading...</span>
+          <span class="sr-only">Chargement...</span>
         </div>
       {/if}
     </div>

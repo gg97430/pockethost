@@ -1,7 +1,7 @@
 import type { InstanceFields, RecordId, SshKeyFields } from 'pockethost/common'
 
 export const sshKeyScopeLabel = (key: SshKeyFields, instancesById: Record<RecordId, InstanceFields>): string => {
-  if (key.all_instances) return 'All instances'
+  if (key.all_instances) return 'Toutes les instances'
 
   const names = (key.instances ?? []).map((id) => instancesById[id]?.subdomain).filter((name): name is string => !!name)
 

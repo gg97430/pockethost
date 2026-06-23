@@ -13,7 +13,7 @@
 </script>
 
 <svelte:head>
-  <title>New Instance - PocketHost</title>
+  <title>Nouvelle instance - Gestion PocketBase</title>
 </svelte:head>
 
 <div class="flex items-center justify-center pt-14">

@@ -1,5 +1,10 @@
 <script lang="ts">
-  import Paywall from '../../(static)/pricing/Paywall.svelte'
+  import { goto } from '$app/navigation'
+  import { onMount } from 'svelte'
+
+  onMount(() => {
+    goto('/dashboard')
+  })
 </script>
 
-<Paywall />
+<div class="py-16 text-center text-sm text-neutral-400">Redirection vers le dashboard...</div>

@@ -79,48 +79,48 @@
           <Logo className="px-0 mr-4" /> Docs
         </div>
 
-        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Overview</div>
+        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Vue d'ensemble</div>
         <DocLink path="introduction" title="Introduction" />
-        <DocLink path="getting-started" title="Getting Started" />
+        <DocLink path="getting-started" title="Démarrage" />
 
-        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Instance Management</div>
-        <DocLink path="create" title="Create" />
-        <DocLink path="accessing" title="Connect" />
-        <DocLink path="power" title="Power" />
-        <DocLink path="rename-instance" title="Rename" />
-        <DocLink path="delete" title="Delete" />
-        <DocLink path="limits" title="Limits" />
-        <DocLink path="smtp" title="Outgoing Email" />
-        <DocLink path="versions" title="Changing Versions" />
-        <DocLink path="s3" title="Using S3 Storage" />
-        <DocLink path="custom-binaries" title="Custom Binaries" />
-        <DocLink path="custom-domain" title="Custom Domain" />
-        <DocLink path="backup-restore" title="Backup/Restore" />
+        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Gestion des instances</div>
+        <DocLink path="create" title="Créer" />
+        <DocLink path="accessing" title="Connexion" />
+        <DocLink path="power" title="Alimentation" />
+        <DocLink path="rename-instance" title="Renommer" />
+        <DocLink path="delete" title="Supprimer" />
+        <DocLink path="limits" title="Limites" />
+        <DocLink path="smtp" title="Email sortant" />
+        <DocLink path="versions" title="Changer de version" />
+        <DocLink path="s3" title="Stockage S3" />
+        <DocLink path="custom-binaries" title="Binaires personnalisés" />
+        <DocLink path="custom-domain" title="Domaine personnalisé" />
+        <DocLink path="backup-restore" title="Sauvegarde/restauration" />
 
-        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Daily Use Guide</div>
-        <DocLink path="logs" title="Logging" />
-        <DocLink path="dev-mode" title="Dev Mode" />
+        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Utilisation quotidienne</div>
+        <DocLink path="logs" title="Logs" />
+        <DocLink path="dev-mode" title="Mode dev" />
         <DocLink path="secrets" title="Secrets" />
         <DocLink path="webhooks" title="Webhooks" />
-        <DocLink path="ftp" title="SFTP File Access" />
+        <DocLink path="ftp" title="Accès fichiers SFTP" />
         <DocLink path="phio" title="phio CLI" />
-        <DocLink path="static-assets" title="Static Assets" />
-        <DocLink path="admin-sync" title="Admin Sync" />
+        <DocLink path="static-assets" title="Assets statiques" />
+        <DocLink path="admin-sync" title="Synchro admin" />
         <DocLink path="auto-vacuum" title="Auto Vacuum" />
-        <DocLink path="js" title="Extending via JS" />
+        <DocLink path="js" title="Étendre avec JS" />
 
-        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Programming Guide</div>
-        <DocLink path="programming" title="Frontends and JS Hooks" />
-        <DocLink path="admin-extensions" title="Admin UI Extensions" />
-        <DocLink path="server-side-pocketbase-antipattern" title="Server-Side PocketBase is an Anti-Pattern" />
+        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Guide de programmation</div>
+        <DocLink path="programming" title="Frontends et hooks JS" />
+        <DocLink path="admin-extensions" title="Extensions UI admin" />
+        <DocLink path="server-side-pocketbase-antipattern" title="PocketBase côté serveur est un anti-pattern" />
 
-        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Appendix</div>
-        <DocLink path="account-creation" title="Account Creation" />
-        <DocLink path="pricing-ethos" title="Pricing Ethos" />
+        <div class="text-sm font-semibold text-white/60 uppercase tracking-wide pt-4 pb-1">Annexes</div>
+        <DocLink path="account-creation" title="Création de compte" />
+        <DocLink path="pricing-ethos" title="Philosophie tarifaire" />
         <DocLink path="faq" title="FAQ" />
-        <DocLink path="gs-gmail" title="Google Suite Gmail Setup" />
-        <DocLink path="ses" title="Amazon SES Setup" />
-        <DocLink path="self-hosting" title="Self-Hosting" />
+        <DocLink path="gs-gmail" title="Configuration Gmail Google Suite" />
+        <DocLink path="ses" title="Configuration Amazon SES" />
+        <DocLink path="self-hosting" title="Auto-hébergement" />
       </nav>
     </div>
 

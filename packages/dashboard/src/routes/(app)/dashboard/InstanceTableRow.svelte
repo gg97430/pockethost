@@ -8,6 +8,8 @@
   import InstanceFavoriteButton from '$components/InstanceFavoriteButton.svelte'
   import Toggle from '../instances/[instanceId]/Toggle.svelte'
   import type { InstanceFields } from 'pockethost/common'
+  import DuplicateInstanceButton from './DuplicateInstanceButton.svelte'
+  import BackupInstanceButton from './BackupInstanceButton.svelte'
 
   export let instance: InstanceFields
   export let isFavorite = false
@@ -54,16 +56,19 @@
     <InstanceRuntimeBadge {instance} />
   </td>
   <td class="instance-table-version">v{instance.version}</td>
-  <td class="instance-table-admin">
-    <a
-      href={INSTANCE_ADMIN_URL(instance)}
-      target="_blank"
-      rel="noopener noreferrer"
-      class="instance-table-admin-link"
-      onclick={(e) => e.stopPropagation()}
-    >
-      Admin
-    </a>
+  <td class="instance-table-actions" onclick={(e) => e.stopPropagation()}>
+    <div class="instance-table-action-row">
+      <a
+        href={INSTANCE_ADMIN_URL(instance)}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="instance-table-admin-link"
+      >
+        Admin
+      </a>
+      <BackupInstanceButton {instance} compact />
+      <DuplicateInstanceButton {instance} compact />
+    </div>
   </td>
   <td class="instance-table-power" onclick={(e) => e.stopPropagation()}>
     <Toggle checked={instance.power} loading={isShuttingDown} disabled={isShuttingDown} onChange={handlePowerChange} />
@@ -73,17 +78,20 @@
 <style>
   .instance-table-row {
     cursor: pointer;
-    transition: background-color 120ms ease;
+    color: var(--app-text);
+    transition:
+      background-color 120ms ease,
+      box-shadow 120ms ease;
   }
 
   .instance-table-row:hover,
   .instance-table-row:focus-visible {
-    background: rgb(255 255 255 / 0.04);
+    background: var(--app-surface-hover);
     outline: none;
   }
 
   .instance-table-row:focus-visible {
-    box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.15);
+    box-shadow: inset 0 0 0 2px rgb(30 184 84 / 0.32);
   }
 
   .instance-table-name {
@@ -115,13 +123,13 @@
 
   .instance-table-name-text {
     font-weight: 600;
-    color: #fff;
+    color: var(--app-text-strong);
   }
 
   .instance-table-sub {
     margin-left: 0.125rem;
     font-size: 0.75rem;
-    color: rgb(255 255 255 / 0.35);
+    color: var(--app-text-faint);
   }
 
   .instance-table-status {
@@ -130,8 +138,15 @@
 
   .instance-table-version {
     font-size: 0.8125rem;
-    color: rgb(255 255 255 / 0.55);
+    color: var(--app-text-muted);
     white-space: nowrap;
+  }
+
+  .instance-table-action-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    justify-content: flex-start;
   }
 
   .instance-table-admin-link {
@@ -148,5 +163,9 @@
   .instance-table-power {
     width: 11rem;
     text-align: right;
+  }
+
+  .instance-table-actions {
+    min-width: 16rem;
   }
 </style>

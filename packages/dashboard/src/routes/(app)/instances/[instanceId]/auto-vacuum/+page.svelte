@@ -25,13 +25,13 @@
   }
 </script>
 
-<FeatureTab title="Auto Vacuum" documentation="/docs/auto-vacuum" powerOffAction="change Auto Vacuum" {errorMessage}>
+<FeatureTab title="Nettoyage auto" documentation="/docs/auto-vacuum" powerOffAction="modifier le nettoyage auto" {errorMessage}>
   <svelte:fragment slot="summary">
     <p>
-      Auto Vacuum reclaims disk space from your instance SQLite databases during PocketHost's nightly maintenance sweep.
-      PocketHost only runs compaction when your instance is idle (hibernated), not while it is actively serving traffic.
-      If a request wakes your instance during vacuum, you may see up to about 5 seconds of downtime while the database
-      finishes compacting.
+      Le nettoyage auto récupère de l'espace disque dans les bases SQLite de votre instance pendant la maintenance nocturne.
+      La compaction est lancée uniquement lorsque votre instance est inactive (hibernée), pas pendant
+      qu'elle sert du trafic. Si une requête réveille votre instance pendant le vacuum, vous pouvez constater jusqu'à
+      environ 5 secondes d'indisponibilité pendant la fin de la compaction.
     </p>
   </svelte:fragment>
 

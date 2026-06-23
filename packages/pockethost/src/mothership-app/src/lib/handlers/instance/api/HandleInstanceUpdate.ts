@@ -123,10 +123,10 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
   log(`authRecord`, JSON.stringify(authRecord))
 
   if (!authRecord) {
-    throw new Error(`Expected authRecord here`)
+    throw new Error(`Session utilisateur attendue`)
   }
   if (record.get('uid') !== authRecord.id) {
-    throw new BadRequestError(`Not authorized`)
+    throw new BadRequestError(`Non autorisé`)
   }
 
   // Check if CNAME changed and handle Cloudflare
@@ -155,7 +155,7 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
 
   if (advancedFieldChanging) {
     if (record.getBool('power') || record.getString('status').toLowerCase() !== 'idle') {
-      throw new BadRequestError(`Instance must be powered off first.`)
+      throw new BadRequestError(`L'instance doit d'abord être éteinte.`)
     }
   }
 

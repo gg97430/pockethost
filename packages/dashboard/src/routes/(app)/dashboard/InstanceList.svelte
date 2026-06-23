@@ -94,10 +94,10 @@
     <wa-icon name="magnifying-glass" class="instance-list-search-icon"></wa-icon>
     <input
       type="search"
-      placeholder="Search instances…"
+      placeholder="Rechercher des instances..."
       bind:value={searchQuery}
       class="instance-list-search-input"
-      aria-label="Search instances"
+      aria-label="Rechercher des instances"
     />
   </div>
 
@@ -107,17 +107,18 @@
       size="small"
       appearance="outline"
       onclick={toggleSortDirection}
-      aria-label="Toggle sort direction"
+      aria-label="Changer le sens du tri"
     >
       <wa-icon name={sortDirection === 'desc' ? 'arrow-down-z-a' : 'arrow-down-a-z'}></wa-icon>
     </wa-button>
 
-    <div class="instance-list-view-toggle" role="group" aria-label="View mode">
+    <div class="instance-list-view-toggle" role="group" aria-label="Mode d'affichage">
       <button
         type="button"
         class="instance-list-view-btn"
         class:instance-list-view-btn--active={viewMode === 'list'}
         aria-pressed={viewMode === 'list'}
+        aria-label="Affichage en liste"
         onclick={() => (viewMode = 'list')}
       >
         <wa-icon name="list"></wa-icon>
@@ -127,6 +128,7 @@
         class="instance-list-view-btn"
         class:instance-list-view-btn--active={viewMode === 'grid'}
         aria-pressed={viewMode === 'grid'}
+        aria-label="Affichage en grille"
         onclick={() => (viewMode = 'grid')}
       >
         <wa-icon name="table-cells"></wa-icon>
@@ -138,9 +140,9 @@
 {#if filteredInstances.length === 0}
   <div class="instance-list-empty">
     {#if Object.keys($globalInstancesStore).length === 0}
-      <p>No instances yet. Create one to get started.</p>
+      <p>Aucune instance pour le moment. Créez-en une pour commencer.</p>
     {:else}
-      <p>No instances match your search.</p>
+      <p>Aucune instance ne correspond à votre recherche.</p>
     {/if}
   </div>
 {:else if viewMode === 'list'}
@@ -148,11 +150,11 @@
     <table class="instance-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Status</th>
+          <th>Nom</th>
+          <th>État</th>
           <th>Version</th>
-          <th></th>
-          <th>Power</th>
+          <th>Actions</th>
+          <th>Alimentation</th>
         </tr>
       </thead>
       <tbody>
@@ -184,7 +186,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.75rem;
-    margin-top: 0.25rem;
+    margin-top: 2rem;
     margin-bottom: 1.25rem;
   }
 
@@ -196,16 +198,21 @@
     min-width: 0;
     padding: 0.5rem 0.75rem;
     border-radius: 0.5rem;
-    border: 1px solid rgb(255 255 255 / 0.1);
-    transition: border-color 120ms ease;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
+    box-shadow: var(--app-shadow-sm);
+    transition:
+      border-color 120ms ease,
+      box-shadow 120ms ease;
   }
 
   .instance-list-search:focus-within {
     border-color: #1eb854;
+    box-shadow: 0 0 0 3px rgb(30 184 84 / 0.14);
   }
 
   .instance-list-search-icon {
-    color: rgb(255 255 255 / 0.4);
+    color: var(--app-text-faint);
     flex-shrink: 0;
   }
 
@@ -213,13 +220,13 @@
     width: 100%;
     border: none;
     background: transparent;
-    color: #fff;
+    color: var(--app-text-strong);
     font-size: 0.875rem;
     outline: none;
   }
 
   .instance-list-search-input::placeholder {
-    color: rgb(255 255 255 / 0.35);
+    color: var(--app-text-faint);
   }
 
   .instance-list-toolbar-actions {
@@ -232,8 +239,10 @@
 
   .instance-list-view-toggle {
     display: inline-flex;
-    border: 1px solid rgb(255 255 255 / 0.12);
+    border: 1px solid var(--app-border);
     border-radius: 0.375rem;
+    background: var(--app-surface);
+    box-shadow: var(--app-shadow-sm);
     overflow: hidden;
   }
 
@@ -245,31 +254,40 @@
     height: 2rem;
     border: none;
     background: transparent;
-    color: rgb(255 255 255 / 0.5);
+    color: var(--app-text-muted);
     cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .instance-list-view-btn:hover {
+    background: var(--app-surface-hover);
+    color: var(--app-text-strong);
   }
 
   .instance-list-view-btn + .instance-list-view-btn {
-    border-left: 1px solid rgb(255 255 255 / 0.12);
+    border-left: 1px solid var(--app-border);
   }
 
   .instance-list-view-btn--active {
-    background: rgb(255 255 255 / 0.1);
-    color: #fff;
+    background: rgb(30 184 84 / 0.12);
+    color: #15803d;
   }
 
   .instance-list-empty {
     padding: 3rem 1rem;
     text-align: center;
-    color: rgb(255 255 255 / 0.45);
+    color: var(--app-text-muted);
     font-size: 0.9375rem;
   }
 
   .instance-table-wrap {
     overflow-x: auto;
-    border: 1px solid rgb(255 255 255 / 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 0.75rem;
-    background: rgb(0 0 0 / 0.25);
+    background: var(--app-surface);
+    box-shadow: var(--app-shadow);
   }
 
   .instance-table {
@@ -285,8 +303,9 @@
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: rgb(255 255 255 / 0.4);
-    border-bottom: 1px solid rgb(255 255 255 / 0.08);
+    color: var(--app-text-muted);
+    border-bottom: 1px solid var(--app-border);
+    background: var(--app-surface-soft);
     white-space: nowrap;
   }
 
@@ -296,7 +315,7 @@
 
   .instance-table :global(td) {
     padding: 0.75rem 1rem;
-    border-bottom: 1px solid rgb(255 255 255 / 0.06);
+    border-bottom: 1px solid var(--app-border);
     vertical-align: middle;
   }
 

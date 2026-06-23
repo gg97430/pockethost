@@ -4,7 +4,7 @@
 
   const baseUrl = APP_URL()
   const imageUrl = `${baseUrl}newPoster.png`
-  const tagline = `Get a PocketBase backend for your next app in under 10 seconds.`
+  const tagline = `Interface interne de gestion PocketBase.`
 </script>
 
 <svelte:head>
@@ -15,7 +15,7 @@
     <meta name="description" content={tagline} />
     <meta property="og:url" content={baseUrl} />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="PocketHost" />
+    <meta property="og:title" content="Gestion PocketBase" />
     <meta property="og:description" content={tagline} />
     <meta property="og:image" content={imageUrl} />
 
@@ -23,7 +23,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta property="twitter:domain" content={APP_URL()} />
     <meta property="twitter:url" content={baseUrl} />
-    <meta name="twitter:title" content="PocketHost" />
+    <meta name="twitter:title" content="Gestion PocketBase" />
     <meta name="twitter:description" content={tagline} />
     <meta name="twitter:image" content={imageUrl} />
   {/if}

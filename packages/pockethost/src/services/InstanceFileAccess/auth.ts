@@ -9,7 +9,7 @@ export async function authenticateFileAccess(
   if (username === `__auth__`) {
     client.authStore.loadFromCookie(password)
     if (!client.authStore.isValid) {
-      throw new Error(`Invalid cookie`)
+      throw new Error(`Cookie invalide`)
     }
     return client
   }

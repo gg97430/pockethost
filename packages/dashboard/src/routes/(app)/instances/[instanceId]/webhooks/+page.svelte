@@ -24,7 +24,7 @@
       ? $items
           .map(
             ({ endpoint, value }) => `routerAdd("GET", "${endpoint}", (e) => {
-    return e.json(200, { "message": "Webhook called" })
+    return e.json(200, { "message": "Webhook appelé" })
 }))`
           )
           .join('\n')
@@ -32,13 +32,14 @@
 </script>
 
 <svelte:head>
-  <title>{subdomain} webhooks - PocketHost</title>
+  <title>Webhooks de {subdomain} - Gestion PocketBase</title>
 </svelte:head>
 
 <FeatureTab title="Webhooks" documentation="/docs/webhooks/">
   <svelte:fragment slot="summary">
     <p>
-      Webhooks call API endpoints on your instance at scheduled times, replacing PocketBase's standard cron scheduler.
+      Les webhooks appellent des routes API de votre instance à des horaires planifiés, en remplaçant le planificateur
+      cron standard de PocketBase.
     </p>
   </svelte:fragment>
 
@@ -46,7 +47,7 @@
     {#if $items.length === 0}
       <wa-callout variant="brand" class="wa-callout-padded wa-callout-brand-accent">
         <wa-icon slot="icon" name="user-secret"></wa-icon>
-        <span>No webhooks yet. Create your first webhook to get started.</span>
+        <span>Aucun webhook pour le moment. Créez votre premier webhook pour commencer.</span>
       </wa-callout>
     {/if}
   </svelte:fragment>

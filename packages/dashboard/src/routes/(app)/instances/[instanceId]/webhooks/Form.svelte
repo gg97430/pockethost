@@ -71,11 +71,11 @@
   }
 </script>
 
-<h3 class="text-xl">Add New Webhook</h3>
+<h3 class="text-xl">Ajouter un webhook</h3>
 
 <div class="mb-8">
   {#if successfulSave}
-    <AlertBar message="Your new webhook has been saved." type="success" />
+    <AlertBar message="Votre nouveau webhook a été enregistré." type="success" />
   {/if}
 
   <AlertBar message={errorMessage} type="error" />
@@ -94,8 +94,8 @@
         {#if !isApiEndpointValid && apiEndpoint.length > 0}
           <div class="mt-1">
             <span class="text-error text-sm">
-              API endpoints must be valid paths starting with / (e.g., <code>/api/webhooks/my-webhook</code> or
-              <code>/api/cron?token=abc</code>). Do not include protocol or host.
+              Les routes API doivent être des chemins valides commençant par / (ex. <code>/api/webhooks/mon-webhook</code>
+              ou <code>/api/cron?token=abc</code>). N'incluez ni protocole ni hôte.
             </span>
           </div>
         {/if}
@@ -107,7 +107,7 @@
 
       <div class="text-right md:text-left">
         <wa-button type="submit" variant="brand" class="px-2.5 md:px-3" disabled={!isFormValid}>
-          Add
+          Ajouter
           <wa-icon slot="end" name="floppy-disk"></wa-icon>
         </wa-button>
       </div>
@@ -124,8 +124,8 @@
           ></wa-input>
           {#if !isCronValueValid && cronValue.length > 0}
             <span class="text-error text-sm">
-              Please enter a valid cron expression (e.g., <code>0 9 * * 1-5</code> for weekdays at 9 AM UTC, or
-              <code>@daily</code> for daily at midnight UTC).
+              Veuillez saisir une expression cron valide (ex. <code>0 9 * * 1-5</code> pour les jours ouvrés à 9 h UTC,
+              ou <code>@daily</code> pour une exécution quotidienne à minuit UTC).
             </span>
           {/if}
           <CronScheduleReference />

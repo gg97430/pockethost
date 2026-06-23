@@ -9,7 +9,7 @@ export const handleFormError = (e: Error, setError?: FormErrorHandler) => {
 
   if (setError) {
     const message = parseError(e)[0]
-    setError(message || 'Unknown message')
+    setError(message || 'Message inconnu')
   } else {
     throw e
   }
@@ -22,8 +22,8 @@ export const handleCreateNewInstance = async (instanceName: string, setError?: F
 
   try {
     // Pre-checks
-    if (!instanceName) throw new Error(`Instance name is required`)
-    if (!id) throw new Error(`Must be logged in to create an instance`)
+    if (!instanceName) throw new Error(`Le nom de l'instance est obligatoire`)
+    if (!id) throw new Error(`Vous devez être connecté pour créer une instance`)
 
     // Create a new instance using the generated name
     const record = await createInstance({
@@ -55,7 +55,7 @@ export const handleInstanceGeneratorWidget = async (
 
     const instance = await client().getInstanceBySubdomain(instanceName)
 
-    if (!instance) throw new Error(`This should never happen`)
+    if (!instance) throw new Error(`Cette erreur ne devrait jamais se produire`)
 
     window.location.href = `/instances/${instance.id}`
   } catch (e) {

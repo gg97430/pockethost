@@ -31,7 +31,7 @@ function enhancePre(pre: HTMLPreElement) {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'prose-code-block-copy'
-  button.setAttribute('aria-label', 'Copy to clipboard')
+  button.setAttribute('aria-label', 'Copier')
   button.innerHTML = '<wa-icon name="copy" aria-hidden="true"></wa-icon>'
 
   let resetTimer: ReturnType<typeof setTimeout> | undefined
@@ -40,12 +40,12 @@ function enhancePre(pre: HTMLPreElement) {
     event.preventDefault()
     await copyText(text)
     button.innerHTML = '<wa-icon name="check" aria-hidden="true"></wa-icon>'
-    button.setAttribute('aria-label', 'Copied')
+    button.setAttribute('aria-label', 'Copié')
     button.classList.add('prose-code-block-copy--copied')
     clearTimeout(resetTimer)
     resetTimer = setTimeout(() => {
       button.innerHTML = '<wa-icon name="copy" aria-hidden="true"></wa-icon>'
-      button.setAttribute('aria-label', 'Copy to clipboard')
+      button.setAttribute('aria-label', 'Copier')
       button.classList.remove('prose-code-block-copy--copied')
     }, 2000)
   }

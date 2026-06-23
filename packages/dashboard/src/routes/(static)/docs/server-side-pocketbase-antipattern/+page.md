@@ -1,73 +1,73 @@
 ---
-title: Server-Side PocketBase is an Anti-Pattern
-description: Using PocketBase from SvelteKit or Next.js server files is generally an antipattern.
+title: PocketBase côté serveur est généralement un anti-pattern
+description: Utiliser PocketBase depuis les fichiers serveur SvelteKit ou Next.js est généralement un anti-pattern.
 ---
 
-# Server-Side PocketBase is an Anti-Pattern
+# PocketBase côté serveur est généralement un anti-pattern
 
-When building applications with PocketBase, it's tempting to access it from server-side code in frameworks like SvelteKit or Next.js. However, this approach often indicates architectural issues and should generally be avoided. Here's why:
+Quand vous construisez une application avec PocketBase, il peut être tentant d'y accéder depuis le code serveur de frameworks comme SvelteKit ou Next.js. Cette approche révèle souvent un problème d'architecture et devrait généralement être évitée. Voici pourquoi :
 
-## The Problem with Server-Side Access
+## Le problème de l'accès côté serveur
 
-### Double Network Hops
+### Double saut réseau
 
-When you access PocketBase from your server-side code, requests make two network hops:
+Quand vous accédez à PocketBase depuis votre code serveur, les requêtes font deux sauts réseau :
 
-1. Client -> Your Server
-2. Your Server -> PocketBase
+1. Client -> votre serveur
+2. Votre serveur -> PocketBase
 
-This adds unnecessary latency compared to direct client-to-PocketBase communication.
+Cela ajoute une latence inutile par rapport à une communication directe du client vers PocketBase.
 
-### JWT State Management Complexity
+### Complexité de gestion de l'état JWT
 
-Managing authentication state becomes more complex when you need to transfer JWT tokens between client and server. This often leads to security vulnerabilities when not handled properly.
+La gestion de l'état d'authentification devient plus complexe quand il faut transférer des tokens JWT entre client et serveur. Si ce flux est mal géré, il introduit souvent des failles de sécurité.
 
-### Rate Limiting Issues
+### Problèmes de limitation de débit
 
-Accessing PocketBase from a single backend IP address can trigger rate limits more easily than distributed client access. This is intentionally designed to encourage direct client communication.
+Accéder à PocketBase depuis une seule adresse IP backend peut déclencher plus facilement les limites de débit qu'un accès réparti depuis les clients. Ce comportement encourage volontairement la communication directe côté client.
 
-## Better Approaches
+## Meilleures approches
 
-### Use Direct Client Access
+### Utiliser l'accès direct depuis le client
 
-PocketBase is designed to be accessed directly from client applications. Its built-in security rules provide fine-grained access control without needing a middleware server.
+PocketBase est conçu pour être appelé directement depuis les applications clientes. Ses règles de sécurité intégrées fournissent un contrôle d'accès fin sans serveur middleware.
 
-### Leverage JS Hooks for Privileged Operations
+### Utiliser les hooks JS pour les opérations privilégiées
 
-If you need server-side logic or privileged operations, use PocketBase's JS hooks feature instead of wrapping PocketBase calls in a separate backend:
+Si vous avez besoin de logique côté serveur ou d'opérations privilégiées, utilisez les hooks JS de PocketBase plutôt que d'envelopper les appels PocketBase dans un backend séparé :
 
-- Create custom API endpoints using JS hooks
-- Handle privileged operations directly in PocketBase
-- Implement business logic where it belongs
+- Créer des endpoints API personnalisés avec les hooks JS
+- Gérer les opérations privilégiées directement dans PocketBase
+- Implémenter la logique métier là où elle appartient
 
-### Consider Static Site Generation
+### Envisager la génération statique
 
-If you're using server-side rendering primarily to protect PocketBase access, consider:
+Si vous utilisez principalement le rendu côté serveur pour protéger l'accès à PocketBase, envisagez plutôt :
 
-- Moving to static site generation (SSG)
-- Using PocketBase's security rules for protection
-- Implementing sensitive operations via JS hooks
+- Passer à la génération statique (SSG)
+- Utiliser les règles de sécurité PocketBase pour la protection
+- Implémenter les opérations sensibles via des hooks JS
 
-## When Server-Side Access Makes Sense
+## Quand l'accès côté serveur est pertinent
 
-While generally an anti-pattern, there are valid cases for server-side PocketBase access:
+Même s'il s'agit généralement d'un anti-pattern, certains cas justifient un accès PocketBase côté serveur :
 
-- Complex data aggregation requiring server resources
-- Integration with external services that can't be exposed to clients
-- Specific security requirements that can't be met with API rules
+- Agrégation de données complexe nécessitant des ressources serveur
+- Intégration avec des services externes qui ne peuvent pas être exposés aux clients
+- Exigences de sécurité spécifiques impossibles à couvrir avec les règles API
 
-However, even in these cases, consider whether the functionality could be implemented using PocketBase's native features first.
+Même dans ces situations, vérifiez d'abord si la fonctionnalité peut être implémentée avec les capacités natives de PocketBase.
 
-## Further Reading
+## Pour aller plus loin
 
-Gani also posted about this on the PocketBase site: [JS SSR - issues and recommendations when interacting with PocketBase](https://github.com/pocketbase/pocketbase/discussions/5313)
+Gani a aussi publié à ce sujet sur le site PocketBase : [JS SSR - issues and recommendations when interacting with PocketBase](https://github.com/pocketbase/pocketbase/discussions/5313)
 
 ## Conclusion
 
-PocketBase is designed to be a complete backend solution with built-in security and extensibility. Adding an additional server layer often complicates the architecture unnecessarily. Before implementing server-side PocketBase access, consider whether you can:
+PocketBase est conçu comme une solution backend complète, avec sécurité et extensibilité intégrées. Ajouter une couche serveur supplémentaire complique souvent l'architecture sans nécessité. Avant d'implémenter un accès PocketBase côté serveur, demandez-vous si vous pouvez :
 
-1. Use client-side access with security rules
-2. Implement the functionality via JS hooks
-3. Restructure your application to leverage PocketBase's native capabilities
+1. Utiliser l'accès côté client avec les règles de sécurité
+2. Implémenter la fonctionnalité via des hooks JS
+3. Restructurer votre application pour tirer parti des capacités natives de PocketBase
 
-This will lead to simpler, more maintainable, and more performant applications.
+Vous obtiendrez des applications plus simples, plus maintenables et plus performantes.

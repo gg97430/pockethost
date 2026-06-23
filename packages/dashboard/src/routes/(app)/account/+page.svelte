@@ -6,10 +6,10 @@
 </script>
 
 <svelte:head>
-  <title>Account - PocketHost</title>
+  <title>Compte - Gestion PocketBase</title>
 </svelte:head>
 
-<FeatureTab title="Account">
+<FeatureTab title="Compte">
   <div class="account-card">
     <div class="account-card-body">
       <div class="account-profile-row">
@@ -33,35 +33,21 @@
               <dd>
                 <span class="account-stat-value">{$userStore?.email}</span>
                 <span class="account-stat-sep">·</span>
-                <a href="/account/change-email" class="account-stat-link">Change email</a>
+                <a href="/account/change-email" class="account-stat-link">Changer l'email</a>
               </dd>
             </div>
             <div class="account-stat">
-              <dt>Plan</dt>
+              <dt>Offre</dt>
               <dd class="account-stat-value account-stat-value--plan">{PLAN_NAMES[$userSubscriptionType]}</dd>
             </div>
             <div class="account-stat account-stat--wide">
               <dt>Instances</dt>
               <dd>
                 <span class="account-stat-value">{$userStore?.subscription_quantity}</span>
-                <span class="account-stat-muted"> allowed</span>
-                <span class="account-stat-sep">·</span>
-                <a href="/support" class="account-stat-link">Request more</a>
+                <span class="account-stat-muted"> autorisées</span>
               </dd>
             </div>
           </dl>
-
-          <div class="account-actions">
-            <a
-              href="https://store.pockethost.io/billing"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="account-btn account-btn--brand-outline"
-            >
-              <wa-icon name="credit-card"></wa-icon>
-              Manage membership
-            </a>
-          </div>
         </div>
       </div>
     </div>

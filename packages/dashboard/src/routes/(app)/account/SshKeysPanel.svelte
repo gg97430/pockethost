@@ -30,7 +30,7 @@
   })
 
   const handleKeySaved = async () => {
-    successMessage = 'SSH key saved.'
+    successMessage = 'Clé SSH enregistrée.'
     showCreateForm = false
     await loadKeys()
   }
@@ -39,7 +39,7 @@
     errorMessage = ''
     try {
       await client().client.collection(SSH_KEY_COLLECTION).delete(id)
-      successMessage = 'SSH key removed.'
+      successMessage = 'Clé SSH supprimée.'
       await loadKeys()
     } catch (error) {
       errorMessage = `${error}`
@@ -54,11 +54,11 @@
   }
 </script>
 
-<FeatureTab title="SFTP SSH Keys" documentation="/docs/ftp" bind:errorMessage {successMessage} successFlash>
+<FeatureTab title="Clés SSH SFTP" documentation="/docs/ftp" bind:errorMessage {successMessage} successFlash>
   <svelte:fragment slot="summary">
     <p>
-      SFTP uses Ed25519 keys only. Username is your PocketHost email. Generate a key on your machine, then add it here.
-      PocketHost stores the public key only, like GitHub.
+      SFTP utilise uniquement des clés Ed25519. Le nom d'utilisateur est votre email de compte. Générez une clé sur
+      votre machine, puis ajoutez-la ici. Seule la clé publique est stockée, comme sur GitHub.
     </p>
   </svelte:fragment>
 
@@ -66,7 +66,7 @@
     {#if !loading && keys.length === 0}
       <wa-callout variant="neutral" class="wa-callout-padded wa-callout-subtle-border">
         <wa-icon slot="icon" name="key"></wa-icon>
-        No SSH keys yet. Add one to connect over SFTP.
+        Aucune clé SSH pour le moment. Ajoutez-en une pour vous connecter en SFTP.
       </wa-callout>
     {/if}
   </svelte:fragment>
@@ -74,7 +74,7 @@
   {#if loading}
     <div class="flex items-center gap-3 text-white/60 py-8">
       <wa-icon name="spinner" class="animate-spin"></wa-icon>
-      <span>Loading keys…</span>
+      <span>Chargement des clés...</span>
     </div>
   {:else if keys.length > 0}
     <div class="mb-8 space-y-3">
@@ -105,7 +105,7 @@
             onclick={() => deleteKey(key.id)}
           >
             <wa-icon slot="start" name="trash"></wa-icon>
-            Remove
+            Supprimer
           </wa-button>
         </div>
       {/each}
@@ -122,12 +122,12 @@
         on:saved={handleKeySaved}
       />
       <div class="mt-3">
-        <wa-button variant="neutral" appearance="plain" onclick={() => (showCreateForm = false)}> Cancel </wa-button>
+        <wa-button variant="neutral" appearance="plain" onclick={() => (showCreateForm = false)}> Annuler </wa-button>
       </div>
     {:else}
       <wa-button variant="brand" onclick={() => (showCreateForm = true)}>
         <wa-icon slot="start" name="plus"></wa-icon>
-        Add
+        Ajouter
       </wa-button>
     {/if}
   {/if}

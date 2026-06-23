@@ -1,38 +1,38 @@
 ---
-title: Admin UI Extensions
-description: Extend the PocketBase superuser dashboard with custom pages, using pb_hooks registration and pb_admin_ext client assets on PocketHost
+title: Extensions de l'interface admin
+description: Étendre le dashboard superuser PocketBase avec des pages personnalisées, via l'enregistrement pb_hooks et les assets client pb_admin_ext sur PocketHost
 ---
-# Admin UI Extensions
+# Extensions de l'interface admin
 
-PocketBase **0.37+** ships a rewritten superuser dashboard with an experimental **UI extension** system. You can add custom admin pages, header links, collection tabs, and field types without forking PocketBase or building a separate SPA.
+PocketBase **0.37+** inclut un dashboard superuser réécrit avec un système expérimental d'**extensions UI**. Vous pouvez ajouter des pages admin personnalisées, des liens d'en-tête, des onglets de collection et des types de champs sans forker PocketBase ni construire une SPA séparée.
 
-This is different from [server-side hooks](/docs/js):
+Ce mécanisme est différent des [hooks côté serveur](/docs/js) :
 
-| Layer | Runs in | Purpose |
-| ----- | ------- | ------- |
-| **Server registration** | JSVM (`pb_hooks`) | Mount static files and register the extension with PocketBase |
-| **Client code** | Browser (admin SPA) | `main.js` uses global `window.app` for routes, data, and UI |
+| Couche | S'exécute dans | Rôle |
+| ------ | -------------- | ---- |
+| **Enregistrement serveur** | JSVM (`pb_hooks`) | Monter les fichiers statiques et enregistrer l'extension auprès de PocketBase |
+| **Code client** | Navigateur (SPA admin) | `main.js` utilise le global `window.app` pour les routes, les données et l'UI |
 
-Customer instances on PocketHost need PocketBase **≥0.37**. The mothership control plane runs **0.39**.
+Les instances client sur PocketHost nécessitent PocketBase **≥0.37**. Le plan de contrôle mothership tourne en **0.39**.
 
-## Directory layout
+## Structure des dossiers
 
-Place extension assets next to your hooks. PocketHost mounts both via [SFTP](/docs/ftp) or [phio](/docs/phio):
+Placez les assets de l'extension à côté de vos hooks. PocketHost monte les deux via [SFTP](/docs/ftp) ou [phio](/docs/phio) :
 
 ```
 pb_hooks/
-  admin_plugins.pb.js       ← server registration (JSVM)
+  admin_plugins.pb.js       ← enregistrement serveur (JSVM)
 pb_admin_ext/
   my-plugin/
-    main.js                   ← client entry (required for UI hooks)
-    style.css                 ← optional static assets
+    main.js                   ← entrée client (requise pour les hooks UI)
+    style.css                 ← assets statiques optionnels
 ```
 
-On the mothership repo, registration hooks are bundled by tsdown into `pb_hooks/mothership.pb.js`. Static trees under `pb_admin_ext/` are plain files and must ship beside `pb_hooks/` on deploy.
+Dans le dépôt mothership, les hooks d'enregistrement sont empaquetés par tsdown dans `pb_hooks/mothership.pb.js`. Les arborescences statiques sous `pb_admin_ext/` sont de simples fichiers et doivent être déployées à côté de `pb_hooks/`.
 
-## Server registration
+## Enregistrement serveur
 
-Register the extension in an `onServe` hook. Each `name` becomes a URL segment under `/_/extensions/{name}/`.
+Enregistrez l'extension dans un hook `onServe`. Chaque `name` devient un segment d'URL sous `/_/extensions/{name}/`.
 
 ```js
 // pb_hooks/admin_plugins.pb.js
@@ -45,33 +45,33 @@ $app.onServe().bindFunc((e) => {
 })
 ```
 
-PocketBase automatically exposes:
+PocketBase expose automatiquement :
 
-| Route | Purpose |
-| ----- | ------- |
-| `GET /_/extensions/{name}/{path...}` | Static files from the extension directory |
-| `GET /_/extensions.js` | Concatenated `main.js` from all registered extensions |
+| Route | Rôle |
+| ----- | ---- |
+| `GET /_/extensions/{name}/{path...}` | Fichiers statiques du dossier d'extension |
+| `GET /_/extensions.js` | `main.js` concaténés de toutes les extensions enregistrées |
 
-Restart PocketBase after changing **registration** (the hook). Edits to `main.js` alone often show up after a browser refresh because PocketBase rebuilds `/_/extensions.js` from disk on each request.
+Redémarrez PocketBase après modification de **l'enregistrement** (le hook). Les modifications de `main.js` seul apparaissent souvent après un rafraîchissement du navigateur, car PocketBase reconstruit `/_/extensions.js` depuis le disque à chaque requête.
 
-## Client entry (`main.js`)
+## Entrée client (`main.js`)
 
-Client code runs in the **browser**. Modern JavaScript is fine (`async`/`await`, DOM APIs). It is **not** subject to JSVM restrictions.
+Le code client s'exécute dans le **navigateur**. Le JavaScript moderne fonctionne (`async`/`await`, API DOM). Il n'est **pas** soumis aux restrictions de la JSVM.
 
 ```js
 // pb_admin_ext/my-plugin/main.js
 app.store.headerLinks.push({
   href: '#/my-plugin',
   icon: 'ri-pulse-line',
-  label: 'My Plugin',
+  label: 'Mon plugin',
 })
 
 app.routes.superuserOnly('#/my-plugin', () => {
-  return t.div({ className: 'page' }, t.h1(null, 'Hello from an admin plugin'))
+  return t.div({ className: 'page' }, t.h1(null, 'Bonjour depuis un plugin admin'))
 })
 ```
 
-Load extension CSS with paths under `/_/extensions/{name}/`:
+Chargez le CSS de l'extension avec des chemins sous `/_/extensions/{name}/` :
 
 ```js
 document.head.appendChild(
@@ -82,50 +82,50 @@ document.head.appendChild(
 )
 ```
 
-Use `app.pb` for data access. It inherits superuser auth from the admin session.
+Utilisez `app.pb` pour l'accès aux données. Il hérite de l'authentification superuser de la session admin.
 
-## Deploy on PocketHost
+## Déployer sur PocketHost
 
-1. Upload `pb_hooks/*.pb.js` and `pb_admin_ext/**` together via SFTP or phio.
-2. Restart the instance (or mothership) so hook registration loads cleanly.
-3. Open the admin UI (`/_/`), sign in as superuser, and check for your header link.
+1. Envoyez `pb_hooks/*.pb.js` et `pb_admin_ext/**` ensemble via SFTP ou phio.
+2. Redémarrez l'instance (ou le mothership) pour charger proprement l'enregistrement du hook.
+3. Ouvrez l'interface admin (`/_/`), connectez-vous en superuser et vérifiez que votre lien d'en-tête apparaît.
 
-Verify from the command line:
+Vérifiez en ligne de commande :
 
 ```bash
 curl -sI https://your-instance.pockethost.io/_/extensions.js | grep -iE 'content-length|cache-control'
 curl -s https://your-instance.pockethost.io/_/extensions/my-plugin/main.js | head
 ```
 
-`/_/extensions.js` should return JavaScript with a non-zero body when `main.js` exists.
+`/_/extensions.js` doit renvoyer du JavaScript avec un corps non vide quand `main.js` existe.
 
-## Cloudflare caching (important)
+## Cache Cloudflare (important)
 
-PocketHost serves admin traffic through **Cloudflare**. In production (non-`--dev`), PocketBase sets a long cache header on most `/_/*` static routes:
+PocketHost sert le trafic admin via **Cloudflare**. En production (hors `--dev`), PocketBase définit un en-tête de cache long sur la plupart des routes statiques `/_/*` :
 
 ```
 Cache-Control: max-age=1209600, stale-while-revalidate=86400
 ```
 
-That is **14 days**. Cloudflare honors it.
+Cela correspond à **14 jours**. Cloudflare le respecte.
 
-`/_/extensions.js` is rebuilt from disk on every origin request, but the CDN can still serve a **stale cached copy** for days. Symptom: the admin UI loads, `/_/extensions.js` returns **200**, but the body is **empty** or outdated after you deploy a new plugin.
+`/_/extensions.js` est reconstruit depuis le disque à chaque requête origin, mais le CDN peut encore servir une **copie en cache obsolète** pendant plusieurs jours. Symptôme : l'interface admin charge, `/_/extensions.js` renvoie **200**, mais le corps est **vide** ou obsolète après le déploiement d'un nouveau plugin.
 
-This bit us on the mothership **Live** operator dashboard. The plugin was registered correctly on the server. Cloudflare kept serving an empty cached bundle from before registration existed.
+Nous avons rencontré ce cas sur le dashboard opérateur mothership **Live**. Le plugin était correctement enregistré côté serveur, mais Cloudflare continuait à servir un bundle vide mis en cache avant l'existence de l'enregistrement.
 
-### Fix: bypass cache for extension routes
+### Correctif : contourner le cache pour les routes d'extension
 
-In the Cloudflare dashboard for your zone, add a **Cache Rule**:
+Dans le dashboard Cloudflare de votre zone, ajoutez une **Cache Rule** :
 
 ![Cloudflare Cache Rule — bypass cache for /_/extensions.js and /_/extensions/*](2026-06-16_20-25-07.png)
 
-**If** (custom expression):
+**If** (expression personnalisée) :
 
 ```
 (http.request.uri.path eq "/_/extensions.js") or (http.request.uri.path wildcard r"/_/extensions/*")
 ```
 
-Scope to your hostname when possible (mothership or instance custom domain):
+Limitez la règle au nom d'hôte quand c'est possible (mothership ou domaine personnalisé d'instance) :
 
 ```
 (http.host eq "pockethost-central.pockethost.io") and (
@@ -136,44 +136,44 @@ Scope to your hostname when possible (mothership or instance custom domain):
 
 **Then:** Cache eligibility → **Bypass cache**
 
-Both paths matter:
+Les deux chemins sont nécessaires :
 
-- `/_/extensions.js` is the bundled entry the admin SPA loads.
-- `/_/extensions/*` serves static assets (`style.css`, images).
+- `/_/extensions.js` est l'entrée empaquetée chargée par la SPA admin.
+- `/_/extensions/*` sert les assets statiques (`style.css`, images).
 
-The wildcard `/_/extensions/*` does **not** match `/_/extensions.js`. You need both conditions.
+Le wildcard `/_/extensions/*` ne couvre **pas** `/_/extensions.js`. Les deux conditions sont nécessaires.
 
-After saving the rule, **purge cache once** for `/_/extensions.js`. An old HIT will not clear itself.
+Après l'enregistrement de la règle, **purgez une fois le cache** pour `/_/extensions.js`. Un ancien `HIT` ne se corrigera pas seul.
 
-Verify:
+Vérifiez :
 
 ```bash
 curl -sI https://your-host/_/extensions.js | grep -i cf-cache-status
 ```
 
-You want `BYPASS` or `MISS`, not `HIT` with an old `age`.
+Il faut obtenir `BYPASS` ou `MISS`, pas `HIT` avec un ancien `age`.
 
-### Local dev
+### Développement local
 
-When you run mothership with `--dev`, PocketBase skips the 14-day cache header on `/_/*`. Local testing without Cloudflare will not reproduce the CDN issue.
+Quand vous lancez mothership avec `--dev`, PocketBase n'ajoute pas l'en-tête de cache de 14 jours sur `/_/*`. Les tests locaux sans Cloudflare ne reproduisent donc pas le problème CDN.
 
-## Realtime vs polling in client code
+## Realtime vs polling dans le code client
 
-Admin plugin routes use Shablon reactive rendering. If your route callback re-runs setup code on every render, you can accidentally fire API calls in a loop.
+Les routes de plugin admin utilisent le rendu réactif Shablon. Si votre callback de route relance du code d'initialisation à chaque rendu, vous pouvez déclencher des appels API en boucle par erreur.
 
-For fleet-scale data (thousands of instances):
+Pour des données à l'échelle d'une flotte (milliers d'instances) :
 
-- Subscribe to **small collections** (e.g. `edges`) with realtime.
-- Poll **aggregate counts** on an interval instead of subscribing to `instances/*` and re-querying on every event.
-- Run initialization once per page visit, not on every reactive update.
+- Abonnez-vous en realtime à de **petites collections** (ex. `edges`).
+- Interrogez des **compteurs agrégés** à intervalle régulier plutôt que de vous abonner à `instances/*` et de relancer une requête à chaque événement.
+- Exécutez l'initialisation une seule fois par visite de page, pas à chaque mise à jour réactive.
 
-## API status
+## Statut de l'API
 
-Admin UI extensions are **experimental** in PocketBase as of 0.37–0.39. Expect API shape changes before v1.0. Inspect `console.log(app)` in DevTools on your target PocketBase version.
+Les extensions UI admin sont **expérimentales** dans PocketBase 0.37 à 0.39. Attendez-vous à des changements de forme d'API avant la v1.0. Inspectez `console.log(app)` dans DevTools sur votre version cible de PocketBase.
 
-## Related docs
+## Docs liées
 
-- [Extending via JS](/docs/js) — JSVM hooks (server-side, not admin SPA)
-- [SFTP File Access](/docs/ftp) — upload hooks and extension files
-- [phio CLI](/docs/phio) — deploy hooks and sibling directories
-- [Publishing Static Assets](/docs/static-assets) — Cloudflare caching for `pb_public`
+- [Étendre avec JS](/docs/js) — hooks JSVM (côté serveur, pas la SPA admin)
+- [Accès fichiers SFTP](/docs/ftp) — envoyer hooks et fichiers d'extension
+- [phio CLI](/docs/phio) — déployer hooks et dossiers voisins
+- [Publier des assets statiques](/docs/static-assets) — cache Cloudflare pour `pb_public`

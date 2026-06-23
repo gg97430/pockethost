@@ -24,11 +24,11 @@
   }
 </script>
 
-<FeatureTab title="Dev Mode" documentation="/docs/dev-mode" powerOffAction="change Dev Mode" {errorMessage}>
+<FeatureTab title="Mode dev" documentation="/docs/dev-mode" powerOffAction="modifier le mode dev" {errorMessage}>
   <svelte:fragment slot="summary">
     <p>
-      Starting with PocketBase v0.20.1, your instance will show debugging output in the instance logs. Performance is
-      degraded while Dev Mode is active.
+      À partir de PocketBase v0.20.1, votre instance affiche les sorties de débogage dans les logs. Les performances
+      sont réduites lorsque le mode dev est actif.
     </p>
   </svelte:fragment>
 

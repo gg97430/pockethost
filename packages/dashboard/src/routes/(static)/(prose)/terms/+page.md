@@ -1,135 +1,135 @@
 <div class="prose">
 
-# Terms of Service
+# Conditions d'utilisation
 
-**Last Modified Date: September 12, 2025**
+**Dernière modification : 12 septembre 2025**
 
-Welcome to PocketHost! These Terms of Service ("Terms") govern your access to and use of PocketHost's services, so please read them carefully.
+Bienvenue sur PocketHost. Ces Conditions d'utilisation ("Conditions") régissent votre accès aux services PocketHost et leur utilisation. Veuillez les lire attentivement.
 
-By accessing or using our services, you agree to be bound by these Terms. If you do not agree to these Terms, please do not use our services.
+En accédant à nos services ou en les utilisant, vous acceptez d'être lié par ces Conditions. Si vous ne les acceptez pas, veuillez ne pas utiliser nos services.
 
 ## 1. Introduction
 
-- **Company Name**: PocketHost
-- **Address**: PO Box 871, Reno, NV 89501, USA
-- **Contact Information**: [ben@pockethost.io](mailto:ben@pockethost.io)
+- **Nom de l'entreprise** : PocketHost
+- **Adresse** : PO Box 871, Reno, NV 89501, USA
+- **Contact** : [ben@pockethost.io](mailto:ben@pockethost.io)
 
-## 2. Eligibility
+## 2. Éligibilité
 
-There are no age restrictions for using our services. However, by using PocketHost, you represent and warrant that you have the legal capacity to enter into these Terms.
+Il n'y a pas de restriction d'âge pour utiliser nos services. Toutefois, en utilisant PocketHost, vous déclarez et garantissez avoir la capacité juridique d'accepter ces Conditions.
 
-## 3. Account Registration and Security
+## 3. Inscription et sécurité du compte
 
-- **Account Creation**: To use our services, you must create an account by providing a valid email address.
-- **Account Security**: You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account.
-- **Unauthorized Access**: If we detect unauthorized access to your account, we may suspend it to protect your security.
+- **Création de compte** : pour utiliser nos services, vous devez créer un compte en fournissant une adresse email valide.
+- **Sécurité du compte** : vous êtes responsable de la confidentialité de vos identifiants et de toutes les activités réalisées depuis votre compte.
+- **Accès non autorisé** : si nous détectons un accès non autorisé à votre compte, nous pouvons le suspendre afin de protéger votre sécurité.
 
-## 4. Services and Subscriptions
+## 4. Services et abonnements
 
-### 4.1 Paid Membership Services
+### 4.1 Services d'abonnement payants
 
-- **Expanded Capacity and Access**: We offer paid membership services for users requiring expanded capacity and access.
-- **Payment Processing**: All payments are handled through third-party providers **Stripe** and **LemonSqueezy**.
-- **Subscription Plans**: We offer both annual and monthly subscription plans with no additional fees.
+- **Capacité et accès étendus** : nous proposons des abonnements payants aux utilisateurs qui ont besoin de plus de capacité et d'accès.
+- **Traitement des paiements** : tous les paiements sont gérés par des prestataires tiers, **Stripe** et **LemonSqueezy**.
+- **Formules d'abonnement** : nous proposons des abonnements annuels et mensuels sans frais supplémentaires.
 
-### 4.2 Refund Policy
+### 4.2 Politique de remboursement
 
-- **No-Questions-Asked Refunds**: If you're not satisfied with our services, you may request a refund within **30 days** of purchase, and it will be granted without questions.
-- **Extended Refunds**: We may provide refunds beyond the 30-day window at our discretion. Our goal is to ensure customer satisfaction.
+- **Remboursement sans question** : si vous n'êtes pas satisfait de nos services, vous pouvez demander un remboursement dans les **30 jours** suivant l'achat, et il sera accordé sans question.
+- **Remboursements étendus** : nous pouvons accorder des remboursements au-delà de la période de 30 jours à notre discrétion. Notre objectif est d'assurer la satisfaction client.
 
-## 5. Fair Use Policy
+## 5. Politique d'utilisation raisonnable
 
-### 5.1 What is 'Fair'?
+### 5.1 Que signifie "raisonnable" ?
 
-We consider 'fair' use to mean that you are using approximately the same amount of bandwidth, storage, and CPU resources as the average active app on our platform.
+Nous considérons qu'une utilisation "raisonnable" signifie que vous utilisez à peu près la même quantité de bande passante, de stockage et de ressources CPU que l'application active moyenne sur notre plateforme.
 
-PocketHost achieves economies of scale through dynamic management of resources. Relatively low-traffic apps do not require many resources, allowing high-traffic apps to utilize our ample resources. Your app will scale up and down depending on its needs.
+PocketHost réalise des économies d'échelle grâce à une gestion dynamique des ressources. Les applications à trafic relativement faible nécessitent peu de ressources, ce qui permet aux applications à fort trafic d'utiliser nos ressources disponibles. Votre application scale automatiquement selon ses besoins.
 
-If we notice that your app is consistently using so many resources that it is starting to affect the experience of other users, or if it is starting to cost significantly more than you are paying, we will reach out to you to discuss the situation. Obviously, anything taken to the extreme is impractical—for example, creating one billion projects will prompt a conversation with us.
+Si nous constatons que votre application utilise régulièrement tellement de ressources qu'elle commence à affecter l'expérience des autres utilisateurs, ou qu'elle coûte significativement plus que ce que vous payez, nous vous contacterons pour discuter de la situation. Évidemment, tout excès extrême est impraticable : créer un milliard de projets entraînera une discussion avec nous.
 
-Our ethos is centered around supporting indie developers and hackers. We actively avoid the utility hosting provider model with metered usage. We encourage you to keep this in mind and be a good citizen of our platform, and we will reciprocate the courtesy.
+Notre état d'esprit est centré sur le soutien aux développeurs indépendants et aux hackers. Nous évitons activement le modèle d'hébergement facturé au compteur. Gardez cela en tête, utilisez la plateforme de bonne foi, et nous vous rendrons la pareille.
 
-## 6. User Content and Acceptable Use
+## 6. Contenu utilisateur et utilisation acceptable
 
-### 6.1 User Content
+### 6.1 Contenu utilisateur
 
-- **Ownership**: You retain all rights to the content and source code you upload to our platform.
-- **Content Responsibility**: You are responsible for all content you upload and must ensure it complies with these Terms and applicable laws.
+- **Propriété** : vous conservez tous les droits sur le contenu et le code source que vous envoyez sur notre plateforme.
+- **Responsabilité du contenu** : vous êtes responsable de tout le contenu que vous envoyez et devez vous assurer qu'il respecte ces Conditions et les lois applicables.
 
-### 6.2 Acceptable Use Policy
+### 6.2 Politique d'utilisation acceptable
 
-- **Prohibited Content**: Content that is illegal in the United States or prohibited by our partners (such as payment or hosting providers) is not allowed.
-- **Prohibited Activities**:
-  - Spamming
-  - Crypto mining
-  - Any use other than hosting PocketBase for web and mobile applications
-- **System Integrity**: Misuse of resources or activities that severely affect system performance or user experience are prohibited.
+- **Contenu interdit** : le contenu illégal aux États-Unis ou interdit par nos partenaires (comme les prestataires de paiement ou d'hébergement) n'est pas autorisé.
+- **Activités interdites** :
+  - Spam
+  - Minage crypto
+  - Toute utilisation autre que l'hébergement de PocketBase pour des applications web et mobiles
+- **Intégrité du système** : l'abus de ressources ou les activités qui affectent gravement les performances système ou l'expérience utilisateur sont interdits.
 
-## 7. Misuse and Termination
+## 7. Abus et résiliation
 
-- **Emergency Actions**: In cases of severe misuse affecting system performance, we may suspend your account and delete data without notice or backups. We recommend keeping your own backups.
-- **Fair Use Violations**: Violations of PocketHost's Fair Use policy may result in account suspension or termination. In particularly egregious cases, data may be deleted without notice.
-- **Notification**: In most cases, we will notify you to vacate the platform at your earliest convenience before taking action.
+- **Actions d'urgence** : en cas d'abus grave affectant les performances système, nous pouvons suspendre votre compte et supprimer des données sans préavis ni sauvegarde. Nous recommandons de conserver vos propres sauvegardes.
+- **Violations de l'utilisation raisonnable** : les violations de la politique d'utilisation raisonnable de PocketHost peuvent entraîner une suspension ou une résiliation du compte. Dans les cas particulièrement graves, les données peuvent être supprimées sans préavis.
+- **Notification** : dans la plupart des cas, nous vous demanderons de quitter la plateforme dès que possible avant de prendre action.
 
-## 8. Third-Party Services
+## 8. Services tiers
 
-- **Compliance with Third-Party Terms**: We use third-party services for payment and hosting. By using our services, you agree to comply with the terms of these providers.
-- **Prohibited by Partners**: Any activity or content not allowed by our third-party providers is also prohibited on our platform.
+- **Respect des conditions tierces** : nous utilisons des services tiers pour le paiement et l'hébergement. En utilisant nos services, vous acceptez de respecter les conditions de ces prestataires.
+- **Interdictions des partenaires** : toute activité ou tout contenu non autorisé par nos prestataires tiers est également interdit sur notre plateforme.
 
-## 9. Intellectual Property
+## 9. Propriété intellectuelle
 
-- **Open Source Platform**: Our platform is open-source under the MIT License.
-- **User Rights**: You retain all rights to your content. We do not claim ownership over any content you upload.
+- **Plateforme open source** : notre plateforme est open source sous licence MIT.
+- **Droits utilisateur** : vous conservez tous les droits sur votre contenu. Nous ne revendiquons aucun droit de propriété sur le contenu que vous envoyez.
 
-## 10. Limitation of Liability
+## 10. Limitation de responsabilité
 
-- **Maximum Liability**: Our total liability to you is limited to the amount you've paid us in hosting fees over the last **three months**, with a maximum of **$500**.
-- **No Liability for Damages**: We are not liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, data, or other intangibles.
-- **Service Availability**: We do not guarantee uninterrupted or error-free service and are not liable for any downtime or service interruptions.
+- **Responsabilité maximale** : notre responsabilité totale envers vous est limitée au montant que vous nous avez payé en frais d'hébergement au cours des **trois derniers mois**, avec un maximum de **500 $**.
+- **Aucune responsabilité pour les dommages** : nous ne sommes pas responsables des dommages indirects, accessoires, spéciaux, consécutifs ou punitifs, y compris les pertes de profits, de données ou d'autres éléments incorporels.
+- **Disponibilité du service** : nous ne garantissons pas un service ininterrompu ou sans erreur, et nous ne sommes pas responsables des temps d'arrêt ou interruptions de service.
 
-## 11. Disclaimers
+## 11. Exclusions de garantie
 
-- **"As Is" Basis**: Our services are provided on an "as is" and "as available" basis.
-- **No Warranties**: We disclaim all warranties, express or implied, including warranties of merchantability, fitness for a particular purpose, and non-infringement.
+- **Service "en l'état"** : nos services sont fournis "en l'état" et "selon disponibilité".
+- **Aucune garantie** : nous excluons toute garantie, expresse ou implicite, y compris les garanties de qualité marchande, d'adéquation à un usage particulier et de non-contrefaçon.
 
-## 12. Dispute Resolution
+## 12. Résolution des litiges
 
-- **Governing Law**: These Terms are governed by the laws of the State of Nevada, USA.
-- **Venue**: Any disputes arising under or in connection with these Terms shall be resolved through litigation in the courts of Nevada.
+- **Droit applicable** : ces Conditions sont régies par les lois de l'État du Nevada, USA.
+- **Juridiction** : tout litige découlant de ces Conditions ou lié à celles-ci sera résolu devant les tribunaux du Nevada.
 
-## 13. Changes to the Terms
+## 13. Modifications des Conditions
 
-- **Modification of Terms**: We may update these Terms from time to time.
-- **Notification**: Changes will be effective immediately upon posting the updated Terms on this page.
-- **Acceptance of Changes**: Your continued use of the platform after any changes indicates your acceptance of the new Terms.
+- **Modification des Conditions** : nous pouvons mettre à jour ces Conditions de temps à autre.
+- **Notification** : les changements prendront effet immédiatement après publication des Conditions mises à jour sur cette page.
+- **Acceptation des changements** : votre utilisation continue de la plateforme après toute modification vaut acceptation des nouvelles Conditions.
 
 ## 14. Miscellaneous
 
 ### 14.1 Force Majeure
 
-We shall not be liable for any failure or delay in performing our obligations under these Terms due to events beyond our reasonable control, including natural disasters, war, terrorism, riots, embargoes, acts of civil or military authorities, fire, floods, accidents, network infrastructure failures, strikes, or shortages of transportation facilities, fuel, energy, labor, or materials.
+Nous ne serons pas responsables d'un manquement ou d'un retard dans l'exécution de nos obligations au titre de ces Conditions en raison d'événements échappant à notre contrôle raisonnable, notamment catastrophes naturelles, guerre, terrorisme, émeutes, embargos, actes d'autorités civiles ou militaires, incendies, inondations, accidents, défaillances d'infrastructure réseau, grèves ou pénuries de moyens de transport, carburant, énergie, main-d'oeuvre ou matériaux.
 
-### 14.2 Entire Agreement
+### 14.2 Accord complet
 
-These Terms constitute the entire agreement between you and PocketHost regarding your use of our services and supersede any prior agreements.
+Ces Conditions constituent l'intégralité de l'accord entre vous et PocketHost concernant l'utilisation de nos services et remplacent tout accord antérieur.
 
-### 14.3 Severability
+### 14.3 Divisibilité
 
-If any provision of these Terms is found to be unenforceable or invalid, that provision will be limited or eliminated to the minimum extent necessary so that the remaining Terms will remain in full force and effect.
+Si une disposition de ces Conditions est jugée inapplicable ou invalide, elle sera limitée ou supprimée dans la mesure minimale nécessaire afin que les autres dispositions restent pleinement en vigueur.
 
-### 14.4 Assignment
+### 14.4 Cession
 
-You may not assign or transfer your rights or obligations under these Terms without our prior written consent. We may assign our rights and obligations without restriction.
+Vous ne pouvez pas céder ni transférer vos droits ou obligations au titre de ces Conditions sans notre consentement écrit préalable. Nous pouvons céder nos droits et obligations sans restriction.
 
-## 15. Contact Information
+## 15. Contact
 
-If you have any questions or concerns about these Terms, please contact us at:
+Pour toute question ou préoccupation concernant ces Conditions, contactez-nous :
 
-- **Email**: [ben@pockethost.io](mailto:ben@pockethost.io)
-- **Address**: PocketHost, PO Box 871, Reno, NV 89501, USA
+- **Email** : [ben@pockethost.io](mailto:ben@pockethost.io)
+- **Adresse** : PocketHost, PO Box 871, Reno, NV 89501, USA
 
 ---
 
-By using PocketHost services, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.
+En utilisant les services PocketHost, vous reconnaissez avoir lu, compris et accepté d'être lié par ces Conditions d'utilisation.
 
 </div>

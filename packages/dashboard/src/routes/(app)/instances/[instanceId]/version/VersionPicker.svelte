@@ -23,7 +23,7 @@
   }}
   {disabled}
 >
-  <wa-option value="" disabled>Select a version</wa-option>
+  <wa-option value="" disabled>Sélectionnez une version</wa-option>
   {#each versions as version}
     <wa-option value={version}>{version}</wa-option>
   {/each}

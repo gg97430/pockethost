@@ -32,14 +32,14 @@ export const HandleInstanceDelete = (e: core.RequestEvent) => {
 
   const record = $app.findRecordById('instances', id)
   if (!record) {
-    throw new BadRequestError(`Instance ${id} not found.`)
+    throw new BadRequestError(`Instance ${id} introuvable.`)
   }
   if (record.get('uid') !== authRecord.id) {
     throw new BadRequestError(`Not authorized`)
   }
 
   if (record.getString('status').toLowerCase() !== 'idle') {
-    throw new BadRequestError(`Instance must be shut down first.`)
+    throw new BadRequestError(`L'instance doit d'abord être arrêtée.`)
   }
 
   $app.delete(record)

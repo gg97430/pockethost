@@ -1,5 +1,6 @@
 <script lang="ts">
   import { globalInstancesStore, userStore } from '$util/stores'
+  import DashboardMetrics from './DashboardMetrics.svelte'
   import InstanceList from './InstanceList.svelte'
 
   $: instanceCount = Object.values($globalInstancesStore).length
@@ -7,7 +8,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard - PocketHost</title>
+  <title>Dashboard - Gestion PocketBase</title>
 </svelte:head>
 
 <header class="dashboard-head">
@@ -15,9 +16,9 @@
     <h1 class="dashboard-title">Dashboard</h1>
     <p class="dashboard-subtitle">
       {#if instanceCount === 0}
-        Create a PocketBase instance to get started.
+        Créez une instance PocketBase pour commencer.
       {:else}
-        {instanceCount} instance{instanceCount === 1 ? '' : 's'}. Plans will be limited by storage, not instance count.
+        {instanceCount} instance{instanceCount === 1 ? '' : 's'}. Les offres seront limitées par le stockage, pas par le nombre d'instances.
       {/if}
     </p>
   </div>
@@ -25,10 +26,12 @@
   {#if canCreate}
     <wa-button href="/instances/new" variant="brand" class="dashboard-new-btn">
       <wa-icon slot="start" name="plus"></wa-icon>
-      New instance
+      Nouvelle instance
     </wa-button>
   {/if}
 </header>
+
+<DashboardMetrics />
 
 <InstanceList />
 
@@ -46,7 +49,7 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 700;
-    color: #fff;
+    color: var(--app-text-strong);
   }
 
   @media (min-width: 768px) {
@@ -60,7 +63,7 @@
     max-width: 36rem;
     font-size: 0.875rem;
     line-height: 1.45;
-    color: rgb(255 255 255 / 0.45);
+    color: var(--app-text-muted);
   }
 
   .dashboard-new-btn {

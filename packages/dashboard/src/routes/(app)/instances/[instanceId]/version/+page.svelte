@@ -21,11 +21,11 @@
   const confirmVersionChangeMessage = (from: string, to: string) => {
     if (crossesV23Boundary(from, to)) {
       if (minorVersion(to) >= 23) {
-        return `v0.23+ rewrites PocketBase JSVM APIs. Back up first and review any custom pb_hooks before upgrading.\n\nChange version to ${to}?`
+        return `v0.23+ réécrit les API JSVM de PocketBase. Faites d'abord une sauvegarde et vérifiez vos pb_hooks personnalisés avant la mise à niveau.\n\nChanger la version vers ${to} ?`
       }
-      return `Downgrading across the v0.23 boundary is not supported by PocketBase and may break your instance.\n\nChange version to ${to}?`
+      return `Le retour en arrière au-delà de la limite v0.23 n'est pas pris en charge par PocketBase et peut casser votre instance.\n\nChanger la version vers ${to} ?`
     }
-    return `Are you sure you want to change the version to ${to}?`
+    return `Voulez-vous vraiment changer la version vers ${to} ?`
   }
 
   let selectedVersion = version
@@ -56,7 +56,7 @@
           fields: { version: selectedVersion },
         })
         .then(() => {
-          successMessage = 'Version updated successfully'
+          successMessage = 'Version mise à jour'
         })
         .catch((error) => {
           errorMessage = error.message
@@ -70,9 +70,9 @@
 </script>
 
 <FeatureTab
-  title="Version Change"
+  title="Changement de version"
   documentation="/docs/versions"
-  powerOffAction="change the version"
+  powerOffAction="changer la version"
   bind:errorMessage
   {successMessage}
   successFlash
@@ -82,10 +82,10 @@
       <wa-callout variant="warning" class="wa-callout-padded mb-4">
         <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
         <p>
-          PocketBase <strong>v0.23+</strong> changes the JSVM API. Custom <code>pb_hooks</code> written for v0.22 or
-          earlier may need updates before you upgrade.
+          PocketBase <strong>v0.23+</strong> modifie l'API JSVM. Les <code>pb_hooks</code> personnalisés écrits pour
+          v0.22 ou une version antérieure peuvent nécessiter des mises à jour avant la mise à niveau.
           <a href="https://github.com/pocketbase/pocketbase/releases/tag/v0.23.0" class="text-primary"
-            >Review the v0.23 release notes</a
+            >Consulter les notes de version v0.23</a
           >.
         </p>
       </wa-callout>
@@ -94,15 +94,15 @@
 
   <svelte:fragment slot="summary">
     <p>
-      We recommend you <strong>do a full backup</strong>
-      before making a change. We support the latest patch of
-      <a href="https://github.com/pocketbase/pocketbase/releases" class="text-primary">every minor release</a> of PocketBase.
+      Nous vous recommandons de <strong>faire une sauvegarde complète</strong>
+      avant tout changement. Nous prenons en charge le dernier correctif de
+      <a href="https://github.com/pocketbase/pocketbase/releases" class="text-primary">chaque version mineure</a> de PocketBase.
     </p>
   </svelte:fragment>
 
   <form class="flex change-version-form-container-query gap-4" onsubmit={handleSave}>
     <VersionPicker bind:selectedVersion versions={$versions} disabled={!isFullyOff} />
-    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}>Change Version</wa-button>
+    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}>Changer la version</wa-button>
   </form>
 </FeatureTab>
 

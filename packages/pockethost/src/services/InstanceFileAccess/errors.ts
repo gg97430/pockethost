@@ -1,6 +1,7 @@
 import type { InstanceFields } from '@'
 
-export const INSTANCE_CONTEXT_REQUIRED = 'Change into an instance directory first (e.g. /your-subdomain/pb_public).'
+export const INSTANCE_CONTEXT_REQUIRED =
+  "Placez-vous d'abord dans le dossier d'une instance (ex. /votre-sous-domaine/pb_public)."
 
 export class InstanceVfsUserError extends Error {
   constructor(message: string) {

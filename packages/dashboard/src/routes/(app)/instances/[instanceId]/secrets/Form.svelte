@@ -59,11 +59,11 @@
   }
 </script>
 
-<h3 class="text-xl">Add New Secret</h3>
+<h3 class="text-xl">Ajouter un secret</h3>
 
 <div class="mb-8">
   {#if successfulSave}
-    <AlertBar message="Your new secret has been saved." type="success" />
+    <AlertBar message="Votre nouveau secret a été enregistré." type="success" />
   {/if}
 
   <AlertBar message={errorMessage} type="error" />
@@ -76,13 +76,13 @@
           type="text"
           value={secretKey}
           oninput={(e: Event) => (secretKey = (e.currentTarget as HTMLInputElement).value)}
-          placeholder="Key"
+          placeholder="Clé"
           class={!isKeyValid && secretKey.length > 0 ? 'wa-input-error' : ''}
         ></wa-input>
         {#if !isKeyValid && secretKey.length > 0}
           <div class="mt-1">
             <span class="text-error">
-              All key names must be upper case, alphanumeric, and may include underscore (_).
+              Les noms de clés doivent être en majuscules, alphanumériques, et peuvent inclure un underscore (_).
             </span>
           </div>
         {/if}
@@ -94,13 +94,13 @@
           type="text"
           value={secretValue}
           oninput={(e: Event) => (secretValue = (e.currentTarget as HTMLInputElement).value)}
-          placeholder="Value"
+          placeholder="Valeur"
         ></wa-input>
       </div>
 
       <div class="flex-none text-right w-1/5 md:w-auto">
         <wa-button type="submit" variant="brand" class="px-2.5 md:px-3" disabled={!isFormValid}>
-          Add
+          Ajouter
           <wa-icon slot="end" name="floppy-disk"></wa-icon>
         </wa-button>
       </div>

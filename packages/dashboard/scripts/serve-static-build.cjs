@@ -4,6 +4,7 @@ const { createReadStream } = require('node:fs')
 const fs = require('node:fs/promises')
 const http = require('node:http')
 const https = require('node:https')
+const os = require('node:os')
 const path = require('node:path')
 
 const root = path.resolve(process.argv[2] || 'build')
@@ -67,6 +68,18 @@ const resolveRequest = async (pathname) => {
 
   const fallback = path.join(root, '404.html')
   const stat = await statFile(fallback)
+  const isAppRoute =
+    pathname === '/dashboard' ||
+    pathname.startsWith('/dashboard/') ||
+    pathname === '/instances' ||
+    pathname.startsWith('/instances/') ||
+    pathname === '/account' ||
+    pathname.startsWith('/account/') ||
+    pathname === '/access' ||
+    pathname.startsWith('/access/') ||
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/')
+  if (stat && isAppRoute) return { filePath: fallback, stat, status: 200 }
   if (stat) return { filePath: fallback, stat, status: 404 }
 
   return null
@@ -74,6 +87,63 @@ const resolveRequest = async (pathname) => {
 
 const shouldProxyToMothership = (pathname) => {
   return pathname === '/api' || pathname.startsWith('/api/') || pathname === '/stats.json'
+}
+
+const percent = (used, total) => {
+  if (!total) return 0
+  return Math.round((used / total) * 1000) / 10
+}
+
+const getSystemMetrics = async () => {
+  const diskPath = process.env.SYSTEM_METRICS_PATH || root
+  const disk = await fs.statfs(diskPath)
+  const blockSize = Number(disk.bsize)
+  const totalBytes = Number(disk.blocks) * blockSize
+  const freeBytes = Number(disk.bavail ?? disk.bfree) * blockSize
+  const usedBytes = Math.max(0, totalBytes - freeBytes)
+  const totalMemoryBytes = os.totalmem()
+  const freeMemoryBytes = os.freemem()
+  const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes)
+  const processMemory = process.memoryUsage()
+
+  return {
+    collectedAt: new Date().toISOString(),
+    hostname: os.hostname(),
+    uptimeSeconds: Math.round(os.uptime()),
+    cpu: {
+      count: os.cpus().length,
+      loadAverage: os.loadavg(),
+    },
+    memory: {
+      totalBytes: totalMemoryBytes,
+      freeBytes: freeMemoryBytes,
+      usedBytes: usedMemoryBytes,
+      usedPercent: percent(usedMemoryBytes, totalMemoryBytes),
+    },
+    disk: {
+      path: diskPath,
+      totalBytes,
+      freeBytes,
+      usedBytes,
+      usedPercent: percent(usedBytes, totalBytes),
+    },
+    process: {
+      uptimeSeconds: Math.round(process.uptime()),
+      rssBytes: processMemory.rss,
+      heapUsedBytes: processMemory.heapUsed,
+      heapTotalBytes: processMemory.heapTotal,
+    },
+  }
+}
+
+const sendJson = (res, status, data) => {
+  const body = JSON.stringify(data)
+  res.writeHead(status, {
+    'cache-control': 'no-cache, no-store, must-revalidate',
+    'content-length': Buffer.byteLength(body),
+    'content-type': 'application/json; charset=utf-8',
+  })
+  res.end(body)
 }
 
 const proxyToMothership = (req, res) => {
@@ -117,6 +187,11 @@ const proxyToMothership = (req, res) => {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || `${host}:${port}`}`)
+
+    if (url.pathname === '/api/internal/system-metrics') {
+      sendJson(res, 200, await getSystemMetrics())
+      return
+    }
 
     if (shouldProxyToMothership(url.pathname)) {
       proxyToMothership(req, res)

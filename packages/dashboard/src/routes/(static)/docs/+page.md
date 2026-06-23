@@ -1,49 +1,49 @@
-# Welcome to PocketHost
+# Bienvenue sur PocketHost
 
-PocketHost is a hosting platform tailored for developers, indie hackers, makers, and small businesses using [PocketBase](https://pocketbase.io/) for their web and mobile applications. It offers a streamlined, efficient, and scalable solution to deploy and manage PocketBase instances without the complexities of setting up and maintaining your own servers.
+PocketHost est une plateforme d'hébergement pensée pour les développeurs, indie hackers, makers et petites entreprises qui utilisent [PocketBase](https://pocketbase.io/) pour leurs applications web et mobiles. Elle fournit une solution simple, efficace et scalable pour déployer et gérer des instances PocketBase sans la complexité d'installation et de maintenance de vos propres serveurs.
 
-Founded by [Ben Allfree](https://github.com/benallfree) in 2021, PocketHost was born out of the need for a simpler way to handle PocketBase deployments. Tired of the repetitive process of setting up PocketBase every time he started a new project, Ben created PocketHost to save time and effort—not just for himself but for the entire developer community.
+Fondé par [Ben Allfree](https://github.com/benallfree) en 2021, PocketHost est né du besoin d'une manière plus simple de gérer les déploiements PocketBase. Fatigué de répéter la même configuration PocketBase à chaque nouveau projet, Ben a créé PocketHost pour gagner du temps et de l'énergie, pour lui-même comme pour toute la communauté de développeurs.
 
-## **Simplicity and Ease of Use**
+## **Simplicité et facilité d'utilisation**
 
-- **Quick Deployment**: Launch your PocketBase instances in minutes without dealing with server configurations.
-- **User-Friendly Interface**: Manage your projects effortlessly through an intuitive dashboard.
+- **Déploiement rapide** : lancez vos instances PocketBase en quelques minutes sans gérer de configuration serveur.
+- **Interface simple** : gérez vos projets facilement depuis un dashboard intuitif.
 
-## **Scalability and Performance**
+## **Scalabilité et performances**
 
-- **Dynamic Resource Allocation**: Your application scales automatically based on its needs, ensuring optimal performance.
-- **Docker Containerization**: Each instance runs in an isolated Docker container for enhanced security and efficiency.
-- **High Efficiency**: Our innovative architecture allows thousands of instances to run on a single VPS.
+- **Allocation dynamique des ressources** : votre application s'adapte automatiquement à ses besoins pour garder de bonnes performances.
+- **Conteneurisation Docker** : chaque instance tourne dans un conteneur Docker isolé pour plus de sécurité et d'efficacité.
+- **Haute efficacité** : notre architecture permet d'exécuter des milliers d'instances sur un seul VPS.
 
-## **Cost-Effective Solutions**
+## **Solutions économiques**
 
-- **Flexible Pricing**: Choose from our Starter Pro Tier, Unlimited Pro Tier, or limited-time Lifetime Offers to suit your budget.
-- **Fair Use Policy**: Enjoy generous project limits, storage, bandwidth, and CPU based on fair use.
-- **No Hidden Fees**: Transparent pricing with no unexpected charges.
+- **Tarifs flexibles** : choisissez l'offre Starter Pro, Unlimited Pro ou les offres à vie limitées selon votre budget.
+- **Politique d'utilisation raisonnable** : profitez de limites généreuses pour les projets, le stockage, la bande passante et le CPU.
+- **Aucun frais caché** : une tarification transparente, sans surprise.
 
-## **Community and Support**
+## **Communauté et support**
 
-- **Growing User Base**: Join over 10,000 users who trust PocketHost for their hosting needs.
-- **Open Source Commitment**: PocketHost is completely open-source under the MIT License, encouraging community contributions and transparency.
-- **Special Acknowledgments**: Benefit from the support and advice of industry experts like Gani at [PocketBase](https://pocketbase.io/).
+- **Base d'utilisateurs en croissance** : rejoignez plus de 10 000 utilisateurs qui font confiance à PocketHost.
+- **Engagement open source** : PocketHost est entièrement open source sous licence MIT, avec contributions communautaires et transparence.
+- **Remerciements particuliers** : bénéficiez du soutien et des conseils d'experts comme Gani chez [PocketBase](https://pocketbase.io/).
 
-## **Security and Reliability**
+## **Sécurité et fiabilité**
 
-- **Isolated Environments**: Docker containerization ensures your data is isolated and secure.
-- **Innovative Technology**: Leveraging cutting-edge solutions for resource management and scalability.
-- **Regular Updates**: Continuous improvements and updates to keep your applications running smoothly.
+- **Environnements isolés** : la conteneurisation Docker garde vos données isolées et sécurisées.
+- **Technologie moderne** : des solutions avancées pour la gestion des ressources et la scalabilité.
+- **Mises à jour régulières** : des améliorations continues pour garder vos applications en bon état.
 
-## Who Should Use PocketHost?
+## Pour qui ?
 
-- **Indie Hackers and Makers**: Perfect for those who want to focus on building and innovating without the hassle of server management.
-- **Small Businesses**: An affordable solution that scales with your business needs.
-- **Developers**: Ideal for deploying prototypes, proofs of concept, or full-scale applications quickly.
-- **Educators and Students**: A great tool for learning and teaching web and mobile application development.
+- **Indie hackers et makers** : parfait pour se concentrer sur la création sans gérer des serveurs.
+- **Petites entreprises** : une solution abordable qui grandit avec vos besoins.
+- **Développeurs** : idéal pour déployer rapidement prototypes, preuves de concept ou applications complètes.
+- **Enseignants et étudiants** : un bon outil pour apprendre et enseigner le développement web et mobile.
 
-## Key Features
+## Fonctionnalités clés
 
-- **Generous Project Limits**: Create and manage multiple projects within our fair use guidelines.
-- **Fair Use Resources**: Generous allocation of storage, bandwidth, and CPU based on fair use.
-- **Flexible Plans**:  Multi-level premium subscriptions and exclusive lifetime offers. (Free trial periods are available)
-- **Easy Integration**: Seamlessly integrate with PocketBase and other tools.
-- **Community Support**: Access to a community of like-minded developers and comprehensive documentation.
+- **Limites généreuses** : créez et gérez plusieurs projets dans le cadre de l'utilisation raisonnable.
+- **Ressources équitables** : stockage, bande passante et CPU généreux selon l'usage.
+- **Offres flexibles** : abonnements premium à plusieurs niveaux et offres à vie exclusives. Des périodes d'essai gratuites sont disponibles.
+- **Intégration facile** : intégration fluide avec PocketBase et d'autres outils.
+- **Support communautaire** : accès à une communauté de développeurs et à une documentation complète.

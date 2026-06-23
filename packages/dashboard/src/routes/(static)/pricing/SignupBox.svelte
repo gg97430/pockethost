@@ -3,7 +3,7 @@
   import { FLOUNDER_CHECKOUT_VARIANT_ID, lemonsqueezyCheckoutUrl } from '$util/lemonsqueezy'
 
   export let selected: boolean = false
-  export let buttonText: string = 'Subscribe Now'
+  export let buttonText: string = "S'abonner"
   export let price: string
   export let priceDetail: string = ''
   export let bestDeal: boolean = false
@@ -23,7 +23,7 @@
   {#if badgeText}
     <div class="pricing-plan-badge" class:pricing-plan-badge--urgent={badgeUrgent}>{badgeText}</div>
   {:else if bestDeal}
-    <div class="pricing-plan-badge">HOT</div>
+    <div class="pricing-plan-badge">POPULAIRE</div>
   {/if}
 
   <div class="pricing-plan-header">
@@ -61,7 +61,7 @@
       <button
         type="button"
         class="pricing-plan-cta {selected ? 'pricing-plan-cta--featured wiggle' : ''}"
-        onclick={() => alert('You must be logged in to subscribe')}
+        onclick={() => alert('Vous devez être connecté pour vous abonner')}
       >
         {buttonText}
       </button>

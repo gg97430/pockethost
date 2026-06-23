@@ -72,6 +72,24 @@ routerAdd("PUT", "/api/instance/{id}", (e) => {
 routerAdd("POST", "/api/instance", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceCreate(e);
 }, $apis.requireAuth());
+routerAdd("POST", "/api/instance/{id}/duplicate", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceDuplicate(e);
+}, $apis.requireAuth());
+routerAdd("POST", "/api/instance/{id}/backups", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceBackupCreate(e);
+}, $apis.requireAuth());
+routerAdd("GET", "/api/instance/{id}/backups", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceBackupsList(e);
+}, $apis.requireAuth());
+routerAdd("GET", "/api/instance/{id}/backups/{backupId}/download", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceBackupDownload(e);
+}, $apis.requireAuth());
+routerAdd("DELETE", "/api/instance/{id}/backups/{backupId}", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceBackupDelete(e);
+}, $apis.requireAuth());
+routerAdd("POST", "/api/instance/{id}/backups/{backupId}/restore", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceBackupRestore(e);
+}, $apis.requireAuth());
 routerAdd("DELETE", "/api/instance/{id}", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceDelete(e);
 }, $apis.requireAuth());
@@ -144,6 +162,21 @@ onRecordUpdate((e) => {
 	e.next();
 	require(`${__hooks}/mothership`).HandleUserWelcomeMessage(e);
 }, "users");
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/hooks.ts
+routerAdd("GET", "/api/admin/overview", (e) => {
+	return require(`${__hooks}/mothership`).HandleOperatorAdminOverview(e);
+}, $apis.requireAuth());
+routerAdd("POST", "/api/admin/users", (e) => {
+	return require(`${__hooks}/mothership`).HandleOperatorAdminCreateUser(e);
+}, $apis.requireAuth());
+routerAdd("PATCH", "/api/admin/users/{id}", (e) => {
+	return require(`${__hooks}/mothership`).HandleOperatorAdminUpdateUser(e);
+}, $apis.requireAuth());
+routerAdd("PUT", "/api/admin/settings", (e) => {
+	return require(`${__hooks}/mothership`).HandleOperatorAdminUpdateSettings(e);
+}, $apis.requireAuth());
 
 //#endregion
 //#region src/lib/handlers/outpost/hooks.ts

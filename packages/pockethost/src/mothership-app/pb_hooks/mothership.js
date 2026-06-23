@@ -3308,6 +3308,7 @@ const HandleSignupCheck = (e) => {
 
 //#endregion
 //#region src/lib/handlers/signup/api/HandleSignupConfirm.ts
+const autoVerifySignups = () => `${process.env.PH_AUTO_VERIFY_SIGNUPS || ""}`.toLowerCase() === "true";
 const suggestUniqueAuthRecordUsername = (collection, baseUsername) => {
 	let username = baseUsername;
 	for (let i = 0; i < 10; i++) {
@@ -3352,6 +3353,7 @@ const HandleSignupConfirm = (e) => {
 			user.set("email", email);
 			user.set("subscription", "free");
 			user.set("subscription_quantity", 0);
+			if (autoVerifySignups()) user.set("verified", true);
 			user.setPassword(password);
 			txApp.save(user);
 		} catch (e) {
@@ -3372,7 +3374,7 @@ const HandleSignupConfirm = (e) => {
 			if (`${e}`.match(/ UNIQUE /)) throw error(`instanceName`, `exists`, `Instance name was taken, sorry about that. Try another.`);
 			throw error(`instanceName`, `fail`, `Could not create instance: ${e}`);
 		}
-		$mails.sendRecordVerification($app, user);
+		if (!autoVerifySignups()) $mails.sendRecordVerification($app, user);
 	});
 	return e.json(200, { status: "ok" });
 };

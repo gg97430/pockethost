@@ -1,6 +1,8 @@
 import { listVersions } from '$util/versions'
 import { error } from '../error'
 
+const autoVerifySignups = () => `${process.env.PH_AUTO_VERIFY_SIGNUPS || ''}`.toLowerCase() === 'true'
+
 const suggestUniqueAuthRecordUsername = (collection: string, baseUsername: string) => {
   let username = baseUsername
   for (let i = 0; i < 10; i++) {
@@ -70,6 +72,9 @@ export const HandleSignupConfirm = (e: core.RequestEvent) => {
       user.set('email', email)
       user.set('subscription', 'free')
       user.set('subscription_quantity', 0)
+      if (autoVerifySignups()) {
+        user.set('verified', true)
+      }
       user.setPassword(password)
       txApp.save(user)
     } catch (e) {
@@ -94,7 +99,9 @@ export const HandleSignupConfirm = (e: core.RequestEvent) => {
       throw error(`instanceName`, `fail`, `Could not create instance: ${e}`)
     }
 
-    $mails.sendRecordVerification($app, user)
+    if (!autoVerifySignups()) {
+      $mails.sendRecordVerification($app, user)
+    }
   })
 
   return e.json(200, { status: 'ok' })

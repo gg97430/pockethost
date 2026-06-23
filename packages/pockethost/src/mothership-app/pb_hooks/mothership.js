@@ -586,6 +586,15 @@ const serializeBackup$1 = (backup) => ({
 	created: backup.getString("created"),
 	updated: backup.getString("updated")
 });
+const sortBackupsNewestFirst$1 = (backups) => {
+	return backups.sort((a, b) => {
+		const aValue = a.getString("updated") || a.getString("created") || a.getString("filename") || a.id;
+		return (b.getString("updated") || b.getString("created") || b.getString("filename") || b.id).localeCompare(aValue);
+	});
+};
+const findInstanceBackups$1 = (instanceId) => {
+	return sortBackupsNewestFirst$1($app.findRecordsByFilter("instance_backups", "instance = {:instance}", "", 100, 0, { instance: instanceId }).filter((record) => !!record));
+};
 const getBackupRecord = (instance, backupId) => {
 	assertSafeBackupId(backupId);
 	const backup = $app.findRecordById("instance_backups", backupId);
@@ -881,7 +890,7 @@ const HandleInstanceBackupsList = (e) => {
 	const authRecord = requireAuthRecord$1(e.auth);
 	const instance = findInstance$1(pathValue$1(e, "id"));
 	assertInstanceAccess$1(instance, authRecord);
-	const backups = $app.findRecordsByFilter("instance_backups", "instance = {:instance}", "-created", 100, 0, { instance: instance.id }).filter((record) => !!record).map(serializeBackup$1);
+	const backups = findInstanceBackups$1(instance.id).map(serializeBackup$1);
 	return e.json(200, { backups });
 };
 const HandleInstanceBackupDownload = (e) => {
@@ -1120,11 +1129,20 @@ const getDirectorySizeBytes = (path) => {
 		return null;
 	}
 };
+const sortBackupsNewestFirst = (backups) => {
+	return backups.sort((a, b) => {
+		const aValue = a.getString("updated") || a.getString("created") || a.getString("filename") || a.id;
+		return (b.getString("updated") || b.getString("created") || b.getString("filename") || b.id).localeCompare(aValue);
+	});
+};
+const findInstanceBackups = (instanceId) => {
+	return sortBackupsNewestFirst($app.findRecordsByFilter("instance_backups", "instance = {:instance}", "", 100, 0, { instance: instanceId }).filter((record) => !!record));
+};
 const HandleInstanceOverview = (e) => {
 	const authRecord = requireAuthRecord(e.auth);
 	const instance = findInstance(pathValue(e, "id"));
 	assertInstanceAccess(instance, authRecord);
-	const backups = $app.findRecordsByFilter("instance_backups", "instance = {:instance}", "-created", 100, 0, { instance: instance.id }).filter((record) => !!record).map(serializeBackup);
+	const backups = findInstanceBackups(instance.id).map(serializeBackup);
 	const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0);
 	return e.json(200, {
 		instance,

@@ -5,6 +5,10 @@ module.exports = {
       script: 'pnpm prod:cli firewall serve',
     },
     {
+      name: `dashboard`,
+      script: 'cd packages/dashboard && HOST=127.0.0.1 PORT=5174 node scripts/serve-static-build.cjs',
+    },
+    {
       name: `edge-daemon`,
       script: 'pnpm prod:cli edge daemon serve',
       cron_restart: '0 0 * * *',

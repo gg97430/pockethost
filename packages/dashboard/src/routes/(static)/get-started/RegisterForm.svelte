@@ -1,5 +1,6 @@
 <script lang="ts">
   import AlertBar from '$components/AlertBar.svelte'
+  import { PUBLIC_APEX_DOMAIN } from '$lib/appEnv'
   import { client } from '$src/pocketbase-client'
   import { handleInstanceGeneratorWidget } from '$util/database'
   import { writable } from 'svelte/store'
@@ -125,9 +126,9 @@
           {:else if $instanceInfo.fetching}
             Verifying...
           {:else if $instanceInfo.available}
-            <span class="text-success"> https://{$instanceInfo.name}.pockethost.io ✔︎</span>
+            <span class="text-success"> https://{$instanceInfo.name}.{PUBLIC_APEX_DOMAIN} ✔︎</span>
           {:else if !$instanceInfo.available}
-            <span class="text-error"> https://{$instanceInfo.name}.pockethost.io ❌</span>
+            <span class="text-error"> https://{$instanceInfo.name}.{PUBLIC_APEX_DOMAIN} ❌</span>
           {/if}
         </div>
       </div>

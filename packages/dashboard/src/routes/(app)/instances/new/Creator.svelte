@@ -1,6 +1,7 @@
 <script lang="ts">
   import Card from '$components/cards/Card.svelte'
   import CardHeader from '$components/cards/CardHeader.svelte'
+  import { PUBLIC_APEX_DOMAIN } from '$lib/appEnv'
   import { client } from '$src/pocketbase-client'
   import { handleCreateNewInstance } from '$util/database'
   import { writable } from 'svelte/store'
@@ -107,9 +108,9 @@
       {#if $instanceInfo.fetching}
         Verifying...
       {:else if $instanceInfo.available}
-        <span class="text-success"> https://{$instanceInfo.name}.pockethost.io ✔︎</span>
+        <span class="text-success"> https://{$instanceInfo.name}.{PUBLIC_APEX_DOMAIN} ✔︎</span>
       {:else}
-        <span class="text-error"> https://{$instanceInfo.name}.pockethost.io ❌</span>
+        <span class="text-error"> https://{$instanceInfo.name}.{PUBLIC_APEX_DOMAIN} ❌</span>
       {/if}
     </div>
 

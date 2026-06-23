@@ -1,97 +1,82 @@
 /// <reference path="../src/types/types.d.ts" />
 migrate(
-  (db) => {
+  (app) => {
     const collection = new Collection({
       id: 'n4sshkeys9v1k2m',
-      created: '2026-06-13 12:00:00.000Z',
-      updated: '2026-06-13 12:00:00.000Z',
       name: 'ssh_keys',
       type: 'base',
       system: false,
-      schema: [
+      fields: [
         {
-          system: false,
           id: 'skuser01',
           name: 'user',
           type: 'relation',
+          system: false,
+          hidden: false,
           required: true,
           presentable: false,
-          unique: false,
-          options: {
-            collectionId: 'systemprofiles0',
-            cascadeDelete: true,
-            minSelect: null,
-            maxSelect: 1,
-            displayFields: ['email'],
-          },
+          collectionId: 'systemprofiles0',
+          cascadeDelete: true,
+          minSelect: 0,
+          maxSelect: 1,
         },
         {
-          system: false,
           id: 'sklabel1',
           name: 'label',
           type: 'text',
+          system: false,
+          hidden: false,
           required: true,
           presentable: true,
-          unique: false,
-          options: {
-            min: 1,
-            max: 100,
-            pattern: '',
-          },
+          min: 1,
+          max: 100,
+          pattern: '',
         },
         {
-          system: false,
           id: 'skpubkey',
           name: 'public_key',
           type: 'text',
+          system: false,
+          hidden: false,
           required: true,
           presentable: false,
-          unique: false,
-          options: {
-            min: 40,
-            max: 500,
-            pattern: '^ssh-ed25519 ',
-          },
+          min: 40,
+          max: 500,
+          pattern: '^ssh-ed25519 ',
         },
         {
-          system: false,
           id: 'skfprint',
           name: 'fingerprint',
           type: 'text',
+          system: false,
+          hidden: false,
           required: true,
           presentable: false,
-          unique: false,
-          options: {
-            min: 10,
-            max: 100,
-            pattern: '^SHA256:',
-          },
+          min: 10,
+          max: 100,
+          pattern: '^SHA256:',
         },
         {
-          system: false,
           id: 'skallins',
           name: 'all_instances',
           type: 'bool',
+          system: false,
+          hidden: false,
           required: false,
           presentable: false,
-          unique: false,
-          options: {},
         },
         {
-          system: false,
           id: 'skinstds',
           name: 'instances',
           type: 'relation',
+          system: false,
+          hidden: false,
           required: false,
           presentable: false,
-          unique: false,
-          options: {
-            collectionId: 'etae8tuiaxl6xfv',
-            cascadeDelete: false,
-            minSelect: null,
-            maxSelect: null,
-            displayFields: ['subdomain'],
-          },
+          collectionId: 'etae8tuiaxl6xfv',
+          cascadeDelete: false,
+          minSelect: 0,
+          maxSelect: 0,
         },
       ],
       indexes: [
@@ -104,15 +89,13 @@ migrate(
       createRule: '@request.auth.id != "" && user = @request.auth.id',
       updateRule: 'user = @request.auth.id',
       deleteRule: 'user = @request.auth.id',
-      options: {},
     })
 
-    return Dao(db).saveCollection(collection)
+    return app.save(collection)
   },
-  (db) => {
-    const dao = new Dao(db)
-    const collection = dao.findCollectionByNameOrId('n4sshkeys9v1k2m')
+  (app) => {
+    const collection = app.findCollectionByNameOrId('n4sshkeys9v1k2m')
 
-    return dao.deleteCollection(collection)
+    return app.delete(collection)
   }
 )

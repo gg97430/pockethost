@@ -1,7 +1,14 @@
 import { PUBLIC_MOTHERSHIP_URL } from '$lib/appEnv'
 import { createPocketbaseClient, type PocketbaseClient } from './PocketbaseClient'
 
-export type { InstanceBackup, OperatorAdminOverview, OperatorSettings, OperatorUser } from './PocketbaseClient'
+export type {
+  InstanceBackup,
+  InstanceOverview,
+  InstanceOverviewBackup,
+  OperatorAdminOverview,
+  OperatorSettings,
+  OperatorUser,
+} from './PocketbaseClient'
 
 export const client = (() => {
   let clientInstance: PocketbaseClient | undefined

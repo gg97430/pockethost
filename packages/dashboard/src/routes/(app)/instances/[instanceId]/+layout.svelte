@@ -87,6 +87,25 @@
           items: [
             { href: base, label: "Vue d'ensemble", icon: 'gauge-high', isActive: isOverviewActive },
             {
+              href: `${base}/backups`,
+              label: 'Sauvegardes',
+              icon: 'box-archive',
+              isActive: sectionActive('backups'),
+            },
+            { href: `${base}/logs`, label: 'Logs', icon: 'scroll', isActive: sectionActive('logs') },
+            { href: `${base}/ftp`, label: 'SFTP', icon: 'folder-open', isActive: sectionActive('ftp') },
+            {
+              href: INSTANCE_ADMIN_URL($instance),
+              label: 'Administration',
+              imageSrc: '/images/pocketbase-logo.svg',
+              external: true,
+            },
+          ],
+        },
+        {
+          title: 'Configuration',
+          items: [
+            {
               href: `${base}/secrets`,
               label: 'Secrets',
               icon: 'lock',
@@ -98,37 +117,23 @@
               icon: 'clock',
               isActive: sectionActive('webhooks'),
             },
-            { href: `${base}/logs`, label: 'Logs', icon: 'scroll', isActive: sectionActive('logs') },
-            { href: `${base}/ftp`, label: 'SFTP', icon: 'folder-open', isActive: sectionActive('ftp') },
-            {
-              href: `${base}/backups`,
-              label: 'Sauvegardes',
-              icon: 'box-archive',
-              isActive: sectionActive('backups'),
-            },
-            {
-              href: INSTANCE_ADMIN_URL($instance),
-              label: 'Administration',
-              imageSrc: '/images/pocketbase-logo.svg',
-              external: true,
-            },
-          ],
-        },
-        {
-          title: 'Avancé',
-          items: [
-            {
-              href: `${base}/version`,
-              label: 'Version',
-              icon: 'code-branch',
-              isActive: sectionActive('version'),
-            },
             {
               href: `${base}/domain`,
               label: 'Domaine personnalisé',
               icon: 'globe',
               isActive: sectionActive('domain'),
             },
+            {
+              href: `${base}/version`,
+              label: 'Version',
+              icon: 'code-branch',
+              isActive: sectionActive('version'),
+            },
+          ],
+        },
+        {
+          title: 'Maintenance',
+          items: [
             {
               href: `${base}/admin-sync`,
               label: 'Synchro admin',

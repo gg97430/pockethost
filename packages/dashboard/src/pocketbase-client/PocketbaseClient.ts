@@ -97,6 +97,37 @@ export type InstanceBackup = {
   updated: string
 }
 
+export type InstanceOverviewBackup = Pick<
+  InstanceBackup,
+  | 'id'
+  | 'kind'
+  | 'status'
+  | 'filename'
+  | 'remoteKey'
+  | 'sizeBytes'
+  | 'compressedBytes'
+  | 'error'
+  | 'remoteError'
+  | 'created'
+  | 'updated'
+>
+
+export type InstanceOverview = {
+  instance: InstanceFields
+  backups: {
+    count: number
+    readyCount: number
+    runningCount: number
+    failedCount: number
+    totalCompressedBytes: number
+    latest: InstanceOverviewBackup | null
+  }
+  storage: {
+    instanceBytes: number | null
+  }
+  collectedAt: string
+}
+
 export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const { url } = config
 
@@ -209,6 +240,11 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const duplicateInstance = (id: InstanceId) =>
     client.send<{ instance: InstanceFields }>(`/api/instance/${id}/duplicate`, {
       method: 'POST',
+    })
+
+  const getInstanceOverview = (id: InstanceId) =>
+    client.send<InstanceOverview>(`/api/instance/${id}/overview`, {
+      method: 'GET',
     })
 
   const createInstanceBackup = (id: InstanceId) =>
@@ -469,6 +505,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     updateInstance,
     deleteInstance,
     duplicateInstance,
+    getInstanceOverview,
     createInstanceBackup,
     listInstanceBackups,
     restoreInstanceBackup,

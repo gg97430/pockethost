@@ -3,6 +3,12 @@ import { error } from '../error'
 
 const autoVerifySignups = () => `${process.env.PH_AUTO_VERIFY_SIGNUPS || ''}`.toLowerCase() === 'true'
 
+const signupSubscriptionQuantity = () => {
+  const value = Number(process.env.PH_SIGNUP_SUBSCRIPTION_QUANTITY || '')
+  if (Number.isFinite(value) && value > 0) return value
+  return autoVerifySignups() ? 250 : 0
+}
+
 const suggestUniqueAuthRecordUsername = (collection: string, baseUsername: string) => {
   let username = baseUsername
   for (let i = 0; i < 10; i++) {
@@ -71,7 +77,7 @@ export const HandleSignupConfirm = (e: core.RequestEvent) => {
       user.set('username', username)
       user.set('email', email)
       user.set('subscription', 'free')
-      user.set('subscription_quantity', 0)
+      user.set('subscription_quantity', signupSubscriptionQuantity())
       if (autoVerifySignups()) {
         user.set('verified', true)
       }

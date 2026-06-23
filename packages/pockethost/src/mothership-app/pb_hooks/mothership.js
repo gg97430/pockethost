@@ -3309,6 +3309,11 @@ const HandleSignupCheck = (e) => {
 //#endregion
 //#region src/lib/handlers/signup/api/HandleSignupConfirm.ts
 const autoVerifySignups = () => `${process.env.PH_AUTO_VERIFY_SIGNUPS || ""}`.toLowerCase() === "true";
+const signupSubscriptionQuantity = () => {
+	const value = Number(process.env.PH_SIGNUP_SUBSCRIPTION_QUANTITY || "");
+	if (Number.isFinite(value) && value > 0) return value;
+	return autoVerifySignups() ? 250 : 0;
+};
 const suggestUniqueAuthRecordUsername = (collection, baseUsername) => {
 	let username = baseUsername;
 	for (let i = 0; i < 10; i++) {
@@ -3352,7 +3357,7 @@ const HandleSignupConfirm = (e) => {
 			user.set("username", username);
 			user.set("email", email);
 			user.set("subscription", "free");
-			user.set("subscription_quantity", 0);
+			user.set("subscription_quantity", signupSubscriptionQuantity());
 			if (autoVerifySignups()) user.set("verified", true);
 			user.setPassword(password);
 			txApp.save(user);

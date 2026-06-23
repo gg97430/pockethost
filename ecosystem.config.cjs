@@ -6,7 +6,8 @@ module.exports = {
     },
     {
       name: `dashboard`,
-      script: 'cd packages/dashboard && HOST=127.0.0.1 PORT=5174 node scripts/serve-static-build.cjs',
+      script:
+        'cd packages/dashboard && HOST=127.0.0.1 PORT=5174 MOTHERSHIP_PROXY_TARGET=http://127.0.0.1:8091 node scripts/serve-static-build.cjs',
     },
     {
       name: `edge-daemon`,

@@ -3,11 +3,13 @@
 const { createReadStream } = require('node:fs')
 const fs = require('node:fs/promises')
 const http = require('node:http')
+const https = require('node:https')
 const path = require('node:path')
 
 const root = path.resolve(process.argv[2] || 'build')
 const host = process.env.HOST || '127.0.0.1'
 const port = Number(process.env.PORT || '5174')
+const mothershipProxyTarget = process.env.MOTHERSHIP_PROXY_TARGET || process.env.MOTHERSHIP_URL || 'http://127.0.0.1:8091'
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -70,9 +72,57 @@ const resolveRequest = async (pathname) => {
   return null
 }
 
+const shouldProxyToMothership = (pathname) => {
+  return pathname === '/api' || pathname.startsWith('/api/') || pathname === '/stats.json'
+}
+
+const proxyToMothership = (req, res) => {
+  const target = new URL(req.url || '/', mothershipProxyTarget)
+  const transport = target.protocol === 'https:' ? https : http
+  const headers = {
+    ...req.headers,
+    host: target.host,
+    'x-forwarded-host': req.headers.host || '',
+    'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https',
+  }
+
+  const proxyReq = transport.request(
+    {
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port,
+      method: req.method,
+      path: `${target.pathname}${target.search}`,
+      headers,
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+      proxyRes.pipe(res)
+    }
+  )
+
+  proxyReq.on('error', (error) => {
+    if (res.headersSent) {
+      res.destroy(error)
+      return
+    }
+
+    res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end(error instanceof Error ? error.message : String(error))
+  })
+
+  req.pipe(proxyReq)
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || `${host}:${port}`}`)
+
+    if (shouldProxyToMothership(url.pathname)) {
+      proxyToMothership(req, res)
+      return
+    }
+
     const resolved = await resolveRequest(url.pathname)
 
     if (!resolved) {

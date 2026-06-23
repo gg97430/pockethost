@@ -435,10 +435,20 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
 
     const controller = new AbortController()
     const signal = controller.signal
-    const continuallyFetchFromEventSource = () => {
-      const url = INSTANCE_URL(instance, `logs`)
+    let stopped = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
-      fetchEventSource(url, {
+    function scheduleReconnect() {
+      if (stopped) return
+      reconnectTimer = setTimeout(continuallyFetchFromEventSource, 1000)
+    }
+
+    function continuallyFetchFromEventSource() {
+      if (stopped) return
+
+      const streamUrl = INSTANCE_URL(instance, `logs`)
+
+      void fetchEventSource(streamUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -462,17 +472,23 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
           }
         },
         onerror: (e) => {
-          console.error(`Log stream error (${url}):`, e)
+          if (!stopped) console.error(`Log stream error (${streamUrl}):`, e)
         },
         onclose: () => {
-          setTimeout(continuallyFetchFromEventSource, 100)
+          scheduleReconnect()
         },
         signal,
+      }).catch((error) => {
+        if (stopped || signal.aborted) return
+        console.error(`Log stream failed (${streamUrl}):`, error)
+        scheduleReconnect()
       })
     }
     continuallyFetchFromEventSource()
 
     return () => {
+      stopped = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       controller.abort()
     }
   }

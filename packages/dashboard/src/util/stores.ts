@@ -37,6 +37,12 @@ export const globalInstancesStore = writable<{
 }>({})
 export const globalInstancesStoreReady = writable(false)
 
+let initialized = false
+
+const debugLog = (...args: unknown[]) => {
+  if (PUBLIC_DEBUG) console.log(...args)
+}
+
 export const upsertGlobalInstance = (instance: InstanceFields) => {
   globalInstancesStore.update((instances) => ({
     ...instances,
@@ -59,11 +65,19 @@ async function fetchVersions(): Promise<string[]> {
 }
 
 export const init = () => {
+  if (initialized) return
+  initialized = true
+
   const periodicallyFetchVersions = () => {
     fetchVersions()
       .then((versionList) => {
         versions.set(versionList)
-        console.log('Fetched versions', versionList)
+        isMothershipReachable.set(true)
+        debugLog('Fetched versions', versionList)
+      })
+      .catch((error) => {
+        console.error('Failed to fetch versions', error)
+        isMothershipReachable.set(false)
       })
       .finally(() => {
         setTimeout(periodicallyFetchVersions, 1000 * 60 * 5)
@@ -74,7 +88,7 @@ export const init = () => {
 
   onAuthChange((authStoreProps) => {
     const isLoggedIn = authStoreProps.isValid
-    console.log(`onAuthChange update`, { isLoggedIn, authStoreProps })
+    debugLog(`onAuthChange update`, { isLoggedIn, authStoreProps })
     const user = authStoreProps.model as unknown as UserFields | null | undefined
     userStore.set(isLoggedIn && user ? user : undefined)
     isAuthStateInitialized.set(true)
@@ -82,7 +96,7 @@ export const init = () => {
   })
 
   userStore.subscribe((user) => {
-    console.log(`userStore.subscribe update`, { user })
+    debugLog(`userStore.subscribe update`, { user })
     const isPaid = [SubscriptionType.Founder, SubscriptionType.Premium, SubscriptionType.Flounder].includes(
       user?.subscription || SubscriptionType.Free
     )
@@ -101,7 +115,7 @@ export const init = () => {
     client()
       .client.collection('instances')
       .subscribe<InstanceFields>('*', (data) => {
-        console.log('Instance subscribe update', data)
+        debugLog('Instance subscribe update', data)
         if (data.action === 'delete') {
           globalInstancesStore.update((instances) => {
             const { [data.record.id]: _, ...rest } = instances
@@ -122,7 +136,7 @@ export const init = () => {
   }
 
   isUserLoggedIn.subscribe(async (isLoggedIn) => {
-    console.log(`isUserLoggedIn.subscribe update`, { isLoggedIn })
+    debugLog(`isUserLoggedIn.subscribe update`, { isLoggedIn })
     if (!isLoggedIn) {
       userStore.set(undefined)
       globalInstancesStore.set({})
@@ -143,10 +157,10 @@ export const init = () => {
 
     const { getAllInstancesById } = client()
 
-    console.log('Getting all instances by ID')
+    debugLog('Getting all instances by ID')
     try {
       const instances = await getAllInstancesById()
-      console.log('Instances', instances)
+      debugLog('Instances', instances)
       globalInstancesStore.set(instances)
     } catch (e) {
       console.error('Failed to fetch instances', e)
@@ -164,17 +178,17 @@ const tryUserSubscribe = (() => {
     clearTimeout(tid)
     await unsub?.()
     if (!id) return
-    console.log('Subscribing to user', id)
+    debugLog('Subscribing to user', id)
     client()
       .client.collection('users')
       .subscribe<UserFields>(id, (data) => {
-        console.log('User subscribed update', data)
+        debugLog('User subscribed update', data)
         client().client.collection('users').authRefresh().catch(console.error)
       })
       .then((u) => {
-        console.log('Subscribed to user', id)
+        debugLog('Subscribed to user', id)
         unsub = async () => {
-          console.log('Unsubscribing from user', id)
+          debugLog('Unsubscribing from user', id)
           await u()
           unsub = undefined
         }

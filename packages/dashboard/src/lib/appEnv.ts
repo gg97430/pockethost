@@ -16,8 +16,8 @@ export const PUBLIC_HTTP_PROTOCOL = import.meta.env.PUBLIC_HTTP_PROTOCOL || `htt
 // The complete URL to the mothership
 export const PUBLIC_MOTHERSHIP_URL = import.meta.env.PUBLIC_MOTHERSHIP_URL || PUBLIC_APP_URL
 
-// Whether we are in debugging mode - default TRUE
-export const PUBLIC_DEBUG = parseBoolean(import.meta.env.PUBLIC_DEBUG || 'true')
+// Whether browser debug logs are enabled.
+export const PUBLIC_DEBUG = parseBoolean(import.meta.env.PUBLIC_DEBUG || 'false')
 
 const mkPath = (...paths: string[]) => {
   return paths.filter((v) => !!v).join('/')

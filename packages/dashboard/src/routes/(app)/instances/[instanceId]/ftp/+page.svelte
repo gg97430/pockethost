@@ -3,11 +3,12 @@
   import FeatureTab from '$components/FeatureTab.svelte'
   import SshKeyAddForm from '$components/SshKeyAddForm.svelte'
   import { sshKeysForInstance } from '$lib/ssh/instanceAccess'
+  import { listSshKeys } from '$lib/ssh/listSshKeys'
   import { sshKeyScopeLabel } from '$lib/ssh/sshKeyScopeLabel'
   import { FTP_HOST, SFTP_COMMAND, SFTP_PORT } from '$lib/appEnv'
   import { client } from '$src/pocketbase-client'
   import { globalInstancesStore } from '$util/stores'
-  import { SSH_KEY_COLLECTION, type SshKeyFields } from 'pockethost/common'
+  import type { SshKeyFields } from 'pockethost/common'
   import { instance } from '../store'
   import { bash } from 'svelte-highlight/languages'
   import { onMount } from 'svelte'
@@ -31,7 +32,7 @@
     loading = true
     errorMessage = ''
     try {
-      keys = await client().client.collection(SSH_KEY_COLLECTION).getFullList<SshKeyFields>({ sort: '-created' })
+      keys = await listSshKeys()
     } catch (error) {
       errorMessage = `${error}`
     } finally {

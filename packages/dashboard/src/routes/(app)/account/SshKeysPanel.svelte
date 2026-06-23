@@ -1,6 +1,7 @@
 <script lang="ts">
   import FeatureTab from '$components/FeatureTab.svelte'
   import SshKeyAddForm from '$components/SshKeyAddForm.svelte'
+  import { listSshKeys } from '$lib/ssh/listSshKeys'
   import { sshKeyScopeLabel } from '$lib/ssh/sshKeyScopeLabel'
   import { client } from '$src/pocketbase-client'
   import { globalInstancesStore } from '$util/stores'
@@ -17,7 +18,7 @@
     loading = true
     errorMessage = ''
     try {
-      keys = await client().client.collection(SSH_KEY_COLLECTION).getFullList<SshKeyFields>({ sort: '-created' })
+      keys = await listSshKeys()
     } catch (error) {
       errorMessage = `${error}`
     } finally {

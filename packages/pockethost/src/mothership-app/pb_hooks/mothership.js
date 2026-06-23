@@ -1,3 +1,4 @@
+Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 
 //#region src/lib/util/appStoreJson.ts
 /** JSON round-trip for $app.store() — Goja objects must not cross goroutines (see PB #7737). */
@@ -73,7 +74,7 @@ const broadcastLiveViewStats = () => {
 		data: JSON.stringify(stats)
 	});
 	const clients = $app.subscriptionsBroker().clients();
-	for (const clientId in clients) if (clients[clientId].hasSubscription(LIVE_VIEW_STATS_TOPIC)) clients[clientId].send(message);
+	for (const clientId in clients) if (clients[clientId].hasSubscription("mothership/live/view-stats")) clients[clientId].send(message);
 };
 const sendLiveViewStatsToClient = (client) => {
 	const stats = getLiveViewStats();
@@ -200,7 +201,7 @@ const broadcastLivePlatformStats = () => {
 		data: JSON.stringify(stats)
 	});
 	const clients = $app.subscriptionsBroker().clients();
-	for (const clientId in clients) if (clients[clientId].hasSubscription(LIVE_PLATFORM_TOPIC)) clients[clientId].send(message);
+	for (const clientId in clients) if (clients[clientId].hasSubscription("mothership/live/platform")) clients[clientId].send(message);
 };
 const sendLivePlatformStatsToClient = (client) => {
 	const stats = getLivePlatformStats();
@@ -265,8 +266,7 @@ const handleLivePlatformUserDelete = (e) => {
 };
 const handleLivePlatformUserUpdate = (e) => {
 	const next = e.record.getBool("verified");
-	const prev = e.record.original().getBool("verified");
-	if (next === prev) return;
+	if (next === e.record.original().getBool("verified")) return;
 	applyVerifiedDelta(next ? 1 : -1, next ? -1 : 1);
 	broadcastLivePlatformStats();
 };
@@ -352,8 +352,7 @@ const parsePocketbaseVersionsValue = (raw) => {
 };
 const readPocketbaseVersions = () => {
 	try {
-		const record = $app.findFirstRecordByData("settings", "name", POCKETBASE_VERSIONS_SETTING);
-		const value = parsePocketbaseVersionsValue(record.getString("value"));
+		const value = parsePocketbaseVersionsValue($app.findFirstRecordByData("settings", "name", POCKETBASE_VERSIONS_SETTING).getString("value"));
 		if (!value?.versions?.length) return [];
 		return value.versions;
 	} catch {
@@ -545,13 +544,12 @@ const runCommand = (name, ...args) => toString($os.cmd(name, ...args).combinedOu
 const sleepOneSecond = () => {
 	$os.cmd("sleep", "1").combinedOutput();
 };
-const errorMessage = (error$1) => {
-	if (error$1 instanceof Error) return error$1.message;
-	return `${error$1}`;
+const errorMessage = (error) => {
+	if (error instanceof Error) return error.message;
+	return `${error}`;
 };
 const slugForFilename = (value) => {
-	const clean = value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
-	return clean.slice(0, 48).replace(/-+$/g, "") || "instance";
+	return value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/g, "") || "instance";
 };
 const timestampForFilename = () => (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const createBackupFilename = (instance, kind) => {
@@ -602,7 +600,7 @@ const assertNoRunningOperation = (instanceId) => {
 	let running = null;
 	try {
 		running = $app.findFirstRecordByFilter("instance_backups", "instance = {:instance} && status = \"running\"", { instance: instanceId });
-	} catch (error$1) {
+	} catch (error) {
 		running = null;
 	}
 	if (running) throw new BadRequestError("Une operation de sauvegarde est deja en cours pour cette instance.");
@@ -651,17 +649,13 @@ const createBackupRecord = (instance, authRecord, kind) => {
 	return backup;
 };
 const sourceSizeBytes = (root) => {
-	const dirs = BACKUP_DIRS.map((dir) => `${root}/${dir}`);
-	const output = runCommand("du", "-sb", ...dirs);
-	return output.split("\n").map((line) => Number(line.trim().split(/\s+/)[0] || 0)).filter((value) => Number.isFinite(value)).reduce((sum, value) => sum + value, 0);
+	return runCommand("du", "-sb", ...BACKUP_DIRS.map((dir) => `${root}/${dir}`)).split("\n").map((line) => Number(line.trim().split(/\s+/)[0] || 0)).filter((value) => Number.isFinite(value)).reduce((sum, value) => sum + value, 0);
 };
 const sha256 = (path) => {
-	const output = runCommand("sha256sum", path);
-	return output.split(/\s+/)[0] || "";
+	return runCommand("sha256sum", path).split(/\s+/)[0] || "";
 };
 const s3Config = () => {
-	const enabled = ($os.getenv("INSTANCE_BACKUP_S3_ENABLED") || "").toLowerCase() === "true";
-	if (!enabled) return null;
+	if (!(($os.getenv("INSTANCE_BACKUP_S3_ENABLED") || "").toLowerCase() === "true")) return null;
 	const endpoint = $os.getenv("INSTANCE_BACKUP_S3_ENDPOINT");
 	const bucket = $os.getenv("INSTANCE_BACKUP_S3_BUCKET");
 	const prefix = ($os.getenv("INSTANCE_BACKUP_S3_PREFIX") || "instances").replace(/^\/+|\/+$/g, "");
@@ -766,14 +760,14 @@ const markBackupReady = (backup, details) => {
 		const remoteKey = uploadBackupToS3(backup.getString("instance"), details.filename, details.localPath);
 		backup.set("remoteKey", remoteKey);
 		backup.set("remoteError", "");
-	} catch (error$1) {
-		backup.set("remoteError", errorMessage(error$1));
+	} catch (error) {
+		backup.set("remoteError", errorMessage(error));
 	}
 	$app.save(backup);
 };
-const markBackupFailed = (backup, error$1) => {
+const markBackupFailed = (backup, error) => {
 	backup.set("status", "failed");
-	backup.set("error", errorMessage(error$1));
+	backup.set("error", errorMessage(error));
 	$app.save(backup);
 };
 const createBackupForInstance = (instance, authRecord, kind, managePower, skipRunningCheck = false) => {
@@ -783,13 +777,11 @@ const createBackupForInstance = (instance, authRecord, kind, managePower, skipRu
 	try {
 		if (managePower) power = stopForFilesystemOperation(instance);
 		else waitUntilIdle(instance.id);
-		const stoppedInstance = findInstance(instance.id);
-		const details = createArchive(stoppedInstance, backup, kind);
-		markBackupReady(backup, details);
+		markBackupReady(backup, createArchive(findInstance(instance.id), backup, kind));
 		return backup;
-	} catch (error$1) {
-		markBackupFailed(backup, error$1);
-		throw error$1;
+	} catch (error) {
+		markBackupFailed(backup, error);
+		throw error;
 	} finally {
 		if (managePower) restartIfNeeded(instance.id, power);
 	}
@@ -800,8 +792,7 @@ const safeTarEntry = (entry) => {
 	return !!normalized && !normalized.startsWith("/") && !normalized.startsWith("../") && !parts.includes("..");
 };
 const validateArchiveListing = (archivePath) => {
-	const output = runCommand("tar", "-tzf", archivePath);
-	const entries = output.split("\n").map((entry) => entry.trim()).filter(Boolean);
+	const entries = runCommand("tar", "-tzf", archivePath).split("\n").map((entry) => entry.trim()).filter(Boolean);
 	if (!entries.length) throw new BadRequestError("Archive vide.");
 	for (const entry of entries) if (!safeTarEntry(entry)) throw new BadRequestError("Archive invalide.");
 };
@@ -832,10 +823,7 @@ const restoreExtractedDirs = (instance, extractDir) => {
 	$os.mkdirAll(rollbackDir, PRIVATE_DIR_MODE);
 	let movedOldDirs = false;
 	try {
-		for (const dir of BACKUP_DIRS) {
-			const source = `${extractDir}/${dir}`;
-			if (!pathExists$1(source)) throw new BadRequestError(`Archive incomplete: ${dir} manquant.`);
-		}
+		for (const dir of BACKUP_DIRS) if (!pathExists$1(`${extractDir}/${dir}`)) throw new BadRequestError(`Archive incomplete: ${dir} manquant.`);
 		for (const dir of BACKUP_DIRS) {
 			const current = `${root}/${dir}`;
 			if (pathExists$1(current)) $os.rename(current, `${rollbackDir}/${dir}`);
@@ -843,7 +831,7 @@ const restoreExtractedDirs = (instance, extractDir) => {
 		movedOldDirs = true;
 		for (const dir of BACKUP_DIRS) $os.rename(`${extractDir}/${dir}`, `${root}/${dir}`);
 		$os.removeAll(rollbackDir);
-	} catch (error$1) {
+	} catch (error) {
 		if (movedOldDirs) for (const dir of BACKUP_DIRS) {
 			try {
 				$os.removeAll(`${root}/${dir}`);
@@ -855,7 +843,7 @@ const restoreExtractedDirs = (instance, extractDir) => {
 		try {
 			$os.removeAll(rollbackDir);
 		} catch {}
-		throw error$1;
+		throw error;
 	}
 };
 const restoreArchive = (instance, backup) => {
@@ -1017,8 +1005,7 @@ const copyInstanceFiles = (sourceId, targetId) => {
 };
 const normalizeBaseSubdomain = (subdomain) => {
 	const clean = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
-	const base = clean.match(/^[a-z]/) ? clean : `base-${clean}`;
-	return base.slice(0, 34).replace(/-+$/g, "") || "base";
+	return (clean.match(/^[a-z]/) ? clean : `base-${clean}`).slice(0, 34).replace(/-+$/g, "") || "base";
 };
 const subdomainExists = (subdomain) => {
 	try {
@@ -1068,14 +1055,14 @@ const HandleInstanceDuplicate = (e) => {
 		$app.save(target);
 		copyInstanceFiles(source.id, target.id);
 		log(`duplicated ${source.id} to ${target.id}`);
-	} catch (error$1) {
+	} catch (error) {
 		try {
 			if (target.id) $app.delete(target);
 		} catch {}
 		try {
 			if (target.id) $os.removeAll(instanceRoot(target.id));
 		} catch {}
-		throw new ApiError(500, `Impossible de dupliquer la base.`, { error: error$1 });
+		throw new ApiError(500, `Impossible de dupliquer la base.`, { error });
 	}
 	return e.json(200, { instance: target });
 };
@@ -1133,8 +1120,8 @@ const callCloudflareAPI = (endpoint, method, body, log) => {
 		const response = $http.send(config);
 		if (log) log(`Cloudflare API response:`, response);
 		return response;
-	} catch (error$1) {
-		if (log) log(`Cloudflare API error:`, error$1);
+	} catch (error) {
+		if (log) log(`Cloudflare API error:`, error);
 		return null;
 	}
 };
@@ -1191,12 +1178,10 @@ const HandleInstanceUpdate = (e) => {
 	const cnameChanged = newCname !== null && oldCname !== newCname;
 	if (cnameChanged && newCname.length > 0) {
 		log(`CNAME changed from "${oldCname}" to "${newCname}" - adding to Cloudflare`);
-		const createResponse = createCloudflareCustomHostname(newCname, log);
-		if (createResponse) log(`Cloudflare API call completed for "${newCname}" - frontend will poll for health`);
+		if (createCloudflareCustomHostname(newCname, log)) log(`Cloudflare API call completed for "${newCname}" - frontend will poll for health`);
 	}
 	const recordAutoVacuum = record.getBool("autoVacuum");
-	const advancedFieldChanging = subdomain !== null && subdomain !== record.getString("subdomain") || version !== null && version !== record.getString("version") || syncAdmin !== null && syncAdmin !== record.getBool("syncAdmin") || autoVacuum !== null && autoVacuum !== recordAutoVacuum || dev !== null && dev !== record.getBool("dev") || cnameChanged;
-	if (advancedFieldChanging) {
+	if (subdomain !== null && subdomain !== record.getString("subdomain") || version !== null && version !== record.getString("version") || syncAdmin !== null && syncAdmin !== record.getBool("syncAdmin") || autoVacuum !== null && autoVacuum !== recordAutoVacuum || dev !== null && dev !== record.getBool("dev") || cnameChanged) {
 		if (record.getBool("power") || record.getString("status").toLowerCase() !== "idle") throw new BadRequestError(`L'instance doit d'abord être éteinte.`);
 	}
 	const sanitized = removeEmptyKeys({
@@ -1228,8 +1213,7 @@ const HandleMigrateCnamesToDomains = (_e) => {
 	const log = mkLog(`bootstrap:migrate-cnames`);
 	log(`Starting cname to domains migration`);
 	try {
-		const domainsCollection = $app.findCollectionByNameOrId("domains");
-		if (!domainsCollection) {
+		if (!$app.findCollectionByNameOrId("domains")) {
 			log(`Domains collection not found, skipping migration`);
 			return;
 		}
@@ -1254,8 +1238,8 @@ const HandleMigrateCnamesToDomains = (_e) => {
 					domainExists = true;
 				} catch (e) {}
 				if (!domainExists) {
-					const domainsCollection$1 = $app.findCollectionByNameOrId("domains");
-					const domainRecord = new Record(domainsCollection$1);
+					const domainsCollection = $app.findCollectionByNameOrId("domains");
+					const domainRecord = new Record(domainsCollection);
 					domainRecord.set("instance", instanceId);
 					domainRecord.set("domain", cname);
 					domainRecord.set("active", instance.getBool("cname_active"));
@@ -1263,8 +1247,8 @@ const HandleMigrateCnamesToDomains = (_e) => {
 					log(`Created domain record for ${cname}`);
 					cnameMigrated++;
 				}
-			} catch (error$1) {
-				log(`Failed to migrate cname for instance ${instance.id}:`, error$1);
+			} catch (error) {
+				log(`Failed to migrate cname for instance ${instance.id}:`, error);
 			}
 		});
 		log(`Phase 1 complete: migrated ${cnameMigrated} cnames to domains collection`);
@@ -1294,13 +1278,13 @@ const HandleMigrateCnamesToDomains = (_e) => {
 					log(`Updated instance ${instanceId}: added ${missingIds.length} domain IDs to domains array`);
 					instancesUpdated++;
 				}
-			} catch (error$1) {
-				log(`Failed to update domains array for instance ${instanceId}:`, error$1);
+			} catch (error) {
+				log(`Failed to update domains array for instance ${instanceId}:`, error);
 			}
 		});
 		log(`Phase 2 complete: updated domains arrays for ${instancesUpdated} instances`);
-	} catch (error$1) {
-		log(`Error migrating cnames: ${error$1}`);
+	} catch (error) {
+		log(`Error migrating cnames: ${error}`);
 	}
 };
 
@@ -1317,12 +1301,11 @@ const HandleMigrateInstanceVersions = (_e) => {
 		const newVersion = (() => {
 			if (v.startsWith(`~`)) {
 				const [major, minor] = v.slice(1).split(".");
-				const newVersion$1 = [
+				return [
 					major,
 					minor,
 					"*"
 				].join(".");
-				return newVersion$1;
 			} else if (v === `^0` || v === `0` || v === "1") return versions[0];
 			return v;
 		})();
@@ -1351,8 +1334,7 @@ const mkAudit = (log, app) => {
 //#endregion
 //#region src/lib/handlers/instance/model/AfterCreate_notify_discord.ts
 const AfterCreate_notify_discord = (e) => {
-	const log = mkLog(`instances:create:discord:notify`);
-	const audit = mkAudit(log, $app);
+	const audit = mkAudit(mkLog(`instances:create:discord:notify`), $app);
 	const record = e.record;
 	if (!record) return;
 	const webhookUrl = process.env.DISCORD_STREAM_CHANNEL_URL;
@@ -1366,8 +1348,8 @@ const AfterCreate_notify_discord = (e) => {
 			headers: { "content-type": "application/json" },
 			timeout: 5
 		});
-	} catch (e$1) {
-		audit(`ERROR`, `Instance creation discord notify failed with ${e$1}`);
+	} catch (e) {
+		audit(`ERROR`, `Instance creation discord notify failed with ${e}`);
 	}
 };
 
@@ -1387,15 +1369,14 @@ const BeforeUpdate_cname = (e) => {
 	const newCname = record.get("cname").trim();
 	if (newCname.length > 0) {
 		const result = new DynamicModel({ id: "" });
-		const inUse = (() => {
+		if ((() => {
 			try {
 				$app.db().newQuery(`select id from instances where cname='${newCname}' and id <> '${id}'`).one(result);
-			} catch (e$1) {
+			} catch (e) {
 				return false;
 			}
 			return true;
-		})();
-		if (inUse) {
+		})()) {
 			const msg = `[ERROR] [${id}] Custom domain ${newCname} already in use.`;
 			log(`${msg}`);
 			throw new BadRequestError(msg);
@@ -1511,12 +1492,12 @@ const HandleLemonSqueezySale = (e) => {
 		const userRec = (() => {
 			try {
 				return $app.findFirstRecordByData("users", "id", context.user_id);
-			} catch (e$1) {
+			} catch (e) {
 				throw new Error(`User ${context.user_id} not found`);
 			}
 		})();
 		log(`user record ok`, userRec);
-		const event_name_map = {
+		const event_handler = {
 			order_created: () => {
 				signup_finalizer();
 			},
@@ -1529,11 +1510,10 @@ const HandleLemonSqueezySale = (e) => {
 			subscription_payment_refunded: () => {
 				signup_canceller();
 			}
-		};
-		const event_handler = event_name_map[context.event_name];
+		}[context.event_name];
 		if (!event_handler) throw new Error(`Unsupported event: ${context.event_name}`);
 		else log(`event handler ok`, event_handler);
-		const product_handler_map = {
+		const product_handler = {
 			[FOUNDER_ANNUAL_PV_ID]: () => {
 				userRec.set(`subscription`, `founder`);
 				userRec.set(`subscription_interval`, `year`);
@@ -1579,8 +1559,7 @@ const HandleLemonSqueezySale = (e) => {
 				userRec.set(`subscription_interval`, `life`);
 				userRec.set(`subscription_quantity`, 250);
 			}
-		};
-		const product_handler = product_handler_map[pv_id];
+		}[pv_id];
 		if (!product_handler) throw new Error(`No product handler for ${pv_id}`);
 		else log(`product handler ok`, pv_id);
 		const signup_finalizer = () => {
@@ -1648,8 +1627,7 @@ const HandleMailSend = (e) => {
 	log(`bind parsed`, JSON.stringify(data));
 	const { to, subject, body } = data;
 	try {
-		const user = $app.findFirstRecordByData("users", "email", to);
-		const skipReason = mailRecipientSkipReason(user);
+		const skipReason = mailRecipientSkipReason($app.findFirstRecordByData("users", "email", to));
 		if (skipReason) {
 			log(`skipped ${to}: ${skipReason}`);
 			return e.json(200, {
@@ -1666,13 +1644,12 @@ const HandleMailSend = (e) => {
 			name: $app.settings().meta.senderName
 		},
 		to: [{ address: to }],
-		bcc: [process.env.TEST_EMAIL].filter((e$1) => !!e$1).map((e$1) => ({ address: e$1 })),
+		bcc: [process.env.TEST_EMAIL].filter((e) => !!e).map((e) => ({ address: e })),
 		subject,
 		html: body
 	});
 	$app.newMailClient().send(email);
-	const msg = `Sent to ${to}`;
-	log(msg);
+	log(`Sent to ${to}`);
 	return e.json(200, { status: "ok" });
 };
 
@@ -1708,11 +1685,9 @@ const HandleMetaUpdateAtBoot = (_e) => {
 //#region src/lib/handlers/mirror/lib/buildMirrorDump.ts
 const exportRecord = (record) => record.publicExport();
 const buildMirrorDump = (app) => {
-	const users = app.findRecordsByFilter(`users`, `verified = true`).filter((r) => !!r).map(exportRecord);
-	const instances = app.findAllRecords(`instances`, $dbx.exp(`instances.uid in (select id from users where verified = 1)`)).filter((r) => !!r).map(exportRecord);
 	return {
-		users,
-		instances
+		users: app.findRecordsByFilter(`users`, `verified = true`).filter((r) => !!r).map(exportRecord),
+		instances: app.findAllRecords(`instances`, $dbx.exp(`instances.uid in (select id from users where verified = 1)`)).filter((r) => !!r).map(exportRecord)
 	};
 };
 
@@ -1826,8 +1801,7 @@ const mkNotificationProcessor = (log, app, test = false) => (notificationRec) =>
 					timeout: 5
 				};
 				log(`sending discord message`, params);
-				const res = $http.send(params);
-				log(`discord sent`, res);
+				log(`discord sent`, $http.send(params));
 			}
 			break;
 		default: throw new Error(`Unsupported channel: ${channel}`);
@@ -1866,11 +1840,10 @@ const HandleProcessNotification = (e) => {
 	log({ notificationRec });
 	try {
 		$app.expandRecord(notificationRec, ["message_template"]);
-		const messageTemplateRec = notificationRec.expandedOne(`message_template`);
-		if (!messageTemplateRec) throw new Error(`Missing message template`);
+		if (!notificationRec.expandedOne(`message_template`)) throw new Error(`Missing message template`);
 		processNotification(notificationRec);
-	} catch (e$1) {
-		audit(`ERROR`, `${e$1}`, { notification: notificationRec.id });
+	} catch (e) {
+		audit(`ERROR`, `${e}`, { notification: notificationRec.id });
 	}
 };
 
@@ -1895,8 +1868,8 @@ const HandleUserWelcomeMessage = (e) => {
 		const uid = newModel.id;
 		notify(`email`, `welcome`, uid);
 		newModel.set(`welcome`, new DateTime());
-	} catch (e$1) {
-		audit(`ERROR`, `${e$1}`, { user: newModel.id });
+	} catch (e) {
+		audit(`ERROR`, `${e}`, { user: newModel.id });
 	}
 };
 
@@ -1916,16 +1889,15 @@ const readJsonBody = (e) => {
 	if (!rawBody.trim()) return {};
 	try {
 		return JSON.parse(rawBody);
-	} catch (error$1) {
-		throw new BadRequestError(`Impossible d'analyser la requete JSON.`, error$1);
+	} catch (error) {
+		throw new BadRequestError(`Impossible d'analyser la requete JSON.`, error);
 	}
 };
 const suggestUniqueAuthRecordUsername$1 = (collection, baseUsername) => {
 	let username = baseUsername;
 	for (let i = 0; i < 10; i++) {
 		try {
-			const total = $app.countRecords(collection, $dbx.exp("LOWER([[username]])={:username}", { username: username.toLowerCase() }));
-			if (total === 0) break;
+			if ($app.countRecords(collection, $dbx.exp("LOWER([[username]])={:username}", { username: username.toLowerCase() })) === 0) break;
 		} catch {}
 		username = baseUsername + $security.randomStringWithAlphabet(3 + i, "123456789");
 	}
@@ -1933,8 +1905,7 @@ const suggestUniqueAuthRecordUsername$1 = (collection, baseUsername) => {
 };
 const userExists = (email, exceptId = "") => {
 	try {
-		const user = $app.findFirstRecordByData("users", "email", email);
-		return user.id !== exceptId;
+		return $app.findFirstRecordByData("users", "email", email).id !== exceptId;
 	} catch {
 		return false;
 	}
@@ -2050,8 +2021,7 @@ const HandleOperatorAdminUpdateSettings = (e) => {
 //#endregion
 //#region src/lib/handlers/outpost/api/HandleOutpostUnsubscribe.ts
 const HandleOutpostUnsubscribe = (e) => {
-	const log = mkLog(`unsubscribe`);
-	const audit = mkAudit(log, $app);
+	const audit = mkAudit(mkLog(`unsubscribe`), $app);
 	const id = e.request.url.query().get("e");
 	try {
 		const record = $app.findRecordById("users", id);
@@ -4057,7 +4027,7 @@ const wordList = [
 const shortestWordSize = wordList.reduce((shortestWord, currentWord) => currentWord.length < shortestWord.length ? currentWord : shortestWord).length;
 const longestWordSize = wordList.reduce((longestWord, currentWord) => currentWord.length > longestWord.length ? currentWord : longestWord).length;
 function generate(options) {
-	const { minLength, maxLength,...rest } = options || {};
+	const { minLength, maxLength, ...rest } = options || {};
 	function word() {
 		let min = typeof minLength !== "number" ? shortestWordSize : limitWordSize(minLength);
 		const max = typeof maxLength !== "number" ? longestWordSize : limitWordSize(maxLength);
@@ -4079,8 +4049,7 @@ function generate(options) {
 		return wordSize;
 	}
 	function randInt(lessThan) {
-		const r = Math.random();
-		return Math.floor(r * lessThan);
+		return Math.floor(Math.random() * lessThan);
 	}
 	if (options === void 0) return word();
 	if (typeof options === "number") options = { exactly: options };
@@ -4090,7 +4059,7 @@ function generate(options) {
 		options.max = options.exactly;
 	}
 	if (typeof options.wordsPerString !== "number") options.wordsPerString = 1;
-	if (typeof options.formatter !== "function") options.formatter = (word$1) => word$1;
+	if (typeof options.formatter !== "function") options.formatter = (word) => word;
 	if (typeof options.separator !== "string") options.separator = " ";
 	const total = options.min + randInt(options.max + 1 - options.min);
 	let results = [];
@@ -4138,8 +4107,7 @@ const suggestUniqueAuthRecordUsername = (collection, baseUsername) => {
 	let username = baseUsername;
 	for (let i = 0; i < 10; i++) {
 		try {
-			const total = $app.countRecords(collection, $dbx.exp("LOWER([[username]])={:username}", { username: username.toLowerCase() }));
-			if (total === 0) break;
+			if ($app.countRecords(collection, $dbx.exp("LOWER([[username]])={:username}", { username: username.toLowerCase() })) === 0) break;
 		} catch {}
 		username = baseUsername + $security.randomStringWithAlphabet(3 + i, "123456789");
 	}
@@ -4151,10 +4119,9 @@ const HandleSignupConfirm = (e) => {
 	const parsed = (() => {
 		const rawBody = readerToString(e.request.body);
 		try {
-			const parsed$1 = JSON.parse(rawBody);
-			return parsed$1;
-		} catch (e$1) {
-			throw new BadRequestError(`Impossible d'analyser la requête JSON. Corps reçu : ${rawBody}`, e$1);
+			return JSON.parse(rawBody);
+		} catch (e) {
+			throw new BadRequestError(`Impossible d'analyser la requête JSON. Corps reçu : ${rawBody}`, e);
 		}
 	})();
 	const email = parsed.email?.trim().toLowerCase();
@@ -4164,15 +4131,14 @@ const HandleSignupConfirm = (e) => {
 	if (!email) throw error(`email`, "required", "L'email est obligatoire");
 	if (!password) throw error(`password`, `required`, "Le mot de passe est obligatoire");
 	if (!desiredInstanceName) throw error(`instanceName`, `required`, `Le nom de l'instance est obligatoire`);
-	const userExists$1 = (() => {
+	if ((() => {
 		try {
 			$app.findFirstRecordByData("users", "email", email);
 			return true;
 		} catch {
 			return false;
 		}
-	})();
-	if (userExists$1) throw error(`email`, `exists`, `Ce compte utilisateur existe déjà. Essayez une réinitialisation du mot de passe.`);
+	})()) throw error(`email`, `exists`, `Ce compte utilisateur existe déjà. Essayez une réinitialisation du mot de passe.`);
 	$app.runInTransaction((txApp) => {
 		const usersCollection = $app.findCollectionByNameOrId("users");
 		const instanceCollection = $app.findCollectionByNameOrId("instances");
@@ -4186,8 +4152,8 @@ const HandleSignupConfirm = (e) => {
 			if (settings.autoVerifyUsers) user.set("verified", true);
 			user.setPassword(password);
 			txApp.save(user);
-		} catch (e$1) {
-			throw error(`email`, `fail`, `Impossible de créer l'utilisateur : ${e$1}`);
+		} catch (e) {
+			throw error(`email`, `fail`, `Impossible de créer l'utilisateur : ${e}`);
 		}
 		try {
 			const instance = new Record(instanceCollection);
@@ -4200,9 +4166,9 @@ const HandleSignupConfirm = (e) => {
 			instance.set("dev", settings.defaultInstanceDevMode);
 			instance.set("version", version);
 			txApp.save(instance);
-		} catch (e$1) {
-			if (`${e$1}`.match(/ UNIQUE /)) throw error(`instanceName`, `exists`, `Ce nom d'instance vient d'être pris. Essayez-en un autre.`);
-			throw error(`instanceName`, `fail`, `Impossible de créer l'instance : ${e$1}`);
+		} catch (e) {
+			if (`${e}`.match(/ UNIQUE /)) throw error(`instanceName`, `exists`, `Ce nom d'instance vient d'être pris. Essayez-en un autre.`);
+			throw error(`instanceName`, `fail`, `Impossible de créer l'instance : ${e}`);
 		}
 		if (!settings.autoVerifyUsers) $mails.sendRecordVerification($app, user);
 	});
@@ -4233,8 +4199,8 @@ const HandleSesError = (e) => {
 			suppressUserEmail(user);
 			$app.save(user);
 			audit("PBOUNCE", `User ${emailAddress} has been disabled`, extra);
-		} catch (e$1) {
-			audit("PBOUNCE_ERR", `${e$1}`, extra);
+		} catch (e) {
+			audit("PBOUNCE_ERR", `${e}`, extra);
 		}
 	};
 	const processComplaint = (emailAddress) => {
@@ -4247,7 +4213,7 @@ const HandleSesError = (e) => {
 			suppressUserEmail(user);
 			$app.save(user);
 			audit("COMPLAINT", `User ${emailAddress} has been unsubscribed`, extra);
-		} catch (e$1) {
+		} catch (e) {
 			audit("COMPLAINT_ERR", `${emailAddress} is not in the system.`, extra);
 		}
 	};
@@ -4304,7 +4270,7 @@ const HandleSesError = (e) => {
 /** JSVM-safe ssh-ed25519 public key parsing. Safe for pb_hooks (Goja) and Node/browser consumers. */
 const ED25519_ALGO = "ssh-ed25519";
 const ED25519_WIRE_KEY_LEN = 32;
-const ED25519_WIRE_LEN = 19 + ED25519_WIRE_KEY_LEN;
+const ED25519_WIRE_LEN = 51;
 const readUint32BE = (bytes, offset) => {
 	if (offset + 4 > bytes.length) throw new Error("Invalid public key encoding.");
 	return (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
@@ -4313,9 +4279,8 @@ const readSshString = (bytes, offset) => {
 	const length = readUint32BE(bytes, offset);
 	offset += 4;
 	if (length < 0 || offset + length > bytes.length) throw new Error("Invalid public key encoding.");
-	const value = bytes.slice(offset, offset + length);
 	return {
-		value,
+		value: bytes.slice(offset, offset + length),
 		nextOffset: offset + length
 	};
 };
@@ -4356,10 +4321,9 @@ const validateWire = (wire) => {
 const parseSshEd25519PublicKey = (input) => {
 	const trimmed = input.trim();
 	if (!trimmed) throw new Error("Public key is required.");
-	const lines = trimmed.split(/\r?\n/).map((line$1) => line$1.trim()).filter(Boolean);
+	const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 	if (lines.length > 1) throw new Error("Paste a single public key line only.");
-	const line = lines[0] ?? "";
-	const parts = line.split(/\s+/).filter(Boolean);
+	const parts = (lines[0] ?? "").split(/\s+/).filter(Boolean);
 	if (parts.length < 2) throw new Error("Public key must look like: ssh-ed25519 AAAA… comment");
 	const algo = parts[0];
 	const keyData = parts[1];
@@ -4367,9 +4331,8 @@ const parseSshEd25519PublicKey = (input) => {
 	const wire = decodeBase64(keyData);
 	validateWire(wire);
 	const comment = parts.slice(2).join(" ");
-	const normalized = comment ? `${ED25519_ALGO} ${keyData} ${comment}` : `${ED25519_ALGO} ${keyData}`;
 	return {
-		normalized,
+		normalized: comment ? `${ED25519_ALGO} ${keyData} ${comment}` : `${ED25519_ALGO} ${keyData}`,
 		wire
 	};
 };
@@ -4381,12 +4344,11 @@ const validateSshKeyRecord = (record, authId) => {
 	let parsed;
 	try {
 		parsed = parseSshEd25519PublicKey(record.getString("public_key"));
-	} catch (error$1) {
-		throw new BadRequestError(`${error$1}`);
+	} catch (error) {
+		throw new BadRequestError(`${error}`);
 	}
 	record.set("public_key", parsed.normalized);
-	const fingerprint = record.getString("fingerprint").trim();
-	if (!fingerprint.startsWith("SHA256:")) throw new BadRequestError("Empreinte invalide.");
+	if (!record.getString("fingerprint").trim().startsWith("SHA256:")) throw new BadRequestError("Empreinte invalide.");
 	const allInstances = record.getBool("all_instances");
 	const instanceIds = record.getStringSlice("instances") || [];
 	if (!allInstances && instanceIds.length === 0) throw new BadRequestError("Sélectionnez au moins une instance ou choisissez toutes les instances.");
@@ -4464,7 +4426,7 @@ const HandleStatsRefreshAtBoot = (_e) => {
 //#endregion
 //#region src/lib/handlers/user/api/HandleUserTokenRequest.ts
 const HandleUserTokenRequest = (e) => {
-	const log = mkLog(`user-token`);
+	mkLog(`user-token`);
 	const id = e.request.pathValue("id");
 	if (!id) throw new BadRequestError(`L'identifiant utilisateur est obligatoire.`);
 	const rec = $app.findRecordById("users", id);

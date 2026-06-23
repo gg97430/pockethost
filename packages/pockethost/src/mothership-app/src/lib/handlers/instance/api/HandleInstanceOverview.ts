@@ -64,16 +64,27 @@ const getDirectorySizeBytes = (path: string) => {
   }
 }
 
+const sortBackupsNewestFirst = (backups: core.Record[]) => {
+  return backups.sort((a, b) => {
+    const aValue = a.getString('updated') || a.getString('created') || a.getString('filename') || a.id
+    const bValue = b.getString('updated') || b.getString('created') || b.getString('filename') || b.id
+    return bValue.localeCompare(aValue)
+  })
+}
+
+const findInstanceBackups = (instanceId: string) => {
+  const records = $app.findRecordsByFilter('instance_backups', 'instance = {:instance}', '', 100, 0, {
+    instance: instanceId,
+  })
+  return sortBackupsNewestFirst(records.filter((record): record is core.Record => !!record))
+}
+
 export const HandleInstanceOverview = (e: core.RequestEvent) => {
   const authRecord = requireAuthRecord(e.auth)
   const instance = findInstance(pathValue(e, 'id'))
   assertInstanceAccess(instance, authRecord)
 
-  const backupRecords = $app
-    .findRecordsByFilter('instance_backups', 'instance = {:instance}', '-created', 100, 0, { instance: instance.id })
-    .filter((record): record is core.Record => !!record)
-
-  const backups = backupRecords.map(serializeBackup)
+  const backups = findInstanceBackups(instance.id).map(serializeBackup)
   const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0)
 
   return e.json(200, {

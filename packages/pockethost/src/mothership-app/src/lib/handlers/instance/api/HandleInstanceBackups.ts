@@ -127,6 +127,21 @@ const serializeBackup = (backup: core.Record) => ({
   updated: backup.getString('updated'),
 })
 
+const sortBackupsNewestFirst = (backups: core.Record[]) => {
+  return backups.sort((a, b) => {
+    const aValue = a.getString('updated') || a.getString('created') || a.getString('filename') || a.id
+    const bValue = b.getString('updated') || b.getString('created') || b.getString('filename') || b.id
+    return bValue.localeCompare(aValue)
+  })
+}
+
+const findInstanceBackups = (instanceId: string) => {
+  const records = $app.findRecordsByFilter('instance_backups', 'instance = {:instance}', '', 100, 0, {
+    instance: instanceId,
+  })
+  return sortBackupsNewestFirst(records.filter((record): record is core.Record => !!record))
+}
+
 const getBackupRecord = (instance: core.Record, backupId: string) => {
   assertSafeBackupId(backupId)
   const backup = $app.findRecordById('instance_backups', backupId)
@@ -559,10 +574,7 @@ export const HandleInstanceBackupsList = (e: core.RequestEvent) => {
   const instance = findInstance(pathValue(e, 'id'))
   assertInstanceAccess(instance, authRecord)
 
-  const backups = $app
-    .findRecordsByFilter('instance_backups', 'instance = {:instance}', '-created', 100, 0, { instance: instance.id })
-    .filter((record): record is core.Record => !!record)
-    .map(serializeBackup)
+  const backups = findInstanceBackups(instance.id).map(serializeBackup)
 
   return e.json(200, { backups })
 }

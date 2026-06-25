@@ -1,7 +1,6 @@
 import {
   APP_URL,
   asyncExitHook,
-  DAEMON_PB_IDLE_TTL,
   DOC_URL,
   INSTANCE_APP_HOOK_DIR,
   INSTANCE_APP_MIGRATIONS_DIR,
@@ -24,6 +23,7 @@ import {
   SpawnConfig,
   stringify,
   tryFetch,
+  UserFields,
   userError,
   VacuumLockService,
 } from '@'
@@ -66,7 +66,10 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
   const mirror = await MothershipMirrorService()
 
   const instanceApis: { [_: InstanceId]: Promise<InstanceApi> } = {}
+  const warmStarts: { [_: InstanceId]: Promise<void> | undefined } = {}
+  const warmStartFailedAt: { [_: InstanceId]: number | undefined } = {}
   const gatewayPending: { [_: InstanceId]: number } = {}
+  const warmStartRetryMs = 30_000
 
   const bumpGatewayPending = (id: InstanceId) => {
     gatewayPending[id] = (gatewayPending[id] ?? 0) + 1
@@ -74,8 +77,6 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
       gatewayPending[id] = Math.max(0, (gatewayPending[id] ?? 1) - 1)
     }
   }
-
-  const getGatewayPending = (id: InstanceId) => gatewayPending[id] ?? 0
 
   const vacuumLocks = await VacuumLockService(config)
   vacuumLocks.registerIsLive((id) => Boolean(instanceApis[id]))
@@ -182,8 +183,6 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
     const updateInstanceStatus = (id: InstanceId, status: InstanceStatus) => updateInstance(id, { status })
 
     let openRequestCount = 0
-    let lastRequest = now()
-    let idleTid: ReturnType<typeof setInterval> | undefined
     let childProcess: Awaited<ReturnType<typeof pbService.spawn>> | undefined
 
     let shutdownInProgress = false
@@ -195,10 +194,6 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
       shutdownInProgress = true
       dbg(`Lowering drawbridge for ${id}`)
       delete instanceApis[id]
-      if (idleTid) {
-        clearInterval(idleTid)
-        idleTid = undefined
-      }
       return true
     }
 
@@ -308,31 +303,10 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
         logger: systemInstanceLogger,
       })
 
-      /** Idle check */
-      const idleTtl = instance.idleTtl || DAEMON_PB_IDLE_TTL()
-      idleTid = setInterval(() => {
-        const lastRequestAge = now() - lastRequest
-        dbg(
-          `idle check: ${openRequestCount} open requests, ${getGatewayPending(id)} gateway pending, ${lastRequestAge}ms since last request`
-        )
-        if (openRequestCount === 0 && getGatewayPending(id) === 0 && lastRequestAge > idleTtl) {
-          dbg(`idle for ${idleTtl}, shutting down`)
-          userInstanceLogger.info(
-            `L'instance est inactive depuis ${DAEMON_PB_IDLE_TTL()} ms. Hibernation pour économiser les ressources.`
-          )
-          shutdown()
-          return false
-        } else {
-          dbg(`${openRequestCount} requests remain open`)
-        }
-        return true
-      }, 1000)
-
       // Now assign the api object
       api = {
         internalUrl,
         startRequest: () => {
-          lastRequest = now()
           openRequestCount++
           trace(`started new request`)
           return () => {
@@ -363,14 +337,6 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
       throw e
     }
   }
-
-  mirror.onInstanceUpserted((instance) => {
-    if (!instance.power) {
-      handlePowerOff(instance).catch((e) => {
-        error(`Error handling power off for ${instance.id}`, { e })
-      })
-    }
-  })
 
   mirror.onInstanceDeleted((instanceId) => {
     shutdownRunningInstance(instanceId, 'instance deleted').catch((e) => {
@@ -418,6 +384,90 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
     }
   }
 
+  const canUserRunInstances = (user: UserFields) => {
+    if (!user.verified) return false
+    if (user.subscription_quantity === 0) return false
+    if (user.suspension) return false
+    return true
+  }
+
+  const canKeepInstanceWarm = (instance: InstanceFields, owner: UserFields) => {
+    if (!instance.power) return false
+    if (instance.suspension) return false
+    return canUserRunInstances(owner)
+  }
+
+  const warmPoweredInstance = async (instance: InstanceFields, reason: string) => {
+    if (!instance.power) return
+    if (instanceApis[instance.id]) return
+    if (warmStarts[instance.id]) return warmStarts[instance.id]
+
+    const failedAt = warmStartFailedAt[instance.id] ?? 0
+    if (failedAt && now() - failedAt < warmStartRetryMs) {
+      dbg(`Skipping warm start for ${instance.id}; retry cooldown active`)
+      return
+    }
+
+    const warmStart = (async () => {
+      const owner = await mirror.getUser(instance.uid)
+      if (!owner) {
+        warn(`Cannot keep ${instance.id} warm: owner ${instance.uid} is not mirrored`)
+        return
+      }
+
+      if (!canKeepInstanceWarm(instance, owner)) {
+        dbg(`Not keeping ${instance.id} warm; instance or owner is not eligible`)
+        return
+      }
+
+      try {
+        dbg(`Keeping ${instance.id} warm (${reason})`)
+        await ensureInstanceApi(instance, `warm:${reason}`)
+        delete warmStartFailedAt[instance.id]
+      } catch (e) {
+        warmStartFailedAt[instance.id] = now()
+        warn(`Warm start failed for ${instance.id}`, { e })
+      }
+    })().finally(() => {
+      delete warmStarts[instance.id]
+    })
+
+    warmStarts[instance.id] = warmStart
+    return warmStart
+  }
+
+  mirror.onInstanceUpserted((instance) => {
+    if (!instance.power) {
+      handlePowerOff(instance).catch((e) => {
+        error(`Error handling power off for ${instance.id}`, { e })
+      })
+      return
+    }
+
+    warmPoweredInstance(instance, 'instance upserted').catch((e) => {
+      error(`Error keeping ${instance.id} warm`, { e })
+    })
+  })
+
+  mirror.onUserUpserted((user) => {
+    const userInstances = mirror.getInstances().filter((instance) => instance.uid === user.id)
+
+    if (!canUserRunInstances(user)) {
+      userInstances.forEach((instance) => {
+        shutdownRunningInstance(instance.id, 'owner no longer eligible').catch((e) => {
+          error(`Error shutting down ${instance.id} after owner update`, { e })
+        })
+      })
+      return
+    }
+
+    userInstances.forEach((instance) => {
+      warmPoweredInstance(instance, 'owner upserted').catch((e) => {
+        error(`Error keeping ${instance.id} warm after owner update`, { e })
+      })
+    })
+  })
+
   asyncExitHook(async () => {
     setInstanceTrafficReady(false)
     dbg(`Detaching instance manager, leaving Docker containers running`)
@@ -444,6 +494,7 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
   })
 
   await mirror.bootSync({ resetIdle: true, instances: await getLiveInstances() })
+  await Promise.all(mirror.getInstances().map((instance) => warmPoweredInstance(instance, 'boot')))
   ;(await proxyService()).use(async (req, res, next) => {
     const logger = (config.logger ?? LoggerService()).create(`InstanceRequest`)
 

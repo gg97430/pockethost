@@ -11,7 +11,7 @@
   let successMessage = ''
   let archiveFile: File | null = null
   let serverPath = ''
-  let fileInput: HTMLInputElement
+  let fileInput: HTMLInputElement | undefined
 
   $: ({ id, subdomain, cname, power } = $instance)
   $: displayName = cname || subdomain
@@ -202,17 +202,24 @@
   </svelte:fragment>
 
   <svelte:fragment slot="cta">
-    <button type="button" class="backup-create-btn" disabled={isBusy} onclick={createBackup}>
-      <wa-icon name={action === 'create' ? 'rotate' : 'floppy-disk'}></wa-icon>
-      {action === 'create' ? 'Sauvegarde...' : 'Créer une sauvegarde'}
-    </button>
+    <div class="backup-cta">
+      <button type="button" class="backup-import-zip-cta" disabled={isBusy} onclick={() => fileInput?.click()}>
+        <wa-icon name="file-zipper"></wa-icon>
+        Importer ZIP à restaurer
+      </button>
+      <button type="button" class="backup-create-btn" disabled={isBusy} onclick={createBackup}>
+        <wa-icon name={action === 'create' ? 'rotate' : 'floppy-disk'}></wa-icon>
+        {action === 'create' ? 'Sauvegarde...' : 'Créer une sauvegarde'}
+      </button>
+    </div>
   </svelte:fragment>
 
   <section class="backup-import">
     <div class="backup-import-copy">
-      <strong>Importer une archive</strong>
+      <strong>Importer une sauvegarde ZIP à restaurer</strong>
       <span>
-        Réservé superadmin. Formats acceptés : .zip, .tgz, .tar.gz. Le dossier <code>pb_data</code> est obligatoire.
+        Réservé superadmin. Étape 1 : importez le ZIP. Étape 2 : cliquez <strong>Restaurer</strong> sur la ligne créée.
+        Le dossier <code>pb_data</code> est obligatoire.
       </span>
     </div>
 
@@ -227,11 +234,11 @@
             archiveFile = event.currentTarget.files?.[0] || null
           }}
         />
-        <span>{archiveFile ? archiveFile.name : 'Choisir un ZIP ou TAR.GZ'}</span>
+        <span>{archiveFile ? archiveFile.name : '1. Choisir un ZIP, TGZ ou TAR.GZ'}</span>
       </label>
       <button type="button" class="backup-import-btn" disabled={isBusy || !archiveFile} onclick={importArchive}>
         <wa-icon name={action === 'import:file' ? 'rotate' : 'upload'}></wa-icon>
-        {action === 'import:file' ? 'Import...' : 'Importer fichier'}
+        {action === 'import:file' ? 'Import...' : '2. Importer le ZIP'}
       </button>
     </div>
 
@@ -249,7 +256,7 @@
         onclick={importServerArchive}
       >
         <wa-icon name={action === 'import:server' ? 'rotate' : 'server'}></wa-icon>
-        {action === 'import:server' ? 'Import...' : 'Importer serveur'}
+        {action === 'import:server' ? 'Import...' : 'Importer ZIP serveur'}
       </button>
     </div>
   </section>
@@ -331,6 +338,45 @@
 </FeatureTab>
 
 <style>
+  .backup-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    justify-content: flex-end;
+  }
+
+  .backup-import-zip-cta {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 1px solid rgb(37 99 235 / 0.5);
+    border-radius: 0.5rem;
+    background: rgb(37 99 235 / 0.13);
+    padding: 0 1rem;
+    color: #2563eb;
+    font-size: 0.9rem;
+    font-weight: 900;
+    line-height: 1;
+    cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .backup-import-zip-cta:hover:not(:disabled) {
+    border-color: rgb(37 99 235 / 0.7);
+    background: rgb(37 99 235 / 0.19);
+    box-shadow: 0 10px 22px rgb(37 99 235 / 0.14);
+  }
+
+  .backup-import-zip-cta:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
   .backup-import {
     display: grid;
     gap: 0.75rem;

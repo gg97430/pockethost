@@ -626,7 +626,7 @@ const assertServerImportAllowed = (authRecord, requestedPath) => {
 const assertBackupImportAllowed = (authRecord) => {
 	if (!authRecord.getBool("superAdmin")) throw new BadRequestError("L'import d'archive est reserve au superadmin.");
 };
-const serializeBackup$1 = (backup) => ({
+const serializeInstanceBackup = (backup) => ({
 	id: backup.id,
 	user: backup.getString("user"),
 	instance: backup.getString("instance"),
@@ -1337,7 +1337,7 @@ const HandleInstanceBackupCreate = (e) => {
 	assertInstanceAccess$1(instance, authRecord);
 	const backup = createBackupForInstance(instance, authRecord, "manual", true);
 	log(`created ${backup.id} for ${instance.id}`);
-	return e.json(200, { backup: serializeBackup$1(backup) });
+	return e.json(200, { backup: serializeInstanceBackup(backup) });
 };
 const HandleInstanceBackupImport = (e) => {
 	const log = mkLog("POST:instance:backup:import");
@@ -1346,7 +1346,7 @@ const HandleInstanceBackupImport = (e) => {
 	assertInstanceAccess$1(instance, authRecord);
 	const backup = createImportedBackup(instance, authRecord, e);
 	log(`imported ${backup.id} for ${instance.id}`);
-	return e.json(200, { backup: serializeBackup$1(backup) });
+	return e.json(200, { backup: serializeInstanceBackup(backup) });
 };
 const HandleInstanceBackupChunkedStart = (e) => {
 	const authRecord = requireAuthRecord$1(e.auth);
@@ -1373,7 +1373,7 @@ const HandleInstanceBackupChunkedComplete = (e) => {
 	assertInstanceAccess$1(instance, authRecord);
 	const backup = completeChunkSession(instance, authRecord, pathValue$1(e, "uploadId"));
 	log(`imported ${backup.id} for ${instance.id} from chunked upload`);
-	return e.json(200, { backup: serializeBackup$1(backup) });
+	return e.json(200, { backup: serializeInstanceBackup(backup) });
 };
 const HandleInstanceBackupChunkedCancel = (e) => {
 	const authRecord = requireAuthRecord$1(e.auth);
@@ -1386,7 +1386,7 @@ const HandleInstanceBackupsList = (e) => {
 	const authRecord = requireAuthRecord$1(e.auth);
 	const instance = findInstance$1(pathValue$1(e, "id"));
 	assertInstanceAccess$1(instance, authRecord);
-	const backups = findInstanceBackups$1(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeBackup$1);
+	const backups = findInstanceBackups$1(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
 	return e.json(200, { backups });
 };
 const HandleInstanceBackupDownload = (e) => {
@@ -1603,19 +1603,6 @@ const pathValue = (e, name) => {
 	if (!e.request) throw new BadRequestError("Requete invalide.");
 	return e.request.pathValue(name);
 };
-const serializeBackup = (backup) => ({
-	id: backup.id,
-	kind: backup.getString("kind"),
-	status: backup.getString("status"),
-	filename: backup.getString("filename"),
-	remoteKey: backup.getString("remoteKey"),
-	sizeBytes: Number(backup.get("sizeBytes") || 0),
-	compressedBytes: Number(backup.get("compressedBytes") || 0),
-	error: backup.getString("error"),
-	remoteError: backup.getString("remoteError"),
-	created: backup.getString("created"),
-	updated: backup.getString("updated")
-});
 const getDirectorySizeBytes = (path) => {
 	try {
 		const output = toString($os.cmd("du", "-sb", path).combinedOutput()).trim();
@@ -1638,7 +1625,7 @@ const HandleInstanceOverview = (e) => {
 	const authRecord = requireAuthRecord(e.auth);
 	const instance = findInstance(pathValue(e, "id"));
 	assertInstanceAccess(instance, authRecord);
-	const backups = findInstanceBackups(instance.id).map(serializeBackup);
+	const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
 	const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0);
 	return e.json(200, {
 		instance,
@@ -5109,8 +5096,10 @@ exports.readOperatorSettings = readOperatorSettings;
 exports.recountLivePlatformStats = recountLivePlatformStats;
 exports.refreshAndBroadcastLivePlatformStats = refreshAndBroadcastLivePlatformStats;
 exports.refreshAndBroadcastLiveViewStats = refreshAndBroadcastLiveViewStats;
+exports.refreshImportedBackupSizeMetadata = refreshImportedBackupSizeMetadata;
 exports.refreshLiveViewStats = refreshLiveViewStats;
 exports.refreshPublicStats = refreshPublicStats;
 exports.sendLivePlatformStatsToClient = sendLivePlatformStatsToClient;
 exports.sendLiveViewStatsToClient = sendLiveViewStatsToClient;
+exports.serializeInstanceBackup = serializeInstanceBackup;
 exports.writeOperatorSettings = writeOperatorSettings;

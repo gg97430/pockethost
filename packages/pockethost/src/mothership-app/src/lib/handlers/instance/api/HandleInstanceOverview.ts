@@ -1,3 +1,5 @@
+import { refreshImportedBackupSizeMetadata, serializeInstanceBackup } from './HandleInstanceBackups'
+
 const assertSafeInstanceId = (id: string) => {
   if (!id.match(/^[a-z0-9]+$/)) {
     throw new BadRequestError("Identifiant d'instance invalide.")
@@ -12,7 +14,7 @@ const dataRoot = () => {
   const inferred = appDataDir.replace(/\/mothership\/pb_data\/?$/, '')
   if (inferred !== appDataDir) return inferred
 
-  throw new Error("Impossible de trouver le dossier de donnees des instances.")
+  throw new Error('Impossible de trouver le dossier de donnees des instances.')
 }
 
 const instanceRoot = (id: string) => `${dataRoot()}/instances/${id}`
@@ -39,20 +41,6 @@ const pathValue = (e: core.RequestEvent, name: string) => {
   if (!e.request) throw new BadRequestError('Requete invalide.')
   return e.request.pathValue(name)
 }
-
-const serializeBackup = (backup: core.Record) => ({
-  id: backup.id,
-  kind: backup.getString('kind'),
-  status: backup.getString('status'),
-  filename: backup.getString('filename'),
-  remoteKey: backup.getString('remoteKey'),
-  sizeBytes: Number(backup.get('sizeBytes') || 0),
-  compressedBytes: Number(backup.get('compressedBytes') || 0),
-  error: backup.getString('error'),
-  remoteError: backup.getString('remoteError'),
-  created: backup.getString('created'),
-  updated: backup.getString('updated'),
-})
 
 const getDirectorySizeBytes = (path: string) => {
   try {
@@ -84,7 +72,7 @@ export const HandleInstanceOverview = (e: core.RequestEvent) => {
   const instance = findInstance(pathValue(e, 'id'))
   assertInstanceAccess(instance, authRecord)
 
-  const backups = findInstanceBackups(instance.id).map(serializeBackup)
+  const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup)
   const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0)
 
   return e.json(200, {

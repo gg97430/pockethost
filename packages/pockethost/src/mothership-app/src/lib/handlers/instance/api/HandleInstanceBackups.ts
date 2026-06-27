@@ -214,7 +214,7 @@ const assertBackupImportAllowed = (authRecord: core.Record) => {
   }
 }
 
-const serializeBackup = (backup: core.Record) => ({
+export const serializeInstanceBackup = (backup: core.Record) => ({
   id: backup.id,
   user: backup.getString('user'),
   instance: backup.getString('instance'),
@@ -900,7 +900,7 @@ const backupManifestObject = (backup: core.Record) => {
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
 }
 
-const refreshImportedBackupSizeMetadata = (backup: core.Record) => {
+export const refreshImportedBackupSizeMetadata = (backup: core.Record) => {
   if (backup.getString('kind') !== 'import') return backup
   if (backup.getString('status') !== 'ready') return backup
 
@@ -1226,7 +1226,7 @@ export const HandleInstanceBackupCreate = (e: core.RequestEvent) => {
   const backup = createBackupForInstance(instance, authRecord, 'manual', true)
   log(`created ${backup.id} for ${instance.id}`)
 
-  return e.json(200, { backup: serializeBackup(backup) })
+  return e.json(200, { backup: serializeInstanceBackup(backup) })
 }
 
 export const HandleInstanceBackupImport = (e: core.RequestEvent) => {
@@ -1238,7 +1238,7 @@ export const HandleInstanceBackupImport = (e: core.RequestEvent) => {
   const backup = createImportedBackup(instance, authRecord, e)
   log(`imported ${backup.id} for ${instance.id}`)
 
-  return e.json(200, { backup: serializeBackup(backup) })
+  return e.json(200, { backup: serializeInstanceBackup(backup) })
 }
 
 export const HandleInstanceBackupChunkedStart = (e: core.RequestEvent) => {
@@ -1272,7 +1272,7 @@ export const HandleInstanceBackupChunkedComplete = (e: core.RequestEvent) => {
   const backup = completeChunkSession(instance, authRecord, pathValue(e, 'uploadId'))
   log(`imported ${backup.id} for ${instance.id} from chunked upload`)
 
-  return e.json(200, { backup: serializeBackup(backup) })
+  return e.json(200, { backup: serializeInstanceBackup(backup) })
 }
 
 export const HandleInstanceBackupChunkedCancel = (e: core.RequestEvent) => {
@@ -1289,7 +1289,7 @@ export const HandleInstanceBackupsList = (e: core.RequestEvent) => {
   const instance = findInstance(pathValue(e, 'id'))
   assertInstanceAccess(instance, authRecord)
 
-  const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeBackup)
+  const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup)
 
   return e.json(200, { backups })
 }

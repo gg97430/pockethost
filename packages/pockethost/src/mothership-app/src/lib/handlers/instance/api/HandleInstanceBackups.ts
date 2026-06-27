@@ -579,6 +579,53 @@ const archiveIncludedDirs = (entries: string[]) => {
   return included
 }
 
+const zipListedSizeBytes = (archivePath: string) => {
+  const output = runCommand('unzip', '-l', archivePath)
+  let total = 0
+
+  for (const line of output.split('\n')) {
+    const summary = line.match(/^\s*(\d+)\s+\d+\s+files?\s*$/i)
+    if (summary) return Number(summary[1])
+
+    const entry = line.match(/^\s*(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+/)
+    if (!entry) continue
+
+    const bytes = Number(entry[1])
+    if (Number.isFinite(bytes)) total += bytes
+  }
+
+  return total
+}
+
+const tarListedSizeBytes = (archivePath: string) => {
+  const output = runCommand('tar', '--numeric-owner', '-tvzf', archivePath)
+  let total = 0
+
+  for (const line of output.split('\n')) {
+    const parts = line.trim().split(/\s+/)
+    const mode = parts[0] || ''
+    if (!mode.startsWith('-')) continue
+
+    const sizeToken = parts.slice(1).find((part) => part.match(/^\d+$/))
+    if (!sizeToken) continue
+
+    const bytes = Number(sizeToken)
+    if (Number.isFinite(bytes)) total += bytes
+  }
+
+  return total
+}
+
+const archiveSourceSizeBytes = (archivePath: string, filename: string) => {
+  try {
+    const format = archiveFormatForFilename(filename)
+    const sourceBytes = format === 'zip' ? zipListedSizeBytes(archivePath) : tarListedSizeBytes(archivePath)
+    return Number.isFinite(sourceBytes) && sourceBytes > 0 ? sourceBytes : 0
+  } catch {
+    return 0
+  }
+}
+
 const listArchiveEntries = (archivePath: string, filename: string) => {
   const format = archiveFormatForFilename(filename)
   const output = format === 'zip' ? runCommand('unzip', '-Z1', archivePath) : runCommand('tar', '-tzf', archivePath)
@@ -847,6 +894,43 @@ const readServerPathInput = (e: core.RequestEvent) => {
   return ''
 }
 
+const backupManifestObject = (backup: core.Record) => {
+  const value = backup.get('manifest')
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
+}
+
+const refreshImportedBackupSizeMetadata = (backup: core.Record) => {
+  if (backup.getString('kind') !== 'import') return backup
+  if (backup.getString('status') !== 'ready') return backup
+
+  const manifest = backupManifestObject(backup)
+  if (manifest.sourceSizeComputedAt) return backup
+
+  const filename = backup.getString('filename')
+  if (!filename) return backup
+
+  try {
+    assertSafeBackupFilename(filename)
+    const localPath = backupPath(backup.getString('instance'), filename)
+    if (!pathExists(localPath)) return backup
+
+    const compressedBytes = fileSize(localPath)
+    const sourceBytes = archiveSourceSizeBytes(localPath, filename) || compressedBytes
+    backup.set('sizeBytes', sourceBytes)
+    backup.set('compressedBytes', compressedBytes)
+    backup.set('manifest', {
+      ...manifest,
+      sourceSizeBytes: sourceBytes,
+      compressedSizeBytes: compressedBytes,
+      sourceSizeComputedAt: new Date().toISOString(),
+    })
+    $app.save(backup)
+  } catch {}
+
+  return backup
+}
+
 const createImportedBackupFromImporter = (
   instance: core.Record,
   authRecord: core.Record,
@@ -866,10 +950,11 @@ const createImportedBackupFromImporter = (
 
     const compressedBytes = fileSize(imported.localPath)
     const entries = listArchiveEntries(imported.localPath, imported.filename)
+    const sourceBytes = archiveSourceSizeBytes(imported.localPath, imported.filename) || compressedBytes
     markBackupReady(backup, {
       filename: imported.filename,
       localPath: imported.localPath,
-      sizeBytes: compressedBytes,
+      sizeBytes: sourceBytes,
       compressedBytes,
       checksum: sha256(imported.localPath),
       manifest: {
@@ -877,6 +962,9 @@ const createImportedBackupFromImporter = (
         imported: true,
         createdAt: new Date().toISOString(),
         included: archiveIncludedDirs(entries),
+        sourceSizeBytes: sourceBytes,
+        compressedSizeBytes: compressedBytes,
+        sourceSizeComputedAt: new Date().toISOString(),
       },
     })
 
@@ -1201,7 +1289,7 @@ export const HandleInstanceBackupsList = (e: core.RequestEvent) => {
   const instance = findInstance(pathValue(e, 'id'))
   assertInstanceAccess(instance, authRecord)
 
-  const backups = findInstanceBackups(instance.id).map(serializeBackup)
+  const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeBackup)
 
   return e.json(200, { backups })
 }

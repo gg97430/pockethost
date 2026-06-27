@@ -871,6 +871,40 @@ const archiveIncludedDirs = (entries) => {
 	if (archiveHasRequiredRestoreData(entries)) return [REQUIRED_RESTORE_DIR, ...included];
 	return included;
 };
+const zipListedSizeBytes = (archivePath) => {
+	const output = runCommand("unzip", "-l", archivePath);
+	let total = 0;
+	for (const line of output.split("\n")) {
+		const summary = line.match(/^\s*(\d+)\s+\d+\s+files?\s*$/i);
+		if (summary) return Number(summary[1]);
+		const entry = line.match(/^\s*(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+/);
+		if (!entry) continue;
+		const bytes = Number(entry[1]);
+		if (Number.isFinite(bytes)) total += bytes;
+	}
+	return total;
+};
+const tarListedSizeBytes = (archivePath) => {
+	const output = runCommand("tar", "--numeric-owner", "-tvzf", archivePath);
+	let total = 0;
+	for (const line of output.split("\n")) {
+		const parts = line.trim().split(/\s+/);
+		if (!(parts[0] || "").startsWith("-")) continue;
+		const sizeToken = parts.slice(1).find((part) => part.match(/^\d+$/));
+		if (!sizeToken) continue;
+		const bytes = Number(sizeToken);
+		if (Number.isFinite(bytes)) total += bytes;
+	}
+	return total;
+};
+const archiveSourceSizeBytes = (archivePath, filename) => {
+	try {
+		const sourceBytes = archiveFormatForFilename(filename) === "zip" ? zipListedSizeBytes(archivePath) : tarListedSizeBytes(archivePath);
+		return Number.isFinite(sourceBytes) && sourceBytes > 0 ? sourceBytes : 0;
+	} catch {
+		return 0;
+	}
+};
 const listArchiveEntries = (archivePath, filename) => {
 	return (archiveFormatForFilename(filename) === "zip" ? runCommand("unzip", "-Z1", archivePath) : runCommand("tar", "-tzf", archivePath)).split("\n").map((entry) => entry.trim()).filter(Boolean);
 };
@@ -1064,6 +1098,36 @@ const readServerPathInput = (e) => {
 	} catch {}
 	return "";
 };
+const backupManifestObject = (backup) => {
+	const value = backup.get("manifest");
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	return JSON.parse(JSON.stringify(value));
+};
+const refreshImportedBackupSizeMetadata = (backup) => {
+	if (backup.getString("kind") !== "import") return backup;
+	if (backup.getString("status") !== "ready") return backup;
+	const manifest = backupManifestObject(backup);
+	if (manifest.sourceSizeComputedAt) return backup;
+	const filename = backup.getString("filename");
+	if (!filename) return backup;
+	try {
+		assertSafeBackupFilename(filename);
+		const localPath = backupPath(backup.getString("instance"), filename);
+		if (!pathExists$1(localPath)) return backup;
+		const compressedBytes = fileSize(localPath);
+		const sourceBytes = archiveSourceSizeBytes(localPath, filename) || compressedBytes;
+		backup.set("sizeBytes", sourceBytes);
+		backup.set("compressedBytes", compressedBytes);
+		backup.set("manifest", {
+			...manifest,
+			sourceSizeBytes: sourceBytes,
+			compressedSizeBytes: compressedBytes,
+			sourceSizeComputedAt: (/* @__PURE__ */ new Date()).toISOString()
+		});
+		$app.save(backup);
+	} catch {}
+	return backup;
+};
 const createImportedBackupFromImporter = (instance, authRecord, importer) => {
 	assertBackupImportAllowed(authRecord);
 	assertNoRunningOperation(instance.id);
@@ -1073,17 +1137,21 @@ const createImportedBackupFromImporter = (instance, authRecord, importer) => {
 		if (!imported) throw new BadRequestError("Archive manquante. Envoyez un fichier archive ou renseignez un chemin serveur.");
 		const compressedBytes = fileSize(imported.localPath);
 		const entries = listArchiveEntries(imported.localPath, imported.filename);
+		const sourceBytes = archiveSourceSizeBytes(imported.localPath, imported.filename) || compressedBytes;
 		markBackupReady(backup, {
 			filename: imported.filename,
 			localPath: imported.localPath,
-			sizeBytes: compressedBytes,
+			sizeBytes: sourceBytes,
 			compressedBytes,
 			checksum: sha256(imported.localPath),
 			manifest: {
 				format: BACKUP_FORMAT,
 				imported: true,
 				createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-				included: archiveIncludedDirs(entries)
+				included: archiveIncludedDirs(entries),
+				sourceSizeBytes: sourceBytes,
+				compressedSizeBytes: compressedBytes,
+				sourceSizeComputedAt: (/* @__PURE__ */ new Date()).toISOString()
 			}
 		});
 		return backup;
@@ -1318,7 +1386,7 @@ const HandleInstanceBackupsList = (e) => {
 	const authRecord = requireAuthRecord$1(e.auth);
 	const instance = findInstance$1(pathValue$1(e, "id"));
 	assertInstanceAccess$1(instance, authRecord);
-	const backups = findInstanceBackups$1(instance.id).map(serializeBackup$1);
+	const backups = findInstanceBackups$1(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeBackup$1);
 	return e.json(200, { backups });
 };
 const HandleInstanceBackupDownload = (e) => {

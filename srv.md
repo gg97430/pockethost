@@ -399,6 +399,10 @@ L'archive doit contenir au minimum `pb_data`, ou directement le contenu de `pb_d
 (`data.db`, `auxiliary.db`, fichiers `-wal`/`-shm`, etc.). Si `pb_public`, `pb_migrations` ou `pb_hooks`
 sont absents, le restore cree les dossiers manquants automatiquement.
 
+Pour les imports, l'interface distingue la taille compressee de l'archive et la taille source decompressee lue dans
+l'index ZIP/TGZ. Exemple: un ZIP de 4,8 Go peut etre affiche comme une sauvegarde source de 20 Go. Prevoir assez
+d'espace disque pour l'archive, l'extraction temporaire, et l'ancienne base pendant la restauration.
+
 L'upload navigateur affiche une jauge de progression et peut envoyer de gros fichiers, par exemple 10 Go, si tout le
 chemin HTTP l'accepte. Attention: si `app.monappli.re` passe par un proxy qui limite la taille des requetes
 (Cloudflare, nginx, load balancer, etc.), l'upload sera coupe avant d'arriver a PocketBase. Dans ce cas, passer le

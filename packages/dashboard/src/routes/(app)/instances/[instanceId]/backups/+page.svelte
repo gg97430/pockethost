@@ -299,6 +299,7 @@
               aria-label="Télécharger la sauvegarde"
             >
               <wa-icon name={action === `download:${backup.id}` ? 'rotate' : 'download'}></wa-icon>
+              <span>Télécharger</span>
             </button>
             <button
               type="button"
@@ -309,6 +310,7 @@
               aria-label="Restaurer cette sauvegarde"
             >
               <wa-icon name={action === `restore:${backup.id}` ? 'rotate' : 'rotate-left'}></wa-icon>
+              <span>Restaurer</span>
             </button>
             <button
               type="button"
@@ -319,6 +321,7 @@
               aria-label="Supprimer cette sauvegarde"
             >
               <wa-icon name={action === `delete:${backup.id}` ? 'rotate' : 'trash'}></wa-icon>
+              <span>Supprimer</span>
             </button>
           </div>
         </article>
@@ -582,20 +585,26 @@
 
   .backup-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.4rem;
+    justify-content: flex-end;
   }
 
   .backup-action {
     display: inline-flex;
-    width: 2.25rem;
+    min-width: 7.5rem;
     height: 2.25rem;
     align-items: center;
     justify-content: center;
+    gap: 0.45rem;
     border: 1px solid var(--app-border);
     border-radius: 0.5rem;
     background: var(--app-surface-soft);
+    padding: 0 0.75rem;
     color: var(--app-text-strong);
+    font-size: 0.78rem;
+    font-weight: 850;
     cursor: pointer;
     transition:
       border-color 120ms ease,
@@ -615,10 +624,20 @@
     color: #2563eb;
   }
 
+  .backup-action--restore {
+    border-color: rgb(59 130 246 / 0.42);
+    background: rgb(59 130 246 / 0.1);
+    color: #2563eb;
+  }
+
   .backup-action--danger:hover:not(:disabled) {
     border-color: rgb(239 68 68 / 0.45);
     background: rgb(239 68 68 / 0.1);
     color: #ef4444;
+  }
+
+  .backup-action--danger {
+    min-width: 6.75rem;
   }
 
   .backup-action:disabled {
@@ -650,6 +669,11 @@
 
     .backup-actions {
       justify-content: flex-start;
+    }
+
+    .backup-action {
+      min-width: 0;
+      flex: 1 1 9rem;
     }
   }
 </style>

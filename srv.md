@@ -395,10 +395,17 @@ Le process de sauvegarde:
 ### Importer une grosse archive
 
 La page `Sauvegardes` accepte aussi l'import d'une archive existante en `.zip`, `.tgz` ou `.tar.gz`.
-L'archive doit contenir au minimum `pb_data`. Si `pb_public`, `pb_migrations` ou `pb_hooks` sont absents,
-le restore cree les dossiers manquants automatiquement.
+L'archive doit contenir au minimum `pb_data`, ou directement le contenu de `pb_data` a la racine du ZIP
+(`data.db`, `auxiliary.db`, fichiers `-wal`/`-shm`, etc.). Si `pb_public`, `pb_migrations` ou `pb_hooks`
+sont absents, le restore cree les dossiers manquants automatiquement.
 
-Pour les tres gros fichiers, eviter l'upload navigateur et deposer plutot le fichier sur le serveur:
+L'upload navigateur affiche une jauge de progression et peut envoyer de gros fichiers, par exemple 10 Go, si tout le
+chemin HTTP l'accepte. Attention: si `app.monappli.re` passe par un proxy qui limite la taille des requetes
+(Cloudflare, nginx, load balancer, etc.), l'upload sera coupe avant d'arriver a PocketBase. Dans ce cas, passer le
+domaine en DNS only le temps de l'import, utiliser une entree directe vers le serveur, ou deposer le fichier sur le
+serveur.
+
+Pour les tres gros fichiers et les connexions instables, le plus fiable reste de deposer le fichier sur le serveur:
 
 ```bash
 sudo mkdir -p /home/ubuntu/.local/share/pockethost/data/imports

@@ -835,6 +835,20 @@ const safeTarEntry = (entry) => {
 	const parts = normalized.split("/");
 	return !!normalized && !normalized.startsWith("/") && !normalized.startsWith("../") && !parts.includes("..");
 };
+const normalizeArchiveEntry = (entry) => entry.replace(/^\.\/+/, "");
+const entryParts = (entry) => normalizeArchiveEntry(entry).split("/").filter(Boolean);
+const archiveHasRequiredRestoreData = (entries) => {
+	return entries.some((entry) => {
+		const parts = entryParts(entry);
+		return parts.includes(REQUIRED_RESTORE_DIR) || parts[parts.length - 1] === "data.db";
+	});
+};
+const archiveIncludedDirs = (entries) => {
+	const included = entries.map(entryParts).flat().filter((part, index, parts) => BACKUP_DIRS.includes(part) && parts.indexOf(part) === index);
+	if (included.includes(REQUIRED_RESTORE_DIR)) return included;
+	if (archiveHasRequiredRestoreData(entries)) return [REQUIRED_RESTORE_DIR, ...included];
+	return included;
+};
 const listArchiveEntries = (archivePath, filename) => {
 	return (archiveFormatForFilename(filename) === "zip" ? runCommand("unzip", "-Z1", archivePath) : runCommand("tar", "-tzf", archivePath)).split("\n").map((entry) => entry.trim()).filter(Boolean);
 };
@@ -842,7 +856,7 @@ const validateArchiveListing = (archivePath, filename) => {
 	const entries = listArchiveEntries(archivePath, filename);
 	if (!entries.length) throw new BadRequestError("Archive vide.");
 	for (const entry of entries) if (!safeTarEntry(entry)) throw new BadRequestError("Archive invalide.");
-	if (!entries.some((entry) => entry.replace(/^\.\/+/, "").split("/").filter(Boolean).includes(REQUIRED_RESTORE_DIR))) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} manquant.`);
+	if (!archiveHasRequiredRestoreData(entries)) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} ou fichier data.db manquant.`);
 	return entries;
 };
 const ensureLocalArchive = (instance, backup) => {
@@ -881,11 +895,24 @@ const extractArchive = (archivePath, filename, extractDir) => {
 	}
 	runCommand("tar", "-xzf", archivePath, "-C", extractDir);
 };
-const findArchiveContentRoot = (extractDir) => {
+const moveDirectoryContents = (sourceDir, targetDir) => {
+	$os.mkdirAll(targetDir, DIR_MODE);
+	runCommand("find", sourceDir, "-mindepth", "1", "-maxdepth", "1", "-exec", "mv", "{}", targetDir, ";");
+};
+const findLoosePbDataRoot = (extractDir) => {
+	const found = runCommand("find", extractDir, "-type", "f", "-name", "data.db", "-print", "-quit");
+	if (!found) return "";
+	return parentDir(found.split("\n")[0]);
+};
+const findArchiveContentRoot = (extractDir, normalizedDir) => {
 	if (pathExists$1(`${extractDir}/${REQUIRED_RESTORE_DIR}`)) return extractDir;
 	const found = runCommand("find", extractDir, "-type", "d", "-name", REQUIRED_RESTORE_DIR, "-print", "-quit");
-	if (!found) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} manquant.`);
-	return parentDir(found.split("\n")[0]);
+	if (found) return parentDir(found.split("\n")[0]);
+	const loosePbDataRoot = findLoosePbDataRoot(extractDir);
+	if (!loosePbDataRoot) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} ou fichier data.db manquant.`);
+	$os.removeAll(normalizedDir);
+	moveDirectoryContents(loosePbDataRoot, `${normalizedDir}/${REQUIRED_RESTORE_DIR}`);
+	return normalizedDir;
 };
 const ensureRestorableDirs = (sourceRoot) => {
 	if (!pathExists$1(`${sourceRoot}/${REQUIRED_RESTORE_DIR}`)) throw new BadRequestError(`Archive incomplete: ${REQUIRED_RESTORE_DIR} manquant.`);
@@ -926,12 +953,14 @@ const restoreArchive = (instance, backup) => {
 	const filename = backup.getString("filename");
 	validateArchiveListing(archivePath, filename);
 	const extractDir = `${instanceRoot$2(instance.id)}/.restore-extract-${backup.id}`;
+	const normalizedDir = `${instanceRoot$2(instance.id)}/.restore-normalized-${backup.id}`;
 	$os.mkdirAll(instanceRoot$2(instance.id), DIR_MODE);
 	$os.removeAll(extractDir);
+	$os.removeAll(normalizedDir);
 	$os.mkdirAll(extractDir, PRIVATE_DIR_MODE);
 	try {
 		extractArchive(archivePath, filename, extractDir);
-		const contentRoot = findArchiveContentRoot(extractDir);
+		const contentRoot = findArchiveContentRoot(extractDir, normalizedDir);
 		ensureRestorableDirs(contentRoot);
 		const manifest = readManifest(contentRoot, backup);
 		restoreExtractedDirs(instance, contentRoot);
@@ -943,6 +972,9 @@ const restoreArchive = (instance, backup) => {
 	} finally {
 		try {
 			$os.removeAll(extractDir);
+		} catch {}
+		try {
+			$os.removeAll(normalizedDir);
 		} catch {}
 	}
 };
@@ -1020,6 +1052,7 @@ const createImportedBackup = (instance, authRecord, e) => {
 		const imported = serverPath ? importBackupFromServerPath(instance, authRecord, serverPath) : uploaded ? importBackupFromUpload(instance, uploaded) : null;
 		if (!imported) throw new BadRequestError("Archive manquante. Envoyez un fichier archive ou renseignez un chemin serveur.");
 		const compressedBytes = fileSize(imported.localPath);
+		const entries = listArchiveEntries(imported.localPath, imported.filename);
 		markBackupReady(backup, {
 			filename: imported.filename,
 			localPath: imported.localPath,
@@ -1030,7 +1063,7 @@ const createImportedBackup = (instance, authRecord, e) => {
 				format: BACKUP_FORMAT,
 				imported: true,
 				createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-				included: listArchiveEntries(imported.localPath, imported.filename).map((entry) => entry.replace(/^\.\/+/, "").split("/").filter(Boolean)).flat().filter((part, index, parts) => BACKUP_DIRS.includes(part) && parts.indexOf(part) === index)
+				included: archiveIncludedDirs(entries)
 			}
 		});
 		return backup;

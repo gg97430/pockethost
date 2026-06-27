@@ -97,6 +97,12 @@ export type InstanceBackup = {
   updated: string
 }
 
+export type UploadProgress = {
+  loaded: number
+  total: number
+  percent: number
+}
+
 export type InstanceOverviewBackup = Pick<
   InstanceBackup,
   | 'id'
@@ -252,7 +258,10 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       method: 'POST',
     })
 
-  const importInstanceBackup = async (id: InstanceId, input: { file?: File; serverPath?: string }) => {
+  const importInstanceBackup = async (
+    id: InstanceId,
+    input: { file?: File; serverPath?: string; onProgress?: (progress: UploadProgress) => void }
+  ) => {
     if (input.serverPath) {
       return client.send<{ backup: InstanceBackup }>(`/api/instance/${id}/backups/import`, {
         method: 'POST',
@@ -266,23 +275,43 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     const body = new FormData()
     body.set('archive', input.file)
 
-    const response = await fetch(`${url}/api/instance/${id}/backups/import`, {
-      method: 'POST',
-      headers: {
-        Authorization: client.authStore.token,
-      },
-      body,
+    return await new Promise<{ backup: InstanceBackup }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `${url}/api/instance/${id}/backups/import`)
+      xhr.setRequestHeader('Authorization', client.authStore.token)
+
+      xhr.upload.onprogress = (event) => {
+        if (!input.onProgress) return
+
+        const total = event.lengthComputable ? event.total : input.file?.size || 0
+        const loaded = event.loaded
+        const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0
+        input.onProgress({ loaded, total, percent })
+      }
+
+      xhr.onload = () => {
+        const parseResponse = (): { message?: string; error?: string; backup?: InstanceBackup } => {
+          if (!xhr.responseText) return {}
+          try {
+            return JSON.parse(xhr.responseText)
+          } catch {
+            return {}
+          }
+        }
+
+        const data = parseResponse()
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(data as { backup: InstanceBackup })
+          return
+        }
+
+        reject(new Error(data?.message || data?.error || xhr.statusText || "Erreur pendant l'import."))
+      }
+
+      xhr.onerror = () => reject(new Error("Connexion interrompue pendant l'import."))
+      xhr.onabort = () => reject(new Error('Import annule.'))
+      xhr.send(body)
     })
-
-    if (!response.ok) {
-      const message = await response
-        .json()
-        .then((data) => data?.message || data?.error || response.statusText)
-        .catch(() => response.statusText)
-      throw new Error(message)
-    }
-
-    return response.json() as Promise<{ backup: InstanceBackup }>
   }
 
   const listInstanceBackups = (id: InstanceId) =>

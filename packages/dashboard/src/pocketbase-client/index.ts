@@ -8,6 +8,7 @@ export type {
   OperatorAdminOverview,
   OperatorSettings,
   OperatorUser,
+  UploadProgress,
 } from './PocketbaseClient'
 
 export const client = (() => {

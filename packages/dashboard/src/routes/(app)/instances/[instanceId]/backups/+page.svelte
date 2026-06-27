@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
-  import { client, type InstanceBackup } from '$src/pocketbase-client'
+  import { client, type InstanceBackup, type UploadProgress } from '$src/pocketbase-client'
   import { instance } from '../store'
 
   let backups: InstanceBackup[] = []
@@ -12,10 +12,26 @@
   let archiveFile: File | null = null
   let serverPath = ''
   let fileInput: HTMLInputElement | undefined
+  let uploadProgress: UploadProgress | null = null
+  let uploadPhase = ''
 
   $: ({ id, subdomain, cname, power } = $instance)
   $: displayName = cname || subdomain
   $: isBusy = !!action
+  $: selectedArchiveLabel = archiveFile
+    ? `${archiveFile.name} - ${formatBytes(archiveFile.size)}`
+    : '1. Choisir un ZIP, TGZ ou TAR.GZ'
+  $: uploadProgressLabel = uploadProgress
+    ? uploadProgress.total > 0
+      ? `${formatBytes(uploadProgress.loaded)} / ${formatBytes(uploadProgress.total)}`
+      : `${formatBytes(uploadProgress.loaded)} envoyés`
+    : ''
+  $: uploadPhaseLabel =
+    uploadPhase === 'processing'
+      ? 'Upload termine, verification serveur en cours...'
+      : uploadPhase === 'uploading'
+        ? 'Upload en cours'
+        : ''
 
   const formatBytes = (bytes: number) => {
     if (!bytes) return '0 o'
@@ -88,15 +104,23 @@
     if (isBusy || !archiveFile) return
 
     const confirmed = window.confirm(
-      `Importer ${archiveFile.name} comme sauvegarde de ${displayName} ?\n\nLe contenu doit inclure au minimum le dossier pb_data.`
+      `Importer ${archiveFile.name} comme sauvegarde de ${displayName} ?\n\nFormats acceptes: dossier pb_data complet, ou fichiers PocketBase a la racine du ZIP comme data.db.`
     )
     if (!confirmed) return
 
     action = 'import:file'
     errorMessage = ''
     successMessage = ''
+    uploadProgress = { loaded: 0, total: archiveFile.size, percent: 0 }
+    uploadPhase = 'uploading'
     try {
-      const result = await client().importInstanceBackup(id, { file: archiveFile })
+      const result = await client().importInstanceBackup(id, {
+        file: archiveFile,
+        onProgress: (progress) => {
+          uploadProgress = progress
+          uploadPhase = progress.percent >= 100 ? 'processing' : 'uploading'
+        },
+      })
       backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup.id)]
       archiveFile = null
       if (fileInput) fileInput.value = ''
@@ -106,6 +130,8 @@
       await loadBackups()
     } finally {
       action = ''
+      uploadProgress = null
+      uploadPhase = ''
     }
   }
 
@@ -219,7 +245,7 @@
       <strong>Importer une sauvegarde ZIP à restaurer</strong>
       <span>
         Réservé superadmin. Étape 1 : importez le ZIP. Étape 2 : cliquez <strong>Restaurer</strong> sur la ligne créée.
-        Le dossier <code>pb_data</code> est obligatoire.
+        Le ZIP peut contenir <code>pb_data</code>, ou directement les fichiers SQLite comme <code>data.db</code>.
       </span>
     </div>
 
@@ -234,13 +260,31 @@
             archiveFile = event.currentTarget.files?.[0] || null
           }}
         />
-        <span>{archiveFile ? archiveFile.name : '1. Choisir un ZIP, TGZ ou TAR.GZ'}</span>
+        <span>{selectedArchiveLabel}</span>
       </label>
       <button type="button" class="backup-import-btn" disabled={isBusy || !archiveFile} onclick={importArchive}>
         <wa-icon name={action === 'import:file' ? 'rotate' : 'upload'}></wa-icon>
         {action === 'import:file' ? 'Import...' : '2. Importer le ZIP'}
       </button>
     </div>
+
+    {#if uploadProgress}
+      <div class="backup-upload-progress" aria-live="polite">
+        <div class="backup-upload-progress__row">
+          <strong>{uploadPhaseLabel}</strong>
+          <span>{uploadProgress.percent}% - {uploadProgressLabel}</span>
+        </div>
+        <div
+          class="backup-upload-progress__track"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={uploadProgress.percent}
+        >
+          <span style={`width: ${uploadProgress.percent}%`}></span>
+        </div>
+      </div>
+    {/if}
 
     <div class="backup-import-grid">
       <input
@@ -482,6 +526,52 @@
   .backup-server-path:disabled {
     opacity: 0.58;
     cursor: not-allowed;
+  }
+
+  .backup-upload-progress {
+    display: grid;
+    gap: 0.45rem;
+    border: 1px solid rgb(14 165 233 / 0.24);
+    border-radius: 0.55rem;
+    background: rgb(14 165 233 / 0.07);
+    padding: 0.75rem;
+  }
+
+  .backup-upload-progress__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45rem;
+    color: var(--app-text);
+    font-size: 0.8rem;
+    font-weight: 750;
+  }
+
+  .backup-upload-progress__row strong {
+    color: var(--app-text-strong);
+    font-weight: 900;
+  }
+
+  .backup-upload-progress__row span {
+    color: var(--app-text-muted);
+  }
+
+  .backup-upload-progress__track {
+    position: relative;
+    height: 0.65rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgb(14 165 233 / 0.13);
+  }
+
+  .backup-upload-progress__track span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #0ea5e9, #22c55e);
+    box-shadow: 0 0 18px rgb(14 165 233 / 0.35);
+    transition: width 160ms ease;
   }
 
   .backup-list {

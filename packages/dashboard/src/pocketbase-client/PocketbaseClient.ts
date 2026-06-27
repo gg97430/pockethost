@@ -36,6 +36,10 @@ export type PocketbaseClientConfig = {
   url: string
 }
 export type PocketbaseClient = ReturnType<typeof createPocketbaseClient>
+const BACKUP_CHUNKED_UPLOAD_THRESHOLD_BYTES = 64 * 1024 * 1024
+const BACKUP_UPLOAD_CHUNK_SIZE_BYTES = 32 * 1024 * 1024
+const BACKUP_UPLOAD_CONCURRENCY = 3
+const BACKUP_UPLOAD_CHUNK_RETRIES = 2
 
 export type OperatorSettings = {
   publicSignupEnabled: boolean
@@ -101,6 +105,9 @@ export type UploadProgress = {
   loaded: number
   total: number
   percent: number
+  phase?: 'starting' | 'uploading' | 'assembling' | 'processing'
+  uploadedChunks?: number
+  totalChunks?: number
 }
 
 export type InstanceOverviewBackup = Pick<
@@ -258,6 +265,170 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       method: 'POST',
     })
 
+  const uploadBackupChunk = async (input: {
+    id: InstanceId
+    uploadId: string
+    file: File
+    chunk: Blob
+    index: number
+    onChunkProgress: (loaded: number) => void
+  }) => {
+    const body = new FormData()
+    body.set('index', `${input.index}`)
+    body.set('chunk', input.chunk, `${input.file.name}.part-${input.index}`)
+
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `${url}/api/instance/${input.id}/backups/import/chunked/${input.uploadId}/chunk`)
+      xhr.setRequestHeader('Authorization', client.authStore.token)
+
+      xhr.upload.onprogress = (event) => {
+        input.onChunkProgress(event.loaded)
+      }
+
+      xhr.onload = () => {
+        const data = (() => {
+          if (!xhr.responseText) return {}
+          try {
+            return JSON.parse(xhr.responseText) as { message?: string; error?: string }
+          } catch {
+            return {}
+          }
+        })()
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve()
+          return
+        }
+
+        reject(new Error(data.message || data.error || xhr.statusText || "Erreur pendant l'envoi d'un morceau."))
+      }
+
+      xhr.onerror = () => reject(new Error("Connexion interrompue pendant l'envoi d'un morceau."))
+      xhr.onabort = () => reject(new Error('Upload annule.'))
+      xhr.send(body)
+    })
+  }
+
+  const importInstanceBackupChunked = async (
+    id: InstanceId,
+    input: { file: File; onProgress?: (progress: UploadProgress) => void }
+  ) => {
+    const file = input.file
+    const initialTotalChunks = Math.ceil(file.size / BACKUP_UPLOAD_CHUNK_SIZE_BYTES)
+    input.onProgress?.({
+      loaded: 0,
+      total: file.size,
+      percent: 0,
+      phase: 'starting',
+      uploadedChunks: 0,
+      totalChunks: initialTotalChunks,
+    })
+
+    const start = await client.send<{ uploadId: string; chunkSize: number; totalChunks: number }>(
+      `/api/instance/${id}/backups/import/chunked/start`,
+      {
+        method: 'POST',
+        body: {
+          filename: file.name,
+          size: file.size,
+          chunkSize: BACKUP_UPLOAD_CHUNK_SIZE_BYTES,
+        },
+      }
+    )
+
+    const { uploadId } = start
+    const chunkSize = start.chunkSize || BACKUP_UPLOAD_CHUNK_SIZE_BYTES
+    const totalChunks = start.totalChunks || Math.ceil(file.size / chunkSize)
+    const loadedByChunk = Array.from({ length: totalChunks }, () => 0)
+    let uploadedChunks = 0
+    let nextIndex = 0
+
+    const reportProgress = (phase: UploadProgress['phase']) => {
+      const loaded = Math.min(
+        file.size,
+        loadedByChunk.reduce((sum, value) => sum + value, 0)
+      )
+      const percent = file.size > 0 ? Math.min(100, Math.round((loaded / file.size) * 100)) : 0
+      input.onProgress?.({
+        loaded,
+        total: file.size,
+        percent,
+        phase,
+        uploadedChunks,
+        totalChunks,
+      })
+    }
+
+    const uploadOneChunk = async (index: number) => {
+      const startByte = index * chunkSize
+      const endByte = Math.min(file.size, startByte + chunkSize)
+      const chunk = file.slice(startByte, endByte)
+
+      for (let attempt = 1; attempt <= BACKUP_UPLOAD_CHUNK_RETRIES + 1; attempt++) {
+        loadedByChunk[index] = 0
+        try {
+          await uploadBackupChunk({
+            id,
+            uploadId,
+            file,
+            chunk,
+            index,
+            onChunkProgress: (loaded) => {
+              loadedByChunk[index] = Math.min(chunk.size, loaded)
+              reportProgress('uploading')
+            },
+          })
+          loadedByChunk[index] = chunk.size
+          uploadedChunks += 1
+          reportProgress('uploading')
+          return
+        } catch (error) {
+          loadedByChunk[index] = 0
+          reportProgress('uploading')
+          if (attempt > BACKUP_UPLOAD_CHUNK_RETRIES) throw error
+          await new Promise((resolve) => setTimeout(resolve, attempt * 750))
+        }
+      }
+    }
+
+    const worker = async () => {
+      while (nextIndex < totalChunks) {
+        const index = nextIndex
+        nextIndex += 1
+        await uploadOneChunk(index)
+      }
+    }
+
+    try {
+      reportProgress('uploading')
+      await Promise.all(Array.from({ length: Math.min(BACKUP_UPLOAD_CONCURRENCY, totalChunks) }, () => worker()))
+      reportProgress('assembling')
+      const result = await client.send<{ backup: InstanceBackup }>(
+        `/api/instance/${id}/backups/import/chunked/${uploadId}/complete`,
+        {
+          method: 'POST',
+        }
+      )
+      input.onProgress?.({
+        loaded: file.size,
+        total: file.size,
+        percent: 100,
+        phase: 'processing',
+        uploadedChunks: totalChunks,
+        totalChunks,
+      })
+      return result
+    } catch (error) {
+      await client
+        .send(`/api/instance/${id}/backups/import/chunked/${uploadId}`, {
+          method: 'DELETE',
+        })
+        .catch(() => {})
+      throw error
+    }
+  }
+
   const importInstanceBackup = async (
     id: InstanceId,
     input: { file?: File; serverPath?: string; onProgress?: (progress: UploadProgress) => void }
@@ -271,6 +442,13 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
 
     if (!browser) throw new Error('Import disponible uniquement dans le navigateur.')
     if (!input.file) throw new Error('Archive manquante.')
+
+    if (input.file.size >= BACKUP_CHUNKED_UPLOAD_THRESHOLD_BYTES) {
+      return importInstanceBackupChunked(id, {
+        file: input.file,
+        onProgress: input.onProgress,
+      })
+    }
 
     const body = new FormData()
     body.set('archive', input.file)

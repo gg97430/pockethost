@@ -405,6 +405,23 @@ chemin HTTP l'accepte. Attention: si `app.monappli.re` passe par un proxy qui li
 domaine en DNS only le temps de l'import, utiliser une entree directe vers le serveur, ou deposer le fichier sur le
 serveur.
 
+La route d'import direct accepte 12 Gio par defaut. Pour changer cette limite, ajouter dans `.env`:
+
+```env
+INSTANCE_BACKUP_UPLOAD_LIMIT_BYTES=12884901888
+```
+
+Mettre `0` desactive la limite PocketBase pour cette route directe uniquement; a reserver a un reseau interne ou a un
+acces admin protege.
+
+Pour les archives de plus de 64 Mio, l'interface utilise automatiquement un upload par morceaux de 32 Mio avec
+plusieurs envois en parallele. Chaque requete reste donc petite, ce qui passe mieux avec Cloudflare/nginx. La limite
+serveur par morceau est de 64 Mio par defaut:
+
+```env
+INSTANCE_BACKUP_CHUNK_LIMIT_BYTES=67108864
+```
+
 Pour les tres gros fichiers et les connexions instables, le plus fiable reste de deposer le fichier sur le serveur:
 
 ```bash

@@ -1,3 +1,30 @@
+const DEFAULT_BACKUP_IMPORT_LIMIT_BYTES = 12 * 1024 * 1024 * 1024
+const DEFAULT_BACKUP_IMPORT_CHUNK_LIMIT_BYTES = 64 * 1024 * 1024
+
+const backupImportBodyLimitBytes = () => {
+  const raw = $os.getenv('INSTANCE_BACKUP_UPLOAD_LIMIT_BYTES') || ''
+  if (!raw) return DEFAULT_BACKUP_IMPORT_LIMIT_BYTES
+
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0) {
+    return DEFAULT_BACKUP_IMPORT_LIMIT_BYTES
+  }
+
+  return Math.floor(value)
+}
+
+const backupImportChunkLimitBytes = () => {
+  const raw = $os.getenv('INSTANCE_BACKUP_CHUNK_LIMIT_BYTES') || ''
+  if (!raw) return DEFAULT_BACKUP_IMPORT_CHUNK_LIMIT_BYTES
+
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    return DEFAULT_BACKUP_IMPORT_CHUNK_LIMIT_BYTES
+  }
+
+  return Math.floor(value)
+}
+
 routerAdd(
   'PUT',
   '/api/instance/{id}',
@@ -43,6 +70,40 @@ routerAdd(
   '/api/instance/{id}/backups/import',
   (e) => {
     return require(`${__hooks}/mothership`).HandleInstanceBackupImport(e)
+  },
+  $apis.requireAuth(),
+  $apis.bodyLimit(backupImportBodyLimitBytes())
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/backups/import/chunked/start',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupChunkedStart(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/backups/import/chunked/{uploadId}/chunk',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupChunkedUpload(e)
+  },
+  $apis.requireAuth(),
+  $apis.bodyLimit(backupImportChunkLimitBytes())
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/backups/import/chunked/{uploadId}/complete',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupChunkedComplete(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'DELETE',
+  '/api/instance/{id}/backups/import/chunked/{uploadId}',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupChunkedCancel(e)
   },
   $apis.requireAuth()
 )

@@ -7,11 +7,27 @@ const MAX_STOP_WAIT_SECONDS = 120
 const DIR_MODE = 0o755 as any
 const PRIVATE_DIR_MODE = 0o700 as any
 const PRIVATE_FILE_MODE = 0o600 as any
+const DEFAULT_IMPORT_CHUNK_SIZE_BYTES = 32 * 1024 * 1024
+const MIN_IMPORT_CHUNK_SIZE_BYTES = 1024 * 1024
+const MAX_IMPORT_CHUNKS = 20_000
 
 type BackupKind = 'manual' | 'pre-restore' | 'import'
 type ArchiveFormat = 'tar.gz' | 'zip'
 type ManagedPower = {
   shouldRestart: boolean
+}
+type ImportedArchive = {
+  filename: string
+  localPath: string
+}
+type ChunkSession = {
+  instanceId: string
+  userId: string
+  filename: string
+  size: number
+  chunkSize: number
+  totalChunks: number
+  createdAt: string
 }
 
 const dataRoot = () => {
@@ -27,6 +43,12 @@ const dataRoot = () => {
 
 const backupRoot = () => $os.getenv('INSTANCE_BACKUP_ROOT') || `${dataRoot()}/backups/instances`
 const importRoot = () => $os.getenv('INSTANCE_IMPORT_ROOT') || `${dataRoot()}/imports`
+const chunkUploadRoot = () => `${importRoot()}/.chunked`
+const chunkSessionDir = (instanceId: string, uploadId: string) => `${chunkUploadRoot()}/${instanceId}/${uploadId}`
+const chunkPartsDir = (instanceId: string, uploadId: string) => `${chunkSessionDir(instanceId, uploadId)}/parts`
+const chunkMetaPath = (instanceId: string, uploadId: string) => `${chunkSessionDir(instanceId, uploadId)}/metadata.json`
+const assembledImportDir = (instanceId: string) => `${importRoot()}/assembled/${instanceId}`
+const chunkPartFilename = (index: number) => `${String(index).padStart(8, '0')}.part`
 
 const assertSafeInstanceId = (id: string) => {
   if (!id.match(/^[a-z0-9]+$/)) {
@@ -37,6 +59,12 @@ const assertSafeInstanceId = (id: string) => {
 const assertSafeBackupId = (id: string) => {
   if (!id.match(/^[a-z0-9]+$/)) {
     throw new BadRequestError('Identifiant de sauvegarde invalide.')
+  }
+}
+
+const assertSafeUploadId = (id: string) => {
+  if (!id.match(/^[a-zA-Z0-9_-]+$/)) {
+    throw new BadRequestError("Identifiant d'upload invalide.")
   }
 }
 
@@ -88,6 +116,22 @@ const parentDir = (path: string) => {
 }
 
 const basename = (path: string) => path.replace(/\/+$/g, '').split('/').pop() || ''
+
+const parsePositiveInteger = (value: unknown, field: string) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    throw new BadRequestError(`${field} invalide.`)
+  }
+  return Math.floor(numeric)
+}
+
+const parseNonNegativeInteger = (value: unknown, field: string) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new BadRequestError(`${field} invalide.`)
+  }
+  return Math.floor(numeric)
+}
 
 const slugForFilename = (value: string) => {
   const clean = value
@@ -727,7 +771,11 @@ const restoreArchive = (instance: core.Record, backup: core.Record) => {
   }
 }
 
-const importBackupFromServerPath = (instance: core.Record, authRecord: core.Record, serverPath: string) => {
+const importBackupFromServerPath = (
+  instance: core.Record,
+  authRecord: core.Record,
+  serverPath: string
+): ImportedArchive => {
   const source = assertServerImportAllowed(authRecord, serverPath)
   const filename = createImportBackupFilename(instance, basename(source))
   const dir = backupDir(instance.id)
@@ -752,7 +800,7 @@ const importBackupFromServerPath = (instance: core.Record, authRecord: core.Reco
   return { filename, localPath: finalPath }
 }
 
-const importBackupFromUpload = (instance: core.Record, uploaded: filesystem.File) => {
+const importBackupFromUpload = (instance: core.Record, uploaded: filesystem.File): ImportedArchive => {
   const originalName = uploaded.originalName || uploaded.name || 'archive.zip'
   const filename = createImportBackupFilename(instance, originalName)
   const dir = backupDir(instance.id)
@@ -799,22 +847,18 @@ const readServerPathInput = (e: core.RequestEvent) => {
   return ''
 }
 
-const createImportedBackup = (instance: core.Record, authRecord: core.Record, e: core.RequestEvent) => {
+const createImportedBackupFromImporter = (
+  instance: core.Record,
+  authRecord: core.Record,
+  importer: () => ImportedArchive | null
+) => {
   assertBackupImportAllowed(authRecord)
   assertNoRunningOperation(instance.id)
 
   const backup = createBackupRecord(instance, authRecord, 'import')
 
   try {
-    const serverPath = readServerPathInput(e)
-    const uploaded = !serverPath
-      ? e.findUploadedFiles('archive').filter((file): file is filesystem.File => !!file)[0]
-      : null
-    const imported = serverPath
-      ? importBackupFromServerPath(instance, authRecord, serverPath)
-      : uploaded
-        ? importBackupFromUpload(instance, uploaded)
-        : null
+    const imported = importer()
 
     if (!imported) {
       throw new BadRequestError('Archive manquante. Envoyez un fichier archive ou renseignez un chemin serveur.')
@@ -843,6 +887,248 @@ const createImportedBackup = (instance: core.Record, authRecord: core.Record, e:
   }
 }
 
+const createImportedBackup = (instance: core.Record, authRecord: core.Record, e: core.RequestEvent) => {
+  return createImportedBackupFromImporter(instance, authRecord, () => {
+    const serverPath = readServerPathInput(e)
+    const uploaded = !serverPath
+      ? e.findUploadedFiles('archive').filter((file): file is filesystem.File => !!file)[0]
+      : null
+
+    return serverPath
+      ? importBackupFromServerPath(instance, authRecord, serverPath)
+      : uploaded
+        ? importBackupFromUpload(instance, uploaded)
+        : null
+  })
+}
+
+const createImportedBackupFromServerArchive = (instance: core.Record, authRecord: core.Record, serverPath: string) => {
+  return createImportedBackupFromImporter(instance, authRecord, () =>
+    importBackupFromServerPath(instance, authRecord, serverPath)
+  )
+}
+
+const readChunkStartInput = (e: core.RequestEvent) => {
+  let data = new DynamicModel({
+    filename: '',
+    size: 0,
+    chunkSize: 0,
+  })
+  e.bindBody(data)
+  return JSON.parse(JSON.stringify(data)) as {
+    filename?: string
+    size?: number | string
+    chunkSize?: number | string
+  }
+}
+
+const normalizeChunkSize = (requested: number) => {
+  if (!Number.isFinite(requested) || requested <= 0) return DEFAULT_IMPORT_CHUNK_SIZE_BYTES
+  return Math.max(MIN_IMPORT_CHUNK_SIZE_BYTES, Math.min(Math.floor(requested), DEFAULT_IMPORT_CHUNK_SIZE_BYTES))
+}
+
+const startChunkSession = (instance: core.Record, authRecord: core.Record, e: core.RequestEvent) => {
+  assertBackupImportAllowed(authRecord)
+  assertNoRunningOperation(instance.id)
+
+  const input = readChunkStartInput(e)
+  const filename = `${input.filename || ''}`.trim() || 'archive.zip'
+  extensionForImport(filename)
+
+  const size = parsePositiveInteger(input.size, 'Taille du fichier')
+  const chunkSize = normalizeChunkSize(Number(input.chunkSize || DEFAULT_IMPORT_CHUNK_SIZE_BYTES))
+  const totalChunks = Math.ceil(size / chunkSize)
+  if (totalChunks <= 0 || totalChunks > MAX_IMPORT_CHUNKS) {
+    throw new BadRequestError('Nombre de morceaux invalide.')
+  }
+
+  const uploadId = $security.randomStringWithAlphabet(24, 'abcdefghijklmnopqrstuvwxyz0123456789')
+  const session: ChunkSession = {
+    instanceId: instance.id,
+    userId: authRecord.id,
+    filename,
+    size,
+    chunkSize,
+    totalChunks,
+    createdAt: new Date().toISOString(),
+  }
+
+  const sessionDir = chunkSessionDir(instance.id, uploadId)
+  $os.mkdirAll(chunkPartsDir(instance.id, uploadId), PRIVATE_DIR_MODE)
+  $os.writeFile(chunkMetaPath(instance.id, uploadId), JSON.stringify(session, null, 2), PRIVATE_FILE_MODE)
+
+  return { uploadId, session, sessionDir }
+}
+
+const readChunkSession = (instanceId: string, uploadId: string) => {
+  assertSafeInstanceId(instanceId)
+  assertSafeUploadId(uploadId)
+
+  try {
+    const raw = toString($os.readFile(chunkMetaPath(instanceId, uploadId)))
+    const session = JSON.parse(raw) as ChunkSession
+    if (session.instanceId !== instanceId) throw new Error('Instance mismatch')
+    extensionForImport(session.filename)
+    parsePositiveInteger(session.size, 'Taille du fichier')
+    parsePositiveInteger(session.chunkSize, 'Taille de morceau')
+    parsePositiveInteger(session.totalChunks, 'Nombre de morceaux')
+    return session
+  } catch {
+    throw new BadRequestError("Session d'upload introuvable ou invalide.")
+  }
+}
+
+const assertChunkSessionOwner = (session: ChunkSession, authRecord: core.Record) => {
+  if (session.userId !== authRecord.id) {
+    throw new BadRequestError("Session d'upload non autorisee.")
+  }
+}
+
+const expectedChunkBytes = (session: ChunkSession, index: number) => {
+  if (index === session.totalChunks - 1) {
+    return session.size - session.chunkSize * (session.totalChunks - 1)
+  }
+  return session.chunkSize
+}
+
+const uploadedChunkCount = (instanceId: string, uploadId: string, totalChunks: number) => {
+  let count = 0
+  for (let index = 0; index < totalChunks; index++) {
+    if (pathExists(`${chunkPartsDir(instanceId, uploadId)}/${chunkPartFilename(index)}`)) count++
+  }
+  return count
+}
+
+const storeChunk = (instance: core.Record, authRecord: core.Record, uploadId: string, e: core.RequestEvent) => {
+  const session = readChunkSession(instance.id, uploadId)
+  assertChunkSessionOwner(session, authRecord)
+  assertBackupImportAllowed(authRecord)
+
+  const rawIndex = e.request.formValue('index')
+  const index = parseNonNegativeInteger(rawIndex, 'Index de morceau')
+  if (index >= session.totalChunks) throw new BadRequestError('Index de morceau hors limite.')
+
+  const uploaded = e.findUploadedFiles('chunk').filter((file): file is filesystem.File => !!file)[0]
+  if (!uploaded) throw new BadRequestError('Morceau manquant.')
+
+  const partsDir = chunkPartsDir(instance.id, uploadId)
+  const partFilename = chunkPartFilename(index)
+  const partPath = `${partsDir}/${partFilename}`
+  $os.mkdirAll(partsDir, PRIVATE_DIR_MODE)
+  try {
+    $os.remove(partPath)
+  } catch {}
+
+  const fs = $filesystem.local(partsDir)
+  try {
+    fs.uploadFile(uploaded, partFilename)
+  } finally {
+    fs.close()
+  }
+
+  const uploadedBytes = fileSize(partPath)
+  const expectedBytes = expectedChunkBytes(session, index)
+  if (uploadedBytes !== expectedBytes) {
+    try {
+      $os.remove(partPath)
+    } catch {}
+    throw new BadRequestError('Taille de morceau invalide.')
+  }
+
+  return {
+    index,
+    uploadedBytes,
+    uploadedChunks: uploadedChunkCount(instance.id, uploadId, session.totalChunks),
+    totalChunks: session.totalChunks,
+  }
+}
+
+const assertAllChunksPresent = (instanceId: string, uploadId: string, session: ChunkSession) => {
+  let totalBytes = 0
+  for (let index = 0; index < session.totalChunks; index++) {
+    const partPath = `${chunkPartsDir(instanceId, uploadId)}/${chunkPartFilename(index)}`
+    if (!pathExists(partPath)) {
+      throw new BadRequestError(`Morceau ${index + 1}/${session.totalChunks} manquant.`)
+    }
+    const partBytes = fileSize(partPath)
+    const expectedBytes = expectedChunkBytes(session, index)
+    if (partBytes !== expectedBytes) {
+      throw new BadRequestError(`Morceau ${index + 1}/${session.totalChunks} invalide.`)
+    }
+    totalBytes += partBytes
+  }
+
+  if (totalBytes !== session.size) {
+    throw new BadRequestError('Taille totale assemblee invalide.')
+  }
+}
+
+const assembleChunkSessionArchive = (instance: core.Record, uploadId: string, session: ChunkSession) => {
+  assertAllChunksPresent(instance.id, uploadId, session)
+
+  const filename = createImportBackupFilename(instance, session.filename)
+  const dir = assembledImportDir(instance.id)
+  const finalPath = `${dir}/${uploadId}-${filename}`
+  const tmpPath = `${finalPath}.tmp`
+
+  assertSafeBackupFilename(filename)
+  $os.mkdirAll(dir, PRIVATE_DIR_MODE)
+  $os.removeAll(tmpPath)
+  $os.removeAll(finalPath)
+
+  try {
+    runCommand(
+      'sh',
+      '-c',
+      'set -e; : > "$3"; i=0; while [ "$i" -lt "$2" ]; do part=$(printf "%s/%08d.part" "$1" "$i"); cat "$part" >> "$3"; i=$((i + 1)); done',
+      'sh',
+      chunkPartsDir(instance.id, uploadId),
+      `${session.totalChunks}`,
+      tmpPath
+    )
+
+    if (fileSize(tmpPath) !== session.size) {
+      throw new BadRequestError('Archive assemblee invalide.')
+    }
+
+    $os.rename(tmpPath, finalPath)
+    return finalPath
+  } catch (error) {
+    try {
+      $os.remove(tmpPath)
+    } catch {}
+    throw error
+  }
+}
+
+const completeChunkSession = (instance: core.Record, authRecord: core.Record, uploadId: string) => {
+  const session = readChunkSession(instance.id, uploadId)
+  assertChunkSessionOwner(session, authRecord)
+  assertBackupImportAllowed(authRecord)
+
+  let assembledPath = ''
+  try {
+    assembledPath = assembleChunkSessionArchive(instance, uploadId, session)
+    return createImportedBackupFromServerArchive(instance, authRecord, assembledPath)
+  } finally {
+    if (assembledPath) {
+      try {
+        $os.remove(assembledPath)
+      } catch {}
+    }
+    try {
+      $os.removeAll(chunkSessionDir(instance.id, uploadId))
+    } catch {}
+  }
+}
+
+const cancelChunkSession = (instance: core.Record, authRecord: core.Record, uploadId: string) => {
+  const session = readChunkSession(instance.id, uploadId)
+  assertChunkSessionOwner(session, authRecord)
+  assertBackupImportAllowed(authRecord)
+  $os.removeAll(chunkSessionDir(instance.id, uploadId))
+}
+
 export const HandleInstanceBackupCreate = (e: core.RequestEvent) => {
   const log = mkLog('POST:instance:backup')
   const authRecord = requireAuthRecord(e.auth)
@@ -865,6 +1151,49 @@ export const HandleInstanceBackupImport = (e: core.RequestEvent) => {
   log(`imported ${backup.id} for ${instance.id}`)
 
   return e.json(200, { backup: serializeBackup(backup) })
+}
+
+export const HandleInstanceBackupChunkedStart = (e: core.RequestEvent) => {
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  const { uploadId, session } = startChunkSession(instance, authRecord, e)
+  return e.json(200, {
+    uploadId,
+    chunkSize: session.chunkSize,
+    totalChunks: session.totalChunks,
+  })
+}
+
+export const HandleInstanceBackupChunkedUpload = (e: core.RequestEvent) => {
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  const result = storeChunk(instance, authRecord, pathValue(e, 'uploadId'), e)
+  return e.json(200, result)
+}
+
+export const HandleInstanceBackupChunkedComplete = (e: core.RequestEvent) => {
+  const log = mkLog('POST:instance:backup:import:chunked:complete')
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  const backup = completeChunkSession(instance, authRecord, pathValue(e, 'uploadId'))
+  log(`imported ${backup.id} for ${instance.id} from chunked upload`)
+
+  return e.json(200, { backup: serializeBackup(backup) })
+}
+
+export const HandleInstanceBackupChunkedCancel = (e: core.RequestEvent) => {
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  cancelChunkSession(instance, authRecord, pathValue(e, 'uploadId'))
+  return e.json(200, { status: 'ok' })
 }
 
 export const HandleInstanceBackupsList = (e: core.RequestEvent) => {

@@ -26,12 +26,22 @@
       ? `${formatBytes(uploadProgress.loaded)} / ${formatBytes(uploadProgress.total)}`
       : `${formatBytes(uploadProgress.loaded)} envoyés`
     : ''
+  $: uploadChunksLabel =
+    uploadProgress?.totalChunks && uploadProgress.totalChunks > 1
+      ? `${uploadProgress.uploadedChunks || 0}/${uploadProgress.totalChunks} morceaux`
+      : ''
   $: uploadPhaseLabel =
-    uploadPhase === 'processing'
-      ? 'Upload termine, verification serveur en cours...'
-      : uploadPhase === 'uploading'
-        ? 'Upload en cours'
-        : ''
+    uploadPhase === 'starting'
+      ? 'Préparation de l’upload'
+      : uploadPhase === 'assembling'
+        ? 'Upload terminé, assemblage serveur en cours...'
+        : uploadPhase === 'processing'
+          ? 'Vérification serveur en cours...'
+          : uploadPhase === 'uploading'
+            ? uploadChunksLabel
+              ? 'Upload par morceaux en cours'
+              : 'Upload en cours'
+            : ''
 
   const formatBytes = (bytes: number) => {
     if (!bytes) return '0 o'
@@ -118,7 +128,7 @@
         file: archiveFile,
         onProgress: (progress) => {
           uploadProgress = progress
-          uploadPhase = progress.percent >= 100 ? 'processing' : 'uploading'
+          uploadPhase = progress.phase || (progress.percent >= 100 ? 'processing' : 'uploading')
         },
       })
       backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup.id)]
@@ -272,7 +282,9 @@
       <div class="backup-upload-progress" aria-live="polite">
         <div class="backup-upload-progress__row">
           <strong>{uploadPhaseLabel}</strong>
-          <span>{uploadProgress.percent}% - {uploadProgressLabel}</span>
+          <span
+            >{uploadProgress.percent}% - {uploadProgressLabel}{uploadChunksLabel ? ` - ${uploadChunksLabel}` : ''}</span
+          >
         </div>
         <div
           class="backup-upload-progress__track"

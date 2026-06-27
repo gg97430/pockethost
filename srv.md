@@ -392,6 +392,39 @@ Le process de sauvegarde:
 5. calcule la taille et le checksum SHA256;
 6. redemarre l'instance si elle etait active.
 
+### Importer une grosse archive
+
+La page `Sauvegardes` accepte aussi l'import d'une archive existante en `.zip`, `.tgz` ou `.tar.gz`.
+L'archive doit contenir au minimum `pb_data`. Si `pb_public`, `pb_migrations` ou `pb_hooks` sont absents,
+le restore cree les dossiers manquants automatiquement.
+
+Pour les tres gros fichiers, eviter l'upload navigateur et deposer plutot le fichier sur le serveur:
+
+```bash
+sudo mkdir -p /home/ubuntu/.local/share/pockethost/data/imports
+sudo chown -R ubuntu:ubuntu /home/ubuntu/.local/share/pockethost/data/imports
+scp backup.zip ubuntu@141.94.92.92:/home/ubuntu/.local/share/pockethost/data/imports/
+```
+
+Dans l'interface, utiliser ensuite `Importer serveur` avec:
+
+```text
+/home/ubuntu/.local/share/pockethost/data/imports/backup.zip
+```
+
+Par securite, seuls les superadmins peuvent importer depuis un chemin serveur, et le fichier doit etre dans
+`INSTANCE_IMPORT_ROOT`. Sans variable specifique, ce dossier vaut:
+
+```text
+/home/ubuntu/.local/share/pockethost/data/imports
+```
+
+Pour changer ce dossier, ajouter dans `.env`:
+
+```env
+INSTANCE_IMPORT_ROOT=/chemin/autorise/imports
+```
+
 Pour activer un stockage distant S3/R2, ajouter les variables suivantes dans `.env`:
 
 ```env

@@ -83,7 +83,7 @@ export type InstanceBackup = {
   id: string
   user: string
   instance: string
-  kind: 'manual' | 'pre-restore'
+  kind: 'manual' | 'pre-restore' | 'import'
   status: 'running' | 'ready' | 'failed'
   filename: string
   remoteKey: string
@@ -251,6 +251,39 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     client.send<{ backup: InstanceBackup }>(`/api/instance/${id}/backups`, {
       method: 'POST',
     })
+
+  const importInstanceBackup = async (id: InstanceId, input: { file?: File; serverPath?: string }) => {
+    if (input.serverPath) {
+      return client.send<{ backup: InstanceBackup }>(`/api/instance/${id}/backups/import`, {
+        method: 'POST',
+        body: { serverPath: input.serverPath },
+      })
+    }
+
+    if (!browser) throw new Error('Import disponible uniquement dans le navigateur.')
+    if (!input.file) throw new Error('Archive manquante.')
+
+    const body = new FormData()
+    body.set('archive', input.file)
+
+    const response = await fetch(`${url}/api/instance/${id}/backups/import`, {
+      method: 'POST',
+      headers: {
+        Authorization: client.authStore.token,
+      },
+      body,
+    })
+
+    if (!response.ok) {
+      const message = await response
+        .json()
+        .then((data) => data?.message || data?.error || response.statusText)
+        .catch(() => response.statusText)
+      throw new Error(message)
+    }
+
+    return response.json() as Promise<{ backup: InstanceBackup }>
+  }
 
   const listInstanceBackups = (id: InstanceId) =>
     client.send<{ backups: InstanceBackup[] }>(`/api/instance/${id}/backups`, {
@@ -523,6 +556,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     duplicateInstance,
     getInstanceOverview,
     createInstanceBackup,
+    importInstanceBackup,
     listInstanceBackups,
     restoreInstanceBackup,
     deleteInstanceBackup,

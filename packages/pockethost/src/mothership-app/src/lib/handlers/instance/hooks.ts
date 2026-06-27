@@ -39,6 +39,14 @@ routerAdd(
   $apis.requireAuth()
 )
 routerAdd(
+  'POST',
+  '/api/instance/{id}/backups/import',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupImport(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
   'GET',
   '/api/instance/{id}/backups',
   (e) => {

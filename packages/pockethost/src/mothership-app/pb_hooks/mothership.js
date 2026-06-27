@@ -500,6 +500,7 @@ const BACKUP_DIRS = [
 	"pb_migrations",
 	"pb_hooks"
 ];
+const REQUIRED_RESTORE_DIR = "pb_data";
 const MAX_STOP_WAIT_SECONDS = 120;
 const DIR_MODE = 493;
 const PRIVATE_DIR_MODE = 448;
@@ -513,6 +514,7 @@ const dataRoot$2 = () => {
 	throw new Error("Impossible de trouver le dossier de donnees des instances.");
 };
 const backupRoot = () => $os.getenv("INSTANCE_BACKUP_ROOT") || `${dataRoot$2()}/backups/instances`;
+const importRoot = () => $os.getenv("INSTANCE_IMPORT_ROOT") || `${dataRoot$2()}/imports`;
 const assertSafeInstanceId$2 = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
@@ -520,7 +522,7 @@ const assertSafeBackupId = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant de sauvegarde invalide.");
 };
 const assertSafeBackupFilename = (filename) => {
-	if (!filename.match(/^[a-zA-Z0-9._-]+\.tar\.gz$/)) throw new BadRequestError("Nom de sauvegarde invalide.");
+	if (!filename.match(/^[a-zA-Z0-9._-]+\.(tar\.gz|tgz|zip)$/)) throw new BadRequestError("Nom de sauvegarde invalide.");
 };
 const instanceRoot$2 = (id) => `${dataRoot$2()}/instances/${id}`;
 const backupDir = (instanceId) => `${backupRoot()}/${instanceId}`;
@@ -548,13 +550,34 @@ const errorMessage = (error) => {
 	if (error instanceof Error) return error.message;
 	return `${error}`;
 };
+const realpath = (path) => runCommand("realpath", path);
+const parentDir = (path) => {
+	const parts = path.replace(/\/+$/g, "").split("/");
+	parts.pop();
+	return parts.join("/") || "/";
+};
+const basename = (path) => path.replace(/\/+$/g, "").split("/").pop() || "";
 const slugForFilename = (value) => {
 	return value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/g, "") || "instance";
 };
 const timestampForFilename = () => (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const createBackupFilename = (instance, kind) => {
-	const suffix = kind === "pre-restore" ? "pre-restore" : "manual";
+	const suffix = kind === "pre-restore" ? "pre-restore" : kind === "import" ? "import" : "manual";
 	return `${timestampForFilename()}-${slugForFilename(instance.getString("subdomain"))}-${suffix}-${instance.id}.tar.gz`;
+};
+const extensionForImport = (filename) => {
+	const lower = filename.toLowerCase();
+	if (lower.endsWith(".tar.gz")) return "tar.gz";
+	if (lower.endsWith(".tgz")) return "tgz";
+	if (lower.endsWith(".zip")) return "zip";
+	throw new BadRequestError("Archive non prise en charge. Utilisez .zip, .tgz ou .tar.gz.");
+};
+const archiveFormatForFilename = (filename) => {
+	return extensionForImport(filename) === "zip" ? "zip" : "tar.gz";
+};
+const createImportBackupFilename = (instance, sourceFilename) => {
+	const extension = extensionForImport(sourceFilename);
+	return `${timestampForFilename()}-${slugForFilename(instance.getString("subdomain"))}-import-${instance.id}.${extension}`;
 };
 const findInstance$1 = (id) => {
 	assertSafeInstanceId$2(id);
@@ -568,6 +591,18 @@ const requireAuthRecord$1 = (authRecord) => {
 };
 const assertInstanceAccess$1 = (instance, authRecord) => {
 	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
+};
+const assertServerImportAllowed = (authRecord, requestedPath) => {
+	if (!authRecord.getBool("superAdmin")) throw new BadRequestError("L'import depuis un chemin serveur est reserve au superadmin.");
+	if (!requestedPath.trim()) throw new BadRequestError("Chemin serveur manquant.");
+	$os.mkdirAll(importRoot(), DIR_MODE);
+	const root = realpath(importRoot());
+	const source = realpath(requestedPath.trim());
+	if (source !== root && !source.startsWith(`${root}/`)) throw new BadRequestError(`Archive hors du dossier autorise (${root}).`);
+	return source;
+};
+const assertBackupImportAllowed = (authRecord) => {
+	if (!authRecord.getBool("superAdmin")) throw new BadRequestError("L'import d'archive est reserve au superadmin.");
 };
 const serializeBackup$1 = (backup) => ({
 	id: backup.id,
@@ -800,10 +835,15 @@ const safeTarEntry = (entry) => {
 	const parts = normalized.split("/");
 	return !!normalized && !normalized.startsWith("/") && !normalized.startsWith("../") && !parts.includes("..");
 };
-const validateArchiveListing = (archivePath) => {
-	const entries = runCommand("tar", "-tzf", archivePath).split("\n").map((entry) => entry.trim()).filter(Boolean);
+const listArchiveEntries = (archivePath, filename) => {
+	return (archiveFormatForFilename(filename) === "zip" ? runCommand("unzip", "-Z1", archivePath) : runCommand("tar", "-tzf", archivePath)).split("\n").map((entry) => entry.trim()).filter(Boolean);
+};
+const validateArchiveListing = (archivePath, filename) => {
+	const entries = listArchiveEntries(archivePath, filename);
 	if (!entries.length) throw new BadRequestError("Archive vide.");
 	for (const entry of entries) if (!safeTarEntry(entry)) throw new BadRequestError("Archive invalide.");
+	if (!entries.some((entry) => entry.replace(/^\.\/+/, "").split("/").filter(Boolean).includes(REQUIRED_RESTORE_DIR))) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} manquant.`);
+	return entries;
 };
 const ensureLocalArchive = (instance, backup) => {
 	const filename = backup.getString("filename");
@@ -819,11 +859,37 @@ const ensureLocalArchive = (instance, backup) => {
 	$app.save(backup);
 	return localPath;
 };
-const readManifest = (extractDir) => {
-	const raw = toString($os.readFile(`${extractDir}/manifest.json`));
+const readManifest = (extractDir, backup) => {
+	const manifestPath = `${extractDir}/manifest.json`;
+	if (!pathExists$1(manifestPath)) return {
+		format: BACKUP_FORMAT,
+		imported: true,
+		originalFilename: backup?.getString("filename") || "",
+		createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+		included: BACKUP_DIRS.filter((dir) => pathExists$1(`${extractDir}/${dir}`)),
+		sourceSizeBytes: 0
+	};
+	const raw = toString($os.readFile(manifestPath));
 	const manifest = JSON.parse(raw);
 	if (!manifest || manifest.format !== BACKUP_FORMAT) throw new BadRequestError("Format de sauvegarde non pris en charge.");
 	return manifest;
+};
+const extractArchive = (archivePath, filename, extractDir) => {
+	if (archiveFormatForFilename(filename) === "zip") {
+		runCommand("unzip", "-q", archivePath, "-d", extractDir);
+		return;
+	}
+	runCommand("tar", "-xzf", archivePath, "-C", extractDir);
+};
+const findArchiveContentRoot = (extractDir) => {
+	if (pathExists$1(`${extractDir}/${REQUIRED_RESTORE_DIR}`)) return extractDir;
+	const found = runCommand("find", extractDir, "-type", "d", "-name", REQUIRED_RESTORE_DIR, "-print", "-quit");
+	if (!found) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} manquant.`);
+	return parentDir(found.split("\n")[0]);
+};
+const ensureRestorableDirs = (sourceRoot) => {
+	if (!pathExists$1(`${sourceRoot}/${REQUIRED_RESTORE_DIR}`)) throw new BadRequestError(`Archive incomplete: ${REQUIRED_RESTORE_DIR} manquant.`);
+	for (const dir of BACKUP_DIRS) $os.mkdirAll(`${sourceRoot}/${dir}`, DIR_MODE);
 };
 const restoreExtractedDirs = (instance, extractDir) => {
 	const root = instanceRoot$2(instance.id);
@@ -857,15 +923,18 @@ const restoreExtractedDirs = (instance, extractDir) => {
 };
 const restoreArchive = (instance, backup) => {
 	const archivePath = ensureLocalArchive(instance, backup);
-	validateArchiveListing(archivePath);
+	const filename = backup.getString("filename");
+	validateArchiveListing(archivePath, filename);
 	const extractDir = `${instanceRoot$2(instance.id)}/.restore-extract-${backup.id}`;
 	$os.mkdirAll(instanceRoot$2(instance.id), DIR_MODE);
 	$os.removeAll(extractDir);
 	$os.mkdirAll(extractDir, PRIVATE_DIR_MODE);
 	try {
-		runCommand("tar", "-xzf", archivePath, "-C", extractDir);
-		const manifest = readManifest(extractDir);
-		restoreExtractedDirs(instance, extractDir);
+		extractArchive(archivePath, filename, extractDir);
+		const contentRoot = findArchiveContentRoot(extractDir);
+		ensureRestorableDirs(contentRoot);
+		const manifest = readManifest(contentRoot, backup);
+		restoreExtractedDirs(instance, contentRoot);
 		if (manifest.instance?.version) {
 			const current = findInstance$1(instance.id);
 			current.set("version", manifest.instance.version);
@@ -877,6 +946,99 @@ const restoreArchive = (instance, backup) => {
 		} catch {}
 	}
 };
+const importBackupFromServerPath = (instance, authRecord, serverPath) => {
+	const source = assertServerImportAllowed(authRecord, serverPath);
+	const filename = createImportBackupFilename(instance, basename(source));
+	const dir = backupDir(instance.id);
+	const finalPath = backupPath(instance.id, filename);
+	const tmpPath = `${finalPath}.tmp`;
+	assertSafeBackupFilename(filename);
+	$os.mkdirAll(dir, DIR_MODE);
+	$os.removeAll(tmpPath);
+	try {
+		runCommand("cp", source, tmpPath);
+		validateArchiveListing(tmpPath, filename);
+		$os.rename(tmpPath, finalPath);
+	} catch (error) {
+		try {
+			$os.remove(tmpPath);
+		} catch {}
+		throw error;
+	}
+	return {
+		filename,
+		localPath: finalPath
+	};
+};
+const importBackupFromUpload = (instance, uploaded) => {
+	const filename = createImportBackupFilename(instance, uploaded.originalName || uploaded.name || "archive.zip");
+	const dir = backupDir(instance.id);
+	const finalPath = backupPath(instance.id, filename);
+	const tmpName = `${filename}.tmp`;
+	const tmpPath = `${dir}/${tmpName}`;
+	assertSafeBackupFilename(filename);
+	$os.mkdirAll(dir, DIR_MODE);
+	$os.removeAll(tmpPath);
+	const fs = $filesystem.local(dir);
+	try {
+		fs.uploadFile(uploaded, tmpName);
+		validateArchiveListing(tmpPath, filename);
+		$os.rename(tmpPath, finalPath);
+	} catch (error) {
+		try {
+			$os.remove(tmpPath);
+		} catch {}
+		throw error;
+	} finally {
+		fs.close();
+	}
+	return {
+		filename,
+		localPath: finalPath
+	};
+};
+const readServerPathInput = (e) => {
+	try {
+		const value = e.request.formValue("serverPath");
+		if (value) return value;
+	} catch {}
+	try {
+		let data = new DynamicModel({ serverPath: "" });
+		e.bindBody(data);
+		data = JSON.parse(JSON.stringify(data));
+		return data.serverPath || "";
+	} catch {}
+	return "";
+};
+const createImportedBackup = (instance, authRecord, e) => {
+	assertBackupImportAllowed(authRecord);
+	assertNoRunningOperation(instance.id);
+	const backup = createBackupRecord(instance, authRecord, "import");
+	try {
+		const serverPath = readServerPathInput(e);
+		const uploaded = !serverPath ? e.findUploadedFiles("archive").filter((file) => !!file)[0] : null;
+		const imported = serverPath ? importBackupFromServerPath(instance, authRecord, serverPath) : uploaded ? importBackupFromUpload(instance, uploaded) : null;
+		if (!imported) throw new BadRequestError("Archive manquante. Envoyez un fichier archive ou renseignez un chemin serveur.");
+		const compressedBytes = fileSize(imported.localPath);
+		markBackupReady(backup, {
+			filename: imported.filename,
+			localPath: imported.localPath,
+			sizeBytes: compressedBytes,
+			compressedBytes,
+			checksum: sha256(imported.localPath),
+			manifest: {
+				format: BACKUP_FORMAT,
+				imported: true,
+				createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+				included: listArchiveEntries(imported.localPath, imported.filename).map((entry) => entry.replace(/^\.\/+/, "").split("/").filter(Boolean)).flat().filter((part, index, parts) => BACKUP_DIRS.includes(part) && parts.indexOf(part) === index)
+			}
+		});
+		return backup;
+	} catch (error) {
+		markBackupFailed(backup, error);
+		throw error;
+	}
+};
 const HandleInstanceBackupCreate = (e) => {
 	const log = mkLog("POST:instance:backup");
 	const authRecord = requireAuthRecord$1(e.auth);
@@ -884,6 +1046,15 @@ const HandleInstanceBackupCreate = (e) => {
 	assertInstanceAccess$1(instance, authRecord);
 	const backup = createBackupForInstance(instance, authRecord, "manual", true);
 	log(`created ${backup.id} for ${instance.id}`);
+	return e.json(200, { backup: serializeBackup$1(backup) });
+};
+const HandleInstanceBackupImport = (e) => {
+	const log = mkLog("POST:instance:backup:import");
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const backup = createImportedBackup(instance, authRecord, e);
+	log(`imported ${backup.id} for ${instance.id}`);
 	return e.json(200, { backup: serializeBackup$1(backup) });
 };
 const HandleInstanceBackupsList = (e) => {
@@ -4550,6 +4721,7 @@ exports.HandleEdgeHeartbeat = HandleEdgeHeartbeat;
 exports.HandleInstanceBackupCreate = HandleInstanceBackupCreate;
 exports.HandleInstanceBackupDelete = HandleInstanceBackupDelete;
 exports.HandleInstanceBackupDownload = HandleInstanceBackupDownload;
+exports.HandleInstanceBackupImport = HandleInstanceBackupImport;
 exports.HandleInstanceBackupRestore = HandleInstanceBackupRestore;
 exports.HandleInstanceBackupsList = HandleInstanceBackupsList;
 exports.HandleInstanceCreate = HandleInstanceCreate;

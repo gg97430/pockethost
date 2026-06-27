@@ -9,6 +9,9 @@
   let action = ''
   let errorMessage = ''
   let successMessage = ''
+  let archiveFile: File | null = null
+  let serverPath = ''
+  let fileInput: HTMLInputElement
 
   $: ({ id, subdomain, cname, power } = $instance)
   $: displayName = cname || subdomain
@@ -38,6 +41,7 @@
 
   const kindLabel = (kind: InstanceBackup['kind']) => {
     if (kind === 'pre-restore') return 'Avant restauration'
+    if (kind === 'import') return 'Importée'
     return 'Manuelle'
   }
 
@@ -72,6 +76,56 @@
       const result = await client().createInstanceBackup(id)
       backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup.id)]
       successMessage = 'Sauvegarde créée'
+    } catch (error) {
+      errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      await loadBackups()
+    } finally {
+      action = ''
+    }
+  }
+
+  const importArchive = async () => {
+    if (isBusy || !archiveFile) return
+
+    const confirmed = window.confirm(
+      `Importer ${archiveFile.name} comme sauvegarde de ${displayName} ?\n\nLe contenu doit inclure au minimum le dossier pb_data.`
+    )
+    if (!confirmed) return
+
+    action = 'import:file'
+    errorMessage = ''
+    successMessage = ''
+    try {
+      const result = await client().importInstanceBackup(id, { file: archiveFile })
+      backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup.id)]
+      archiveFile = null
+      if (fileInput) fileInput.value = ''
+      successMessage = 'Archive importée'
+    } catch (error) {
+      errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      await loadBackups()
+    } finally {
+      action = ''
+    }
+  }
+
+  const importServerArchive = async () => {
+    const path = serverPath.trim()
+    if (isBusy || !path) return
+
+    const confirmed = window.confirm(
+      `Importer l'archive serveur suivante pour ${displayName} ?\n\n${path}\n\nLe fichier doit être dans le dossier serveur autorisé.`
+    )
+    if (!confirmed) return
+
+    action = 'import:server'
+    errorMessage = ''
+    successMessage = ''
+    try {
+      const result = await client().importInstanceBackup(id, { serverPath: path })
+      backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup.id)]
+      serverPath = ''
+      successMessage = 'Archive serveur importée'
     } catch (error) {
       errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
       await loadBackups()
@@ -154,6 +208,52 @@
     </button>
   </svelte:fragment>
 
+  <section class="backup-import">
+    <div class="backup-import-copy">
+      <strong>Importer une archive</strong>
+      <span>
+        Réservé superadmin. Formats acceptés : .zip, .tgz, .tar.gz. Le dossier <code>pb_data</code> est obligatoire.
+      </span>
+    </div>
+
+    <div class="backup-import-grid">
+      <label class="backup-file">
+        <input
+          bind:this={fileInput}
+          type="file"
+          accept=".zip,.tgz,.tar.gz,application/zip,application/gzip"
+          disabled={isBusy}
+          onchange={(event) => {
+            archiveFile = event.currentTarget.files?.[0] || null
+          }}
+        />
+        <span>{archiveFile ? archiveFile.name : 'Choisir un ZIP ou TAR.GZ'}</span>
+      </label>
+      <button type="button" class="backup-import-btn" disabled={isBusy || !archiveFile} onclick={importArchive}>
+        <wa-icon name={action === 'import:file' ? 'rotate' : 'upload'}></wa-icon>
+        {action === 'import:file' ? 'Import...' : 'Importer fichier'}
+      </button>
+    </div>
+
+    <div class="backup-import-grid">
+      <input
+        class="backup-server-path"
+        bind:value={serverPath}
+        disabled={isBusy}
+        placeholder="Chemin serveur, ex. /home/ubuntu/.local/share/pockethost/data/imports/backup.zip"
+      />
+      <button
+        type="button"
+        class="backup-import-btn backup-import-btn--server"
+        disabled={isBusy || !serverPath.trim()}
+        onclick={importServerArchive}
+      >
+        <wa-icon name={action === 'import:server' ? 'rotate' : 'server'}></wa-icon>
+        {action === 'import:server' ? 'Import...' : 'Importer serveur'}
+      </button>
+    </div>
+  </section>
+
   {#if isLoading}
     <div class="backup-empty">Chargement des sauvegardes...</div>
   {:else if backups.length === 0}
@@ -228,6 +328,113 @@
 </FeatureTab>
 
 <style>
+  .backup-import {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    border: 1px solid rgb(14 165 233 / 0.22);
+    border-radius: 0.65rem;
+    background: linear-gradient(135deg, rgb(14 165 233 / 0.1), transparent 55%), var(--app-surface);
+    padding: 1rem;
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .backup-import-copy {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .backup-import-copy strong {
+    color: var(--app-text-strong);
+    font-size: 0.95rem;
+    font-weight: 900;
+  }
+
+  .backup-import-copy span {
+    color: var(--app-text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .backup-import-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.65rem;
+  }
+
+  .backup-file {
+    display: flex;
+    min-height: 2.5rem;
+    align-items: center;
+    border: 1px dashed rgb(14 165 233 / 0.35);
+    border-radius: 0.5rem;
+    background: rgb(14 165 233 / 0.06);
+    padding: 0 0.75rem;
+    color: var(--app-text);
+    font-size: 0.86rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .backup-file input {
+    display: none;
+  }
+
+  .backup-server-path {
+    min-height: 2.5rem;
+    min-width: 0;
+    border: 1px solid var(--app-border);
+    border-radius: 0.5rem;
+    background: var(--app-surface);
+    padding: 0 0.75rem;
+    color: var(--app-text);
+    font: inherit;
+    font-size: 0.86rem;
+  }
+
+  .backup-server-path:focus-visible {
+    outline: none;
+    border-color: rgb(14 165 233 / 0.55);
+    box-shadow: 0 0 0 3px rgb(14 165 233 / 0.16);
+  }
+
+  .backup-import-btn {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 1px solid rgb(14 165 233 / 0.45);
+    border-radius: 0.5rem;
+    background: rgb(14 165 233 / 0.12);
+    padding: 0 0.85rem;
+    color: #0284c7;
+    font-size: 0.84rem;
+    font-weight: 900;
+    cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease;
+  }
+
+  .backup-import-btn:hover:not(:disabled) {
+    border-color: rgb(14 165 233 / 0.68);
+    background: rgb(14 165 233 / 0.18);
+  }
+
+  .backup-import-btn--server {
+    border-color: rgb(99 102 241 / 0.38);
+    background: rgb(99 102 241 / 0.1);
+    color: #4f46e5;
+  }
+
+  .backup-import-btn:disabled,
+  .backup-file:has(input:disabled),
+  .backup-server-path:disabled {
+    opacity: 0.58;
+    cursor: not-allowed;
+  }
+
   .backup-list {
     display: grid;
     gap: 0.75rem;
@@ -433,6 +640,10 @@
   }
 
   @media (max-width: 720px) {
+    .backup-import-grid {
+      grid-template-columns: 1fr;
+    }
+
     .backup-row {
       grid-template-columns: 1fr;
     }

@@ -81,6 +81,9 @@ routerAdd("POST", "/api/instance/{id}/duplicate", (e) => {
 routerAdd("POST", "/api/instance/{id}/backups", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceBackupCreate(e);
 }, $apis.requireAuth());
+routerAdd("POST", "/api/instance/{id}/backups/import", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceBackupImport(e);
+}, $apis.requireAuth());
 routerAdd("GET", "/api/instance/{id}/backups", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceBackupsList(e);
 }, $apis.requireAuth());

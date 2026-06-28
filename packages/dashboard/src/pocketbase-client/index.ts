@@ -3,11 +3,14 @@ import { createPocketbaseClient, type PocketbaseClient } from './PocketbaseClien
 
 export type {
   InstanceBackup,
+  InstanceBackupPolicy,
+  InstanceBackupPolicyResponse,
   InstanceOverview,
   InstanceOverviewBackup,
   OperatorAdminOverview,
   OperatorSettings,
   OperatorUser,
+  UpdateInstanceBackupPolicyInput,
   UploadProgress,
 } from './PocketbaseClient'
 

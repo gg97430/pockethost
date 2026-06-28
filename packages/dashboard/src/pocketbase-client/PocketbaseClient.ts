@@ -87,7 +87,7 @@ export type InstanceBackup = {
   id: string
   user: string
   instance: string
-  kind: 'manual' | 'pre-restore' | 'import'
+  kind: 'manual' | 'pre-restore' | 'import' | 'scheduled'
   status: 'running' | 'ready' | 'failed'
   filename: string
   remoteKey: string
@@ -100,6 +100,49 @@ export type InstanceBackup = {
   created: string
   updated: string
 }
+
+export type InstanceBackupPolicy = {
+  id: string
+  user: string
+  instance: string
+  enabled: boolean
+  cron: string
+  localEnabled: boolean
+  remoteEnabled: boolean
+  localRetentionCount: number
+  localRetentionDays: number
+  remoteRetentionCount: number
+  remoteRetentionDays: number
+  activeBehavior: 'stop-restart' | 'skip-active'
+  lastStatus: 'never' | 'running' | 'ready' | 'failed' | 'skipped'
+  lastRunAt: string
+  lastSuccessAt: string
+  lastBackup: string
+  lastError: string
+  lastDurationSeconds: number
+  created: string
+  updated: string
+}
+
+export type InstanceBackupPolicyResponse = {
+  policy: InstanceBackupPolicy
+  capabilities: {
+    s3Enabled: boolean
+  }
+}
+
+export type UpdateInstanceBackupPolicyInput = Pick<
+  InstanceBackupPolicy,
+  | 'enabled'
+  | 'cron'
+  | 'localEnabled'
+  | 'remoteEnabled'
+  | 'localRetentionCount'
+  | 'localRetentionDays'
+  | 'remoteRetentionCount'
+  | 'remoteRetentionDays'
+  | 'activeBehavior'
+>
 
 export type UploadProgress = {
   loaded: number
@@ -497,6 +540,25 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       method: 'GET',
     })
 
+  const getInstanceBackupPolicy = (id: InstanceId) =>
+    client.send<InstanceBackupPolicyResponse>(`/api/instance/${id}/backups/policy`, {
+      method: 'GET',
+    })
+
+  const updateInstanceBackupPolicy = (id: InstanceId, input: UpdateInstanceBackupPolicyInput) =>
+    client.send<InstanceBackupPolicyResponse>(`/api/instance/${id}/backups/policy`, {
+      method: 'PUT',
+      body: input,
+    })
+
+  const runInstanceBackupPolicy = (id: InstanceId) =>
+    client.send<{ policy: InstanceBackupPolicy; backup: InstanceBackup | null }>(
+      `/api/instance/${id}/backups/policy/run`,
+      {
+        method: 'POST',
+      }
+    )
+
   const restoreInstanceBackup = (id: InstanceId, backupId: string) =>
     client.send<{ status: 'ok' }>(`/api/instance/${id}/backups/${backupId}/restore`, {
       method: 'POST',
@@ -771,6 +833,9 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     createInstanceBackup,
     importInstanceBackup,
     listInstanceBackups,
+    getInstanceBackupPolicy,
+    updateInstanceBackupPolicy,
+    runInstanceBackupPolicy,
     restoreInstanceBackup,
     restoreInstanceBackupToNewInstance,
     deleteInstanceBackup,

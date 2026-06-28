@@ -1,8 +1,16 @@
 <script lang="ts">
   import { goto } from '$app/navigation'
   import { onDestroy, onMount } from 'svelte'
+  import CronSchedulePicker from '$components/CronSchedulePicker.svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
-  import { client, type InstanceBackup, type UploadProgress } from '$src/pocketbase-client'
+  import { validateCronExpression } from '$lib/cronExpression'
+  import {
+    client,
+    type InstanceBackup,
+    type InstanceBackupPolicy,
+    type UpdateInstanceBackupPolicyInput,
+    type UploadProgress,
+  } from '$src/pocketbase-client'
   import { instance } from '../store'
 
   type BackupOperation = {
@@ -21,8 +29,26 @@
   }
 
   const RESTORE_OPERATION_STALE_MS = 36 * 60 * 60 * 1000
+  const defaultPolicyDraft = (): UpdateInstanceBackupPolicyInput => ({
+    enabled: false,
+    cron: '0 2 * * *',
+    localEnabled: true,
+    remoteEnabled: false,
+    localRetentionCount: 7,
+    localRetentionDays: 14,
+    remoteRetentionCount: 30,
+    remoteRetentionDays: 90,
+    activeBehavior: 'stop-restart',
+  })
 
   let backups: InstanceBackup[] = []
+  let backupPolicy: InstanceBackupPolicy | null = null
+  let backupPolicyDraft = defaultPolicyDraft()
+  let backupPolicyS3Enabled = false
+  let backupPolicyCustomCron = false
+  let isPolicyLoading = true
+  let policyAction = ''
+  let policyErrorMessage = ''
   let isLoading = true
   let action = ''
   let errorMessage = ''
@@ -53,12 +79,24 @@
   $: isBusy = !!action || hasRunningBackup || hasActiveRestore
   $: liveOperationKind = activeRestoreOperation || isRestoreAction ? 'restore' : 'backup'
   $: liveOperation = liveOperationKind === 'restore' ? activeRestoreOperation : activeRunningOperation
-  $: liveOperationVisible = action === 'create' || hasRunningBackup || isRestoreAction || hasActiveRestore
+  $: liveOperationVisible =
+    action === 'create' || action === 'policy-run' || hasRunningBackup || isRestoreAction || hasActiveRestore
   $: liveOperationLabel =
-    liveOperation?.label || (liveOperationKind === 'restore' ? 'Restauration demandée' : 'Demande envoyée au serveur')
+    liveOperation?.label ||
+    (liveOperationKind === 'restore'
+      ? 'Restauration demandée'
+      : action === 'policy-run'
+        ? 'Sauvegarde automatique demandée'
+        : 'Demande envoyée au serveur')
   $: liveOperationPercent =
     liveOperation?.percent ||
-    (liveOperationKind === 'restore' ? (isRestoreAction ? 8 : 0) : action === 'create' ? 6 : 0)
+    (liveOperationKind === 'restore'
+      ? isRestoreAction
+        ? 8
+        : 0
+      : action === 'create' || action === 'policy-run'
+        ? 6
+        : 0)
   $: liveOperationStartedAt = liveOperation?.startedAt || operationStartedAt || now
   $: liveOperationElapsed = formatDuration(Math.max(0, now - liveOperationStartedAt))
   $: liveOperationSource = liveOperation?.sourceSizeBytes || 0
@@ -69,6 +107,19 @@
       : 'La sauvegarde travaille en arrière-plan. Vous pouvez laisser cette page ouverte, elle se rafraîchit automatiquement.'
   $: liveOperationCount =
     liveOperationKind === 'restore' ? (hasActiveRestore || isRestoreAction ? 1 : 0) : runningBackups.length || 1
+  $: policyStatusText = backupPolicy ? policyStatusLabel(backupPolicy.lastStatus) : 'Non configurée'
+  $: policyDestinationText = [
+    backupPolicyDraft.localEnabled ? 'Interne' : '',
+    backupPolicyDraft.remoteEnabled ? 'S3/R2' : '',
+  ]
+    .filter(Boolean)
+    .join(' + ')
+  $: policyCanSave =
+    !policyAction &&
+    !!backupPolicyDraft.cron.trim() &&
+    validateCronExpression(backupPolicyDraft.cron) &&
+    (backupPolicyDraft.localEnabled || backupPolicyDraft.remoteEnabled) &&
+    (!backupPolicyDraft.remoteEnabled || backupPolicyS3Enabled)
   $: selectedArchiveLabel = archiveFile
     ? `${archiveFile.name} - ${formatBytes(archiveFile.size)}`
     : '1. Choisir un ZIP, TGZ ou TAR.GZ'
@@ -130,7 +181,38 @@
   function kindLabel(kind: InstanceBackup['kind']) {
     if (kind === 'pre-restore') return 'Avant restauration'
     if (kind === 'import') return 'Importée'
+    if (kind === 'scheduled') return 'Automatique'
     return 'Manuelle'
+  }
+
+  function policyStatusLabel(status: InstanceBackupPolicy['lastStatus']) {
+    if (status === 'ready') return 'Dernière sauvegarde OK'
+    if (status === 'running') return 'Sauvegarde en cours'
+    if (status === 'failed') return 'Dernière sauvegarde en échec'
+    if (status === 'skipped') return 'Dernière exécution ignorée'
+    return 'Jamais exécutée'
+  }
+
+  function policyStatusClass(status: InstanceBackupPolicy['lastStatus'] | undefined) {
+    if (status === 'ready') return 'backup-policy-status--ready'
+    if (status === 'running') return 'backup-policy-status--running'
+    if (status === 'failed') return 'backup-policy-status--failed'
+    if (status === 'skipped') return 'backup-policy-status--skipped'
+    return 'backup-policy-status--never'
+  }
+
+  function syncPolicyDraft(policy: InstanceBackupPolicy) {
+    backupPolicyDraft = {
+      enabled: policy.enabled,
+      cron: policy.cron || '0 2 * * *',
+      localEnabled: policy.localEnabled,
+      remoteEnabled: policy.remoteEnabled,
+      localRetentionCount: policy.localRetentionCount,
+      localRetentionDays: policy.localRetentionDays,
+      remoteRetentionCount: policy.remoteRetentionCount,
+      remoteRetentionDays: policy.remoteRetentionDays,
+      activeBehavior: policy.activeBehavior,
+    }
   }
 
   function manifestObject(manifest: unknown) {
@@ -292,6 +374,25 @@
     }
   }
 
+  const loadBackupPolicy = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) {
+      isPolicyLoading = true
+      policyErrorMessage = ''
+    }
+    try {
+      const result = await client().getInstanceBackupPolicy(id)
+      backupPolicy = result.policy
+      backupPolicyS3Enabled = result.capabilities.s3Enabled
+      syncPolicyDraft(result.policy)
+    } catch (error) {
+      if (!silent) {
+        policyErrorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      }
+    } finally {
+      if (!silent) isPolicyLoading = false
+    }
+  }
+
   const refreshBackupsSilently = async () => {
     const current = Date.now()
     if (current - lastSilentRefreshAt < 1200) return
@@ -302,6 +403,7 @@
 
   onMount(() => {
     void loadBackups()
+    void loadBackupPolicy()
     clockTimer = setInterval(() => {
       now = Date.now()
     }, 1000)
@@ -339,6 +441,60 @@
       await loadBackups()
     } finally {
       action = ''
+      operationStartedAt = 0
+    }
+  }
+
+  const saveBackupPolicy = async () => {
+    if (!policyCanSave) return
+
+    policyAction = 'save'
+    policyErrorMessage = ''
+    successMessage = ''
+    try {
+      const result = await client().updateInstanceBackupPolicy(id, backupPolicyDraft)
+      backupPolicy = result.policy
+      backupPolicyS3Enabled = result.capabilities.s3Enabled
+      syncPolicyDraft(result.policy)
+      successMessage = backupPolicyDraft.enabled ? 'Planification enregistrée' : 'Planification désactivée'
+    } catch (error) {
+      policyErrorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+    } finally {
+      policyAction = ''
+    }
+  }
+
+  const runBackupPolicyNow = async () => {
+    if (isBusy || policyAction || !backupPolicyDraft.enabled) return
+
+    const confirmed = window.confirm(
+      `Lancer maintenant la sauvegarde automatique de ${displayName} ?${power && backupPolicyDraft.activeBehavior === 'stop-restart' ? "\n\nL'instance sera arrêtée puis redémarrée automatiquement." : ''}`
+    )
+    if (!confirmed) return
+
+    action = 'policy-run'
+    policyAction = 'run'
+    operationStartedAt = Date.now()
+    errorMessage = ''
+    policyErrorMessage = ''
+    successMessage = ''
+    try {
+      setTimeout(() => void refreshBackupsSilently(), 1200)
+      const result = await client().runInstanceBackupPolicy(id)
+      backupPolicy = result.policy
+      syncPolicyDraft(result.policy)
+      if (result.backup) {
+        backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup?.id)]
+      }
+      await loadBackups({ silent: true })
+      successMessage = result.backup ? 'Sauvegarde automatique créée' : 'Exécution automatique terminée'
+    } catch (error) {
+      policyErrorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      await loadBackupPolicy({ silent: true })
+      await loadBackups({ silent: true })
+    } finally {
+      action = ''
+      policyAction = ''
       operationStartedAt = 0
     }
   }
@@ -578,6 +734,169 @@
         {action === 'import:server' ? 'Import...' : 'Importer ZIP serveur'}
       </button>
     </div>
+  </section>
+
+  <section class="backup-policy">
+    <div class="backup-policy__header">
+      <div>
+        <strong>Planification automatique</strong>
+        <span>Créer et purger les sauvegardes selon une politique par instance.</span>
+      </div>
+      <span class="backup-policy-status {policyStatusClass(backupPolicy?.lastStatus)}">{policyStatusText}</span>
+    </div>
+
+    {#if policyErrorMessage}
+      <p class="backup-policy-error">{policyErrorMessage}</p>
+    {/if}
+
+    {#if isPolicyLoading}
+      <div class="backup-policy-loading">Chargement de la planification...</div>
+    {:else}
+      <div class="backup-policy-grid">
+        <label class="backup-policy-toggle">
+          <input type="checkbox" bind:checked={backupPolicyDraft.enabled} disabled={!!policyAction} />
+          <span>
+            <strong>Activer</strong>
+            <small>{backupPolicyDraft.enabled ? 'Planification active' : 'Planification inactive'}</small>
+          </span>
+        </label>
+
+        <div class="backup-policy-field backup-policy-field--wide">
+          <label for="backup-policy-cron">Fréquence</label>
+          <CronSchedulePicker
+            id="backup-policy-cron"
+            bind:value={backupPolicyDraft.cron}
+            bind:customMode={backupPolicyCustomCron}
+          />
+          {#if backupPolicyCustomCron}
+            <input
+              class="backup-policy-input"
+              bind:value={backupPolicyDraft.cron}
+              placeholder="0 2 * * *"
+              aria-label="Expression cron personnalisée"
+            />
+          {/if}
+          {#if backupPolicyDraft.cron && !validateCronExpression(backupPolicyDraft.cron)}
+            <span class="backup-policy-help backup-policy-help--error">Expression cron invalide.</span>
+          {:else}
+            <span class="backup-policy-help">Heure UTC. Exemple : <code>0 2 * * *</code> tous les jours à 02:00.</span>
+          {/if}
+        </div>
+
+        <div class="backup-policy-field">
+          <span class="backup-policy-field-label">Destinations</span>
+          <label class="backup-policy-check">
+            <input type="checkbox" bind:checked={backupPolicyDraft.localEnabled} disabled={!!policyAction} />
+            <span>Interne serveur</span>
+          </label>
+          <label class="backup-policy-check">
+            <input
+              type="checkbox"
+              bind:checked={backupPolicyDraft.remoteEnabled}
+              disabled={!!policyAction || !backupPolicyS3Enabled}
+            />
+            <span>S3/R2 {backupPolicyS3Enabled ? '' : 'non configuré'}</span>
+          </label>
+          <span class="backup-policy-help">Actif : {policyDestinationText || 'aucune destination'}</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="backup-policy-active">Instance active</label>
+          <select
+            id="backup-policy-active"
+            class="backup-policy-input"
+            bind:value={backupPolicyDraft.activeBehavior}
+            disabled={!!policyAction}
+          >
+            <option value="stop-restart">Arrêter puis redémarrer</option>
+            <option value="skip-active">Ignorer si active</option>
+          </select>
+          <span class="backup-policy-help">Le mode fiable arrête l'instance avant la copie.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <span class="backup-policy-field-label">Rétention interne</span>
+          <div class="backup-policy-retention">
+            <input
+              class="backup-policy-input"
+              type="number"
+              min="0"
+              max="3650"
+              bind:value={backupPolicyDraft.localRetentionCount}
+              disabled={!!policyAction || !backupPolicyDraft.localEnabled}
+              aria-label="Nombre de sauvegardes internes à garder"
+            />
+            <span>sauvegardes</span>
+            <input
+              class="backup-policy-input"
+              type="number"
+              min="0"
+              max="3650"
+              bind:value={backupPolicyDraft.localRetentionDays}
+              disabled={!!policyAction || !backupPolicyDraft.localEnabled}
+              aria-label="Nombre de jours de sauvegardes internes à garder"
+            />
+            <span>jours</span>
+          </div>
+          <span class="backup-policy-help">0 = illimité. Les sauvegardes manuelles ne sont pas purgées.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <span class="backup-policy-field-label">Rétention S3/R2</span>
+          <div class="backup-policy-retention">
+            <input
+              class="backup-policy-input"
+              type="number"
+              min="0"
+              max="3650"
+              bind:value={backupPolicyDraft.remoteRetentionCount}
+              disabled={!!policyAction || !backupPolicyDraft.remoteEnabled}
+              aria-label="Nombre de sauvegardes S3 à garder"
+            />
+            <span>sauvegardes</span>
+            <input
+              class="backup-policy-input"
+              type="number"
+              min="0"
+              max="3650"
+              bind:value={backupPolicyDraft.remoteRetentionDays}
+              disabled={!!policyAction || !backupPolicyDraft.remoteEnabled}
+              aria-label="Nombre de jours de sauvegardes S3 à garder"
+            />
+            <span>jours</span>
+          </div>
+          <span class="backup-policy-help">La purge S3 ne touche que les sauvegardes automatiques.</span>
+        </div>
+      </div>
+
+      <div class="backup-policy-footer">
+        <div class="backup-policy-last">
+          <span>Dernière exécution : {backupPolicy?.lastRunAt ? formatDate(backupPolicy.lastRunAt) : '-'}</span>
+          <span>Dernier succès : {backupPolicy?.lastSuccessAt ? formatDate(backupPolicy.lastSuccessAt) : '-'}</span>
+          {#if backupPolicy?.lastDurationSeconds}
+            <span>Durée : {formatDuration(backupPolicy.lastDurationSeconds * 1000)}</span>
+          {/if}
+          {#if backupPolicy?.lastError}
+            <span class="backup-policy-last-error">{backupPolicy.lastError}</span>
+          {/if}
+        </div>
+        <div class="backup-policy-actions">
+          <button
+            type="button"
+            class="backup-policy-secondary"
+            disabled={isBusy || !!policyAction}
+            onclick={runBackupPolicyNow}
+          >
+            <wa-icon name={policyAction === 'run' ? 'rotate' : 'play'}></wa-icon>
+            {policyAction === 'run' ? 'Exécution...' : 'Lancer maintenant'}
+          </button>
+          <button type="button" class="backup-policy-primary" disabled={!policyCanSave} onclick={saveBackupPolicy}>
+            <wa-icon name={policyAction === 'save' ? 'rotate' : 'floppy-disk'}></wa-icon>
+            {policyAction === 'save' ? 'Enregistrement...' : 'Enregistrer'}
+          </button>
+        </div>
+      </div>
+    {/if}
   </section>
 
   {#if liveOperationVisible}
@@ -916,6 +1235,239 @@
     background: linear-gradient(90deg, #0ea5e9, #22c55e);
     box-shadow: 0 0 18px rgb(14 165 233 / 0.35);
     transition: width 160ms ease;
+  }
+
+  .backup-policy {
+    display: grid;
+    gap: 0.95rem;
+    margin-bottom: 1rem;
+    border: 1px solid rgb(30 184 84 / 0.24);
+    border-radius: 0.65rem;
+    background: linear-gradient(135deg, rgb(30 184 84 / 0.09), transparent 54%), var(--app-surface);
+    padding: 1rem;
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .backup-policy__header,
+  .backup-policy-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .backup-policy__header > div {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .backup-policy__header strong {
+    color: var(--app-text-strong);
+    font-size: 0.95rem;
+    font-weight: 950;
+  }
+
+  .backup-policy__header span,
+  .backup-policy-help,
+  .backup-policy-loading,
+  .backup-policy-last {
+    color: var(--app-text-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+
+  .backup-policy-status {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--app-border);
+    border-radius: 999px;
+    padding: 0.22rem 0.65rem;
+    font-size: 0.72rem;
+    font-weight: 900;
+    line-height: 1.2;
+  }
+
+  .backup-policy-status--ready {
+    border-color: rgb(30 184 84 / 0.36);
+    background: rgb(30 184 84 / 0.1);
+    color: #16a34a;
+  }
+
+  .backup-policy-status--running {
+    border-color: rgb(245 158 11 / 0.38);
+    background: rgb(245 158 11 / 0.12);
+    color: #d97706;
+  }
+
+  .backup-policy-status--failed {
+    border-color: rgb(239 68 68 / 0.36);
+    background: rgb(239 68 68 / 0.1);
+    color: #ef4444;
+  }
+
+  .backup-policy-status--skipped,
+  .backup-policy-status--never {
+    border-color: rgb(148 163 184 / 0.36);
+    background: rgb(148 163 184 / 0.1);
+    color: var(--app-text-muted);
+  }
+
+  .backup-policy-error {
+    margin: 0;
+    border: 1px solid rgb(239 68 68 / 0.28);
+    border-radius: 0.5rem;
+    background: rgb(239 68 68 / 0.08);
+    padding: 0.65rem 0.75rem;
+    color: #ef4444;
+    font-size: 0.82rem;
+    font-weight: 800;
+  }
+
+  .backup-policy-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .backup-policy-toggle,
+  .backup-policy-field {
+    display: grid;
+    gap: 0.45rem;
+    min-width: 0;
+    border: 1px solid var(--app-border);
+    border-radius: 0.55rem;
+    background: var(--app-surface-soft);
+    padding: 0.8rem;
+  }
+
+  .backup-policy-toggle {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .backup-policy-toggle input,
+  .backup-policy-check input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: #1eb854;
+  }
+
+  .backup-policy-toggle span {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .backup-policy-toggle strong,
+  .backup-policy-field > label,
+  .backup-policy-field-label,
+  .backup-policy-check {
+    color: var(--app-text-strong);
+    font-size: 0.8rem;
+    font-weight: 900;
+  }
+
+  .backup-policy-toggle small {
+    color: var(--app-text-muted);
+    font-size: 0.74rem;
+    font-weight: 700;
+  }
+
+  .backup-policy-field--wide {
+    grid-column: span 2;
+  }
+
+  .backup-policy-check {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .backup-policy-input {
+    min-height: 2.35rem;
+    min-width: 0;
+    border: 1px solid var(--app-border);
+    border-radius: 0.48rem;
+    background: var(--app-surface);
+    padding: 0 0.65rem;
+    color: var(--app-text);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 750;
+  }
+
+  .backup-policy-input:focus-visible {
+    outline: none;
+    border-color: rgb(30 184 84 / 0.55);
+    box-shadow: 0 0 0 3px rgb(30 184 84 / 0.14);
+  }
+
+  .backup-policy-input:disabled,
+  .backup-policy-check input:disabled,
+  .backup-policy-toggle input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .backup-policy-help--error,
+  .backup-policy-last-error {
+    color: #ef4444;
+  }
+
+  .backup-policy-retention {
+    display: grid;
+    grid-template-columns: minmax(4.6rem, 6rem) auto minmax(4.6rem, 6rem) auto;
+    gap: 0.45rem;
+    align-items: center;
+    color: var(--app-text-muted);
+    font-size: 0.78rem;
+    font-weight: 750;
+  }
+
+  .backup-policy-last {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.85rem;
+    max-width: 46rem;
+  }
+
+  .backup-policy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+  }
+
+  .backup-policy-primary,
+  .backup-policy-secondary {
+    display: inline-flex;
+    min-height: 2.35rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: 0.5rem;
+    padding: 0 0.9rem;
+    font-size: 0.82rem;
+    font-weight: 900;
+    cursor: pointer;
+  }
+
+  .backup-policy-primary {
+    border: 1px solid #1eb854;
+    background: #1eb854;
+    color: white;
+  }
+
+  .backup-policy-secondary {
+    border: 1px solid rgb(59 130 246 / 0.42);
+    background: rgb(59 130 246 / 0.1);
+    color: #2563eb;
+  }
+
+  .backup-policy-primary:disabled,
+  .backup-policy-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .backup-live {
@@ -1314,6 +1866,26 @@
   @media (max-width: 720px) {
     .backup-import-grid {
       grid-template-columns: 1fr;
+    }
+
+    .backup-policy-grid,
+    .backup-policy-field--wide {
+      grid-template-columns: 1fr;
+      grid-column: auto;
+    }
+
+    .backup-policy-retention {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .backup-policy-actions {
+      width: 100%;
+      justify-content: stretch;
+    }
+
+    .backup-policy-primary,
+    .backup-policy-secondary {
+      flex: 1 1 10rem;
     }
 
     .backup-live {

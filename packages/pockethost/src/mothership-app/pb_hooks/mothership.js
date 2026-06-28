@@ -511,6 +511,22 @@ const MAX_IMPORT_CHUNKS = 2e4;
 const DEFAULT_BACKUP_GZIP_LEVEL = 1;
 const DEFAULT_BACKUP_NICE_LEVEL = 19;
 const DEFAULT_BACKUP_IONICE_CLASS = 3;
+const DEFAULT_BACKUP_POLICY_CRON = "0 2 * * *";
+const DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_COUNT = 7;
+const DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_DAYS = 14;
+const DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_COUNT = 30;
+const DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_DAYS = 90;
+const BACKUP_POLICY_CRON_MACROS = [
+	"@yearly",
+	"@annually",
+	"@monthly",
+	"@weekly",
+	"@daily",
+	"@midnight",
+	"@hourly",
+	"@weekdays",
+	"@weekends"
+];
 const dataRoot$2 = () => {
 	const envRoot = $os.getenv("DATA_ROOT");
 	if (envRoot) return envRoot;
@@ -669,12 +685,49 @@ const parseNonNegativeInteger = (value, field) => {
 	if (!Number.isFinite(numeric) || numeric < 0) throw new BadRequestError(`${field} invalide.`);
 	return Math.floor(numeric);
 };
+const normalizeInteger = (value, fallback, min, max) => {
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric)) return fallback;
+	return Math.max(min, Math.min(max, Math.floor(numeric)));
+};
+const normalizeBool = (value, fallback) => {
+	if (typeof value === "boolean") return value;
+	if (typeof value === "string") {
+		const normalized = value.trim().toLowerCase();
+		if ([
+			"true",
+			"1",
+			"yes",
+			"on"
+		].includes(normalized)) return true;
+		if ([
+			"false",
+			"0",
+			"no",
+			"off"
+		].includes(normalized)) return false;
+	}
+	return fallback;
+};
+const isValidBackupPolicyCron = (cron) => {
+	const expression = cron.trim();
+	if (!expression) return false;
+	if (BACKUP_POLICY_CRON_MACROS.includes(expression)) return true;
+	const parts = expression.split(/\s+/);
+	if (parts.length !== 5) return false;
+	return parts.every((part) => /^[\d*,\-/?LW#]+$/i.test(part));
+};
+const normalizeBackupPolicyCron = (value) => {
+	const cron = `${value || DEFAULT_BACKUP_POLICY_CRON}`.trim();
+	if (!isValidBackupPolicyCron(cron)) throw new BadRequestError("Planification cron invalide.");
+	return cron;
+};
 const slugForFilename = (value) => {
 	return value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/g, "") || "instance";
 };
 const timestampForFilename = () => (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const createBackupFilename = (instance, kind) => {
-	const suffix = kind === "pre-restore" ? "pre-restore" : kind === "import" ? "import" : "manual";
+	const suffix = kind === "pre-restore" ? "pre-restore" : kind === "import" ? "import" : kind === "scheduled" ? "auto" : "manual";
 	return `${timestampForFilename()}-${slugForFilename(instance.getString("subdomain"))}-${suffix}-${instance.id}.tar.gz`;
 };
 const extensionForImport = (filename) => {
@@ -829,7 +882,7 @@ const createBackupRecord = (instance, authRecord, kind) => {
 	backup.set("remoteError", "");
 	backup.set("manifest", { operation: {
 		phase: "queued",
-		label: kind === "manual" ? "Sauvegarde demandee" : kind === "pre-restore" ? "Sauvegarde de securite demandee" : "Import demande",
+		label: kind === "manual" ? "Sauvegarde demandee" : kind === "pre-restore" ? "Sauvegarde de securite demandee" : kind === "scheduled" ? "Sauvegarde automatique demandee" : "Import demande",
 		percent: 2,
 		startedAt: now,
 		updatedAt: now
@@ -1016,7 +1069,8 @@ const createArchive = (instance, backup, kind) => {
 		} catch {}
 	}
 };
-const markBackupReady = (backup, details) => {
+const markBackupReady = (backup, details, storage = {}) => {
+	const uploadRemote = storage.uploadRemote ?? true;
 	backup.set("filename", details.filename);
 	backup.set("localPath", details.localPath);
 	backup.set("sizeBytes", details.sizeBytes);
@@ -1025,7 +1079,7 @@ const markBackupReady = (backup, details) => {
 	backup.set("manifest", details.manifest);
 	backup.set("error", "");
 	try {
-		if (s3Config()) {
+		if (uploadRemote && s3Config()) {
 			backup.set("manifest", {
 				...details.manifest,
 				operation: {
@@ -1045,14 +1099,22 @@ const markBackupReady = (backup, details) => {
 				compressedBytes: details.compressedBytes
 			});
 		}
-		const remoteKey = uploadBackupToS3(backup.getString("instance"), details.filename, details.localPath);
+		const remoteKey = uploadRemote && s3Config() ? uploadBackupToS3(backup.getString("instance"), details.filename, details.localPath) : "";
 		backup.set("remoteKey", remoteKey);
 		backup.set("remoteError", "");
 	} catch (error) {
 		backup.set("remoteError", errorMessage(error));
 	}
 	backup.set("status", "ready");
-	backup.set("manifest", details.manifest);
+	backup.set("manifest", {
+		...recordObject(details.manifest),
+		storage: {
+			localEnabled: storage.localEnabled ?? true,
+			remoteEnabled: uploadRemote,
+			policyId: storage.policyId || "",
+			remoteUploaded: !!backup.getString("remoteKey")
+		}
+	});
 	$app.save(backup);
 };
 const markBackupFailed = (backup, error) => {
@@ -1061,7 +1123,7 @@ const markBackupFailed = (backup, error) => {
 	backup.set("error", errorMessage(error));
 	$app.save(backup);
 };
-const createBackupForInstance = (instance, authRecord, kind, managePower, skipRunningCheck = false) => {
+const createBackupForInstance = (instance, authRecord, kind, managePower, skipRunningCheck = false, storage = {}) => {
 	if (!skipRunningCheck) assertNoRunningOperation(instance.id);
 	const backup = createBackupRecord(instance, authRecord, kind);
 	let power = { shouldRestart: false };
@@ -1083,7 +1145,7 @@ const createBackupForInstance = (instance, authRecord, kind, managePower, skipRu
 			label: "Instance arretee, preparation des fichiers",
 			percent: 14
 		});
-		markBackupReady(backup, createArchive(findInstance$1(instance.id), backup, kind));
+		markBackupReady(backup, createArchive(findInstance$1(instance.id), backup, kind), storage);
 		return backup;
 	} catch (error) {
 		markBackupFailed(backup, error);
@@ -1515,6 +1577,290 @@ const readRestoreNewInput = (e, source) => {
 const backupManifestObject = (backup) => {
 	return recordObject(backup.get("manifest"));
 };
+const backupPolicyJobIds = /* @__PURE__ */ new Set();
+const runningBackupPolicyIds = /* @__PURE__ */ new Set();
+const backupPolicyCronName = (policyId) => `instance-backup-policy-${policyId}`;
+const s3BackupsAvailable = () => {
+	try {
+		return !!s3Config();
+	} catch {
+		return false;
+	}
+};
+const activeBehaviorFor = (value) => {
+	return value === "skip-active" ? "skip-active" : "stop-restart";
+};
+const backupPolicyCollection = () => $app.findCollectionByNameOrId("instance_backup_policies");
+const serializeBackupPolicy = (policy) => ({
+	id: policy.id,
+	user: policy.getString("user"),
+	instance: policy.getString("instance"),
+	enabled: policy.getBool("enabled"),
+	cron: policy.getString("cron"),
+	localEnabled: policy.getBool("localEnabled"),
+	remoteEnabled: policy.getBool("remoteEnabled"),
+	localRetentionCount: Number(policy.get("localRetentionCount") || 0),
+	localRetentionDays: Number(policy.get("localRetentionDays") || 0),
+	remoteRetentionCount: Number(policy.get("remoteRetentionCount") || 0),
+	remoteRetentionDays: Number(policy.get("remoteRetentionDays") || 0),
+	activeBehavior: activeBehaviorFor(policy.getString("activeBehavior")),
+	lastStatus: policy.getString("lastStatus") || "never",
+	lastRunAt: policy.getString("lastRunAt"),
+	lastSuccessAt: policy.getString("lastSuccessAt"),
+	lastBackup: policy.getString("lastBackup"),
+	lastError: policy.getString("lastError"),
+	lastDurationSeconds: Number(policy.get("lastDurationSeconds") || 0),
+	created: policy.getString("created"),
+	updated: policy.getString("updated")
+});
+const findBackupPolicyForInstance = (instanceId) => {
+	try {
+		return $app.findFirstRecordByFilter("instance_backup_policies", "instance = {:instance}", { instance: instanceId });
+	} catch {
+		return null;
+	}
+};
+const createDefaultBackupPolicy = (instance) => {
+	const policy = new Record(backupPolicyCollection());
+	policy.set("user", instance.getString("uid"));
+	policy.set("instance", instance.id);
+	policy.set("enabled", false);
+	policy.set("cron", DEFAULT_BACKUP_POLICY_CRON);
+	policy.set("localEnabled", true);
+	policy.set("remoteEnabled", false);
+	policy.set("localRetentionCount", DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_COUNT);
+	policy.set("localRetentionDays", DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_DAYS);
+	policy.set("remoteRetentionCount", DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_COUNT);
+	policy.set("remoteRetentionDays", DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_DAYS);
+	policy.set("activeBehavior", "stop-restart");
+	policy.set("lastStatus", "never");
+	policy.set("lastRunAt", "");
+	policy.set("lastSuccessAt", "");
+	policy.set("lastBackup", "");
+	policy.set("lastError", "");
+	policy.set("lastDurationSeconds", 0);
+	$app.save(policy);
+	return policy;
+};
+const getOrCreateBackupPolicy = (instance) => {
+	return findBackupPolicyForInstance(instance.id) || createDefaultBackupPolicy(instance);
+};
+const readBackupPolicyInput = (e) => {
+	let data = new DynamicModel({
+		enabled: false,
+		cron: "",
+		localEnabled: true,
+		remoteEnabled: false,
+		localRetentionCount: DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_COUNT,
+		localRetentionDays: DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_DAYS,
+		remoteRetentionCount: DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_COUNT,
+		remoteRetentionDays: DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_DAYS,
+		activeBehavior: "stop-restart"
+	});
+	try {
+		e.bindBody(data);
+		data = JSON.parse(JSON.stringify(data));
+	} catch {
+		data = {};
+	}
+	return data;
+};
+const applyBackupPolicyInput = (policy, instance, input) => {
+	const enabled = normalizeBool(input.enabled, policy.getBool("enabled"));
+	const localEnabled = normalizeBool(input.localEnabled, policy.get("localEnabled") === null ? true : policy.getBool("localEnabled"));
+	const remoteEnabled = normalizeBool(input.remoteEnabled, policy.getBool("remoteEnabled"));
+	const cron = normalizeBackupPolicyCron(input.cron || policy.getString("cron") || DEFAULT_BACKUP_POLICY_CRON);
+	const activeBehavior = input.activeBehavior === "skip-active" ? "skip-active" : "stop-restart";
+	if (!localEnabled && !remoteEnabled) throw new BadRequestError("Activez au moins une destination de sauvegarde.");
+	if (remoteEnabled && !s3BackupsAvailable()) throw new BadRequestError("S3/R2 n'est pas configure sur ce serveur.");
+	policy.set("user", instance.getString("uid"));
+	policy.set("instance", instance.id);
+	policy.set("enabled", enabled);
+	policy.set("cron", cron);
+	policy.set("localEnabled", localEnabled);
+	policy.set("remoteEnabled", remoteEnabled);
+	policy.set("localRetentionCount", normalizeInteger(input.localRetentionCount, DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_COUNT, 0, 3650));
+	policy.set("localRetentionDays", normalizeInteger(input.localRetentionDays, DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_DAYS, 0, 3650));
+	policy.set("remoteRetentionCount", normalizeInteger(input.remoteRetentionCount, DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_COUNT, 0, 3650));
+	policy.set("remoteRetentionDays", normalizeInteger(input.remoteRetentionDays, DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_DAYS, 0, 3650));
+	policy.set("activeBehavior", activeBehavior);
+};
+const unregisterBackupPolicyCron = (policyId) => {
+	const name = backupPolicyCronName(policyId);
+	try {
+		cronRemove(name);
+	} catch {}
+	backupPolicyJobIds.delete(policyId);
+};
+const registerBackupPolicyCron = (policy) => {
+	unregisterBackupPolicyCron(policy.id);
+	if (!policy.getBool("enabled")) return;
+	const cron = policy.getString("cron");
+	if (!isValidBackupPolicyCron(cron)) return;
+	cronAdd(backupPolicyCronName(policy.id), cron, () => {
+		try {
+			runScheduledBackupPolicy(policy.id, "cron");
+		} catch (error) {
+			mkLog("cron:instance:backup-policy")(`policy ${policy.id} failed: ${errorMessage(error)}`);
+		}
+	});
+	backupPolicyJobIds.add(policy.id);
+};
+const registerAllBackupPolicyCrons = () => {
+	let policies = [];
+	try {
+		policies = $app.findRecordsByFilter("instance_backup_policies", "enabled = true", "", 500, 0);
+	} catch {
+		policies = [];
+	}
+	for (const policy of policies) if (policy) registerBackupPolicyCron(policy);
+};
+const setPolicyRunState = (policy, status, input = {}) => {
+	policy.set("lastStatus", status);
+	if (typeof input.lastRunAt === "string") policy.set("lastRunAt", input.lastRunAt);
+	if (typeof input.lastSuccessAt === "string") policy.set("lastSuccessAt", input.lastSuccessAt);
+	if (typeof input.lastBackup === "string") policy.set("lastBackup", input.lastBackup);
+	if (typeof input.lastError === "string") policy.set("lastError", input.lastError);
+	if (typeof input.lastDurationSeconds === "number") policy.set("lastDurationSeconds", input.lastDurationSeconds);
+	$app.save(policy);
+};
+const scheduledBackupsForInstance = (instanceId) => {
+	return $app.findRecordsByFilter("instance_backups", "instance = {:instance} && kind = \"scheduled\" && status = \"ready\"", "-created", 500, 0, { instance: instanceId }).filter((record) => !!record);
+};
+const backupTimestampMs = (backup) => {
+	const raw = backup.getString("created") || backup.getString("updated");
+	const timestamp = Date.parse(raw);
+	return Number.isFinite(timestamp) ? timestamp : 0;
+};
+const shouldRetainBackupCopy = (backup, index, count, days) => {
+	if (!(count <= 0 || index < count)) return false;
+	if (days <= 0) return true;
+	const timestamp = backupTimestampMs(backup);
+	if (!timestamp) return true;
+	return Date.now() - timestamp <= days * 24 * 60 * 60 * 1e3;
+};
+const removeLocalBackupFile = (backup) => {
+	const filename = backup.getString("filename");
+	if (!filename) return;
+	assertSafeBackupFilename(filename);
+	try {
+		$os.remove(backupPath(backup.getString("instance"), filename));
+	} catch {}
+};
+const localBackupExists = (backup) => {
+	const filename = backup.getString("filename");
+	if (!filename) return false;
+	try {
+		assertSafeBackupFilename(filename);
+		return pathExists$1(backupPath(backup.getString("instance"), filename));
+	} catch {
+		return false;
+	}
+};
+const applyScheduledBackupRetention = (instance, policy) => {
+	const localEnabled = policy.getBool("localEnabled");
+	const remoteEnabled = policy.getBool("remoteEnabled");
+	const localRetentionCount = Number(policy.get("localRetentionCount") || 0);
+	const localRetentionDays = Number(policy.get("localRetentionDays") || 0);
+	const remoteRetentionCount = Number(policy.get("remoteRetentionCount") || 0);
+	const remoteRetentionDays = Number(policy.get("remoteRetentionDays") || 0);
+	scheduledBackupsForInstance(instance.id).forEach((backup, index) => {
+		const keepLocal = localEnabled && shouldRetainBackupCopy(backup, index, localRetentionCount, localRetentionDays);
+		const keepRemote = remoteEnabled && !!backup.getString("remoteKey") && shouldRetainBackupCopy(backup, index, remoteRetentionCount, remoteRetentionDays);
+		if (!keepLocal && localBackupExists(backup)) removeLocalBackupFile(backup);
+		if (!keepRemote && backup.getString("remoteKey")) {
+			try {
+				deleteBackupFromS3(backup.getString("remoteKey"));
+			} catch {}
+			backup.set("remoteKey", "");
+		}
+		const hasLocal = localBackupExists(backup);
+		const hasRemote = !!backup.getString("remoteKey");
+		if (!hasLocal && !hasRemote) {
+			try {
+				$app.delete(backup);
+			} catch {}
+			return;
+		}
+		$app.save(backup);
+	});
+};
+const hasRunningBackupOperation = (instanceId) => {
+	try {
+		return !!$app.findFirstRecordByFilter("instance_backups", "instance = {:instance} && status = \"running\"", { instance: instanceId });
+	} catch {
+		return false;
+	}
+};
+const runScheduledBackupPolicy = (policyId, trigger) => {
+	if (runningBackupPolicyIds.has(policyId)) return null;
+	runningBackupPolicyIds.add(policyId);
+	const startedAt = /* @__PURE__ */ new Date();
+	const startedAtIso = startedAt.toISOString();
+	try {
+		const policy = $app.findRecordById("instance_backup_policies", policyId);
+		if (!policy || !policy.getBool("enabled")) return null;
+		const instance = findInstance$1(policy.getString("instance"));
+		const user = $app.findRecordById("users", policy.getString("user") || instance.getString("uid"));
+		if (!user) throw new Error("Utilisateur proprietaire introuvable.");
+		setPolicyRunState(policy, "running", {
+			lastRunAt: startedAtIso,
+			lastError: "",
+			lastDurationSeconds: 0
+		});
+		if (hasRunningBackupOperation(instance.id)) {
+			setPolicyRunState(policy, "skipped", {
+				lastError: "Operation de sauvegarde deja en cours.",
+				lastDurationSeconds: Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1e3))
+			});
+			return null;
+		}
+		if (activeBehaviorFor(policy.getString("activeBehavior")) === "skip-active" && instance.getBool("power")) {
+			setPolicyRunState(policy, "skipped", {
+				lastError: "Instance active: sauvegarde ignoree selon la politique.",
+				lastDurationSeconds: Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1e3))
+			});
+			return null;
+		}
+		if (policy.getBool("remoteEnabled") && !s3BackupsAvailable()) throw new Error("S3/R2 n'est plus configure sur ce serveur.");
+		const backup = createBackupForInstance(instance, user, "scheduled", true, false, {
+			uploadRemote: policy.getBool("remoteEnabled"),
+			localEnabled: policy.getBool("localEnabled"),
+			policyId: policy.id
+		});
+		const manifest = backupManifestObject(backup);
+		backup.set("manifest", {
+			...manifest,
+			scheduledPolicy: {
+				id: policy.id,
+				trigger,
+				localEnabled: policy.getBool("localEnabled"),
+				remoteEnabled: policy.getBool("remoteEnabled"),
+				cron: policy.getString("cron")
+			}
+		});
+		$app.save(backup);
+		applyScheduledBackupRetention(instance, policy);
+		setPolicyRunState(policy, "ready", {
+			lastSuccessAt: (/* @__PURE__ */ new Date()).toISOString(),
+			lastBackup: backup.id,
+			lastError: "",
+			lastDurationSeconds: Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1e3))
+		});
+		return backup;
+	} catch (error) {
+		try {
+			const policy = $app.findRecordById("instance_backup_policies", policyId);
+			if (policy) setPolicyRunState(policy, "failed", {
+				lastError: errorMessage(error),
+				lastDurationSeconds: Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1e3))
+			});
+		} catch {}
+		throw error;
+	} finally {
+		runningBackupPolicyIds.delete(policyId);
+	}
+};
 const refreshImportedBackupSizeMetadata = (backup) => {
 	if (backup.getString("kind") !== "import") return backup;
 	if (backup.getString("status") !== "ready") return backup;
@@ -1800,6 +2146,46 @@ const HandleInstanceBackupsList = (e) => {
 	assertInstanceAccess$1(instance, authRecord);
 	const backups = findInstanceBackups$1(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
 	return e.json(200, { backups });
+};
+const HandleInstanceBackupPolicyGet = (e) => {
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const policy = getOrCreateBackupPolicy(instance);
+	return e.json(200, {
+		policy: serializeBackupPolicy(policy),
+		capabilities: { s3Enabled: s3BackupsAvailable() }
+	});
+};
+const HandleInstanceBackupPolicyUpdate = (e) => {
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const policy = getOrCreateBackupPolicy(instance);
+	applyBackupPolicyInput(policy, instance, readBackupPolicyInput(e));
+	$app.save(policy);
+	registerBackupPolicyCron(policy);
+	return e.json(200, {
+		policy: serializeBackupPolicy(policy),
+		capabilities: { s3Enabled: s3BackupsAvailable() }
+	});
+};
+const HandleInstanceBackupPolicyRun = (e) => {
+	const log = mkLog("POST:instance:backup-policy:run");
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const policy = getOrCreateBackupPolicy(instance);
+	if (!policy.getBool("enabled")) throw new BadRequestError("La sauvegarde automatique n'est pas activee.");
+	const backup = runScheduledBackupPolicy(policy.id, "manual");
+	log(`manual scheduled run ${policy.id} for ${instance.id}`);
+	return e.json(200, {
+		policy: serializeBackupPolicy($app.findRecordById("instance_backup_policies", policy.id)),
+		backup: backup ? serializeInstanceBackup(backup) : null
+	});
+};
+const HandleInstanceBackupPoliciesBootstrap = () => {
+	registerAllBackupPolicyCrons();
 };
 const HandleInstanceBackupDownload = (e) => {
 	const authRecord = requireAuthRecord$1(e.auth);
@@ -5514,6 +5900,10 @@ exports.HandleInstanceBackupCreate = HandleInstanceBackupCreate;
 exports.HandleInstanceBackupDelete = HandleInstanceBackupDelete;
 exports.HandleInstanceBackupDownload = HandleInstanceBackupDownload;
 exports.HandleInstanceBackupImport = HandleInstanceBackupImport;
+exports.HandleInstanceBackupPoliciesBootstrap = HandleInstanceBackupPoliciesBootstrap;
+exports.HandleInstanceBackupPolicyGet = HandleInstanceBackupPolicyGet;
+exports.HandleInstanceBackupPolicyRun = HandleInstanceBackupPolicyRun;
+exports.HandleInstanceBackupPolicyUpdate = HandleInstanceBackupPolicyUpdate;
 exports.HandleInstanceBackupRestore = HandleInstanceBackupRestore;
 exports.HandleInstanceBackupRestoreNew = HandleInstanceBackupRestoreNew;
 exports.HandleInstanceBackupsList = HandleInstanceBackupsList;

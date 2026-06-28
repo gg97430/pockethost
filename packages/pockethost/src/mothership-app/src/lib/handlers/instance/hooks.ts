@@ -117,6 +117,30 @@ routerAdd(
 )
 routerAdd(
   'GET',
+  '/api/instance/{id}/backups/policy',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupPolicyGet(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'PUT',
+  '/api/instance/{id}/backups/policy',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupPolicyUpdate(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/backups/policy/run',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupPolicyRun(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'GET',
   '/api/instance/{id}/backups/{backupId}/download',
   (e) => {
     return require(`${__hooks}/mothership`).HandleInstanceBackupDownload(e)
@@ -196,4 +220,10 @@ onBootstrap((e) => {
 onBootstrap((e) => {
   e.next()
   return require(`${__hooks}/mothership`).HandleInstancesResetIdle(e)
+})
+
+/** Register automatic instance backup policies */
+onBootstrap((e) => {
+  e.next()
+  return require(`${__hooks}/mothership`).HandleInstanceBackupPoliciesBootstrap(e)
 })

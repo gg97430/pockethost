@@ -167,6 +167,14 @@
 {:else if viewMode === 'list'}
   <div class="instance-table-wrap">
     <table class="instance-table">
+      <colgroup>
+        <col class="instance-col-name" />
+        <col class="instance-col-status" />
+        <col class="instance-col-resources" />
+        <col class="instance-col-version" />
+        <col class="instance-col-actions" />
+        <col class="instance-col-power" />
+      </colgroup>
       <thead>
         <tr>
           <th>Nom</th>
@@ -319,6 +327,30 @@
     font-size: 0.875rem;
   }
 
+  .instance-table :global(.instance-col-name) {
+    width: 22%;
+  }
+
+  .instance-table :global(.instance-col-status) {
+    width: 8.5rem;
+  }
+
+  .instance-table :global(.instance-col-resources) {
+    width: 28%;
+  }
+
+  .instance-table :global(.instance-col-version) {
+    width: 6.5rem;
+  }
+
+  .instance-table :global(.instance-col-actions) {
+    width: 18.5rem;
+  }
+
+  .instance-table :global(.instance-col-power) {
+    width: 11rem;
+  }
+
   .instance-table th {
     padding: 0.625rem 1rem;
     text-align: left;
@@ -361,6 +393,7 @@
       box-shadow: none;
     }
 
+    .instance-table colgroup,
     .instance-table,
     .instance-table tbody,
     .instance-table :global(tr),

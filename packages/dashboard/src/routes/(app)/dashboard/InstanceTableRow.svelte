@@ -69,7 +69,9 @@
         target="_blank"
         rel="noopener noreferrer"
         class="instance-table-admin-link"
+        title="Ouvrir l'admin PocketBase"
       >
+        <wa-icon name="up-right-from-square"></wa-icon>
         Admin
       </a>
       <BackupInstanceButton {instance} compact />
@@ -101,7 +103,6 @@
   }
 
   .instance-table-name {
-    width: 24%;
     min-width: 0;
   }
 
@@ -152,12 +153,10 @@
   }
 
   .instance-table-resources {
-    width: 30%;
     min-width: 0;
   }
 
   .instance-table-version {
-    width: 8%;
     font-size: 0.8125rem;
     color: var(--app-text-muted);
     white-space: nowrap;
@@ -165,30 +164,50 @@
 
   .instance-table-action-row {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.45rem;
     justify-content: flex-start;
+    min-width: 0;
   }
 
   .instance-table-admin-link {
-    font-size: 0.8125rem;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    min-height: 2rem;
+    padding: 0 0.65rem;
+    border: 1px solid rgb(30 184 84 / 0.28);
+    border-radius: 0.5rem;
+    background: rgb(30 184 84 / 0.08);
+    font-size: 0.78rem;
     font-weight: 600;
     color: #1eb854;
     text-decoration: none;
   }
 
   .instance-table-admin-link:hover {
-    text-decoration: underline;
+    border-color: rgb(30 184 84 / 0.48);
+    background: rgb(30 184 84 / 0.13);
   }
 
   .instance-table-power {
-    width: 9rem;
     text-align: right;
   }
 
   .instance-table-actions {
-    width: 18%;
     min-width: 0;
+  }
+
+  .instance-table-actions :global(.backup-btn--compact) {
+    min-width: 5.1rem;
+    padding-inline: 0.55rem;
+  }
+
+  .instance-table-actions :global(.duplicate-btn--compact) {
+    min-width: 6.1rem;
+    padding-inline: 0.55rem;
   }
 </style>

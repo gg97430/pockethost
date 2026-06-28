@@ -31,10 +31,13 @@
 
   $: cpuPercent = clampPercent(metrics?.cpuPercent)
   $: memoryPercent = clampPercent(metrics?.memoryPercent)
+  $: memoryShortLabel = formatBytes(metrics?.memoryBytes)
   $: memoryLabel =
-    metrics?.memoryBytes !== null && metrics?.memoryBytes !== undefined && metrics?.memoryLimitBytes
-      ? `${formatBytes(metrics.memoryBytes)} / ${formatBytes(metrics.memoryLimitBytes)}`
-      : formatPercent(metrics?.memoryPercent)
+    variant === 'table'
+      ? memoryShortLabel
+      : metrics?.memoryBytes !== null && metrics?.memoryBytes !== undefined && metrics?.memoryLimitBytes
+        ? `${formatBytes(metrics.memoryBytes)} / ${formatBytes(metrics.memoryLimitBytes)}`
+        : formatPercent(metrics?.memoryPercent)
   $: diskLabel = formatBytes(metrics?.diskBytes)
 </script>
 
@@ -76,9 +79,10 @@
 
   .resource-meters--table {
     width: 100%;
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.35fr) minmax(0, 0.9fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: center;
     min-width: 0;
+    gap: 0.7rem;
   }
 
   .resource-meters--card {
@@ -92,9 +96,9 @@
   }
 
   .resource-meter-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
     gap: 0.45rem;
     min-width: 0;
     color: var(--app-text-muted);
@@ -106,7 +110,7 @@
   .resource-meter-head strong {
     overflow: hidden;
     color: var(--app-text-strong);
-    font-size: 0.74rem;
+    font-size: 0.78rem;
     font-weight: 850;
     text-align: right;
     text-overflow: ellipsis;

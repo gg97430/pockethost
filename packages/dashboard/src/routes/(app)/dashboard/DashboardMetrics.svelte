@@ -1,10 +1,6 @@
 <script lang="ts">
   import { globalInstancesStore, userStore } from '$util/stores'
-  import {
-    getInstanceRuntimeState,
-    runtimeStateLabel,
-    type InstanceRuntimeState,
-  } from '$util/instancePower'
+  import { getInstanceRuntimeState, runtimeStateLabel, type InstanceRuntimeState } from '$util/instancePower'
   import type { InstanceFields } from 'pockethost/common'
   import { onDestroy, onMount } from 'svelte'
 
@@ -15,6 +11,7 @@
     cpu: {
       count: number
       loadAverage: number[]
+      usedPercent: number
     }
     memory: {
       totalBytes: number
@@ -161,7 +158,11 @@
     <div class="kpi-card kpi-card--primary">
       <span class="kpi-label">Instances</span>
       <strong>{formatNumber(totalInstances)}</strong>
-      <small>{quota > 0 ? `${formatNumber(quotaRemaining)} disponible${quotaRemaining > 1 ? 's' : ''}` : 'Quota non configuré'}</small>
+      <small
+        >{quota > 0
+          ? `${formatNumber(quotaRemaining)} disponible${quotaRemaining > 1 ? 's' : ''}`
+          : 'Quota non configuré'}</small
+      >
     </div>
     <div class="kpi-card">
       <span class="kpi-label">Actives</span>
@@ -171,7 +172,11 @@
     <div class="kpi-card">
       <span class="kpi-label">RAM libre</span>
       <strong>{systemMetrics ? formatBytes(systemMetrics.memory.freeBytes) : '...'}</strong>
-      <small>{systemMetrics ? `${formatPercent(systemMetrics.memory.usedPercent)} utilisée` : 'Métrique indisponible'}</small>
+      <small
+        >{systemMetrics
+          ? `${formatPercent(systemMetrics.memory.usedPercent)} utilisée`
+          : 'Métrique indisponible'}</small
+      >
     </div>
     <div class="kpi-card" class:kpi-card--danger={failedCount > 0}>
       <span class="kpi-label">Incidents</span>
@@ -185,7 +190,11 @@
       <div class="metric-panel-head">
         <div>
           <h2>Infrastructure</h2>
-          <p>{systemMetrics ? `${systemMetrics.hostname} · uptime ${formatDuration(systemMetrics.uptimeSeconds)}` : 'Données serveur en attente'}</p>
+          <p>
+            {systemMetrics
+              ? `${systemMetrics.hostname} · uptime ${formatDuration(systemMetrics.uptimeSeconds)}`
+              : 'Données serveur en attente'}
+          </p>
         </div>
         <button type="button" class="metric-refresh" onclick={fetchSystemMetrics} aria-label="Actualiser les métriques">
           <wa-icon name="rotate"></wa-icon>
@@ -195,9 +204,11 @@
       {#if systemMetrics}
         <div class="system-grid">
           <div class="system-tile">
-            <span>Charge CPU</span>
-            <strong>{systemMetrics.cpu.loadAverage[0]?.toFixed(2) ?? '0.00'}</strong>
-            <small>{systemMetrics.cpu.count} CPU</small>
+            <span>CPU utilisé</span>
+            <strong>{formatPercent(systemMetrics.cpu.usedPercent)}</strong>
+            <small
+              >{systemMetrics.cpu.count} CPU · charge {systemMetrics.cpu.loadAverage[0]?.toFixed(2) ?? '0.00'}</small
+            >
           </div>
           <div class="system-tile">
             <span>Disque libre</span>
@@ -212,11 +223,24 @@
         </div>
         <div class="meter-block">
           <div class="meter-row">
+            <span>CPU</span>
+            <span>{formatPercent(systemMetrics.cpu.usedPercent)}</span>
+          </div>
+          <div class="meter-track">
+            <span class="meter-fill meter-fill--cpu" style={`width: ${clampPercent(systemMetrics.cpu.usedPercent)}%`}
+            ></span>
+          </div>
+        </div>
+        <div class="meter-block">
+          <div class="meter-row">
             <span>RAM</span>
             <span>{formatBytes(systemMetrics.memory.usedBytes)} / {formatBytes(systemMetrics.memory.totalBytes)}</span>
           </div>
           <div class="meter-track">
-            <span class="meter-fill meter-fill--memory" style={`width: ${clampPercent(systemMetrics.memory.usedPercent)}%`}></span>
+            <span
+              class="meter-fill meter-fill--memory"
+              style={`width: ${clampPercent(systemMetrics.memory.usedPercent)}%`}
+            ></span>
           </div>
         </div>
         <div class="meter-block">
@@ -225,7 +249,8 @@
             <span>{formatBytes(systemMetrics.disk.usedBytes)} / {formatBytes(systemMetrics.disk.totalBytes)}</span>
           </div>
           <div class="meter-track">
-            <span class="meter-fill meter-fill--disk" style={`width: ${clampPercent(systemMetrics.disk.usedPercent)}%`}></span>
+            <span class="meter-fill meter-fill--disk" style={`width: ${clampPercent(systemMetrics.disk.usedPercent)}%`}
+            ></span>
           </div>
         </div>
       {:else}
@@ -240,7 +265,11 @@
       <div class="metric-panel-head">
         <div>
           <h2>Capacité</h2>
-          <p>{quota > 0 ? `${formatNumber(totalInstances)} / ${formatNumber(quota)} instances autorisées` : 'Quota à configurer'}</p>
+          <p>
+            {quota > 0
+              ? `${formatNumber(totalInstances)} / ${formatNumber(quota)} instances autorisées`
+              : 'Quota à configurer'}
+          </p>
         </div>
       </div>
       <div class="quota-ring" style={`--quota: ${quotaPercent}%`}>
@@ -530,6 +559,10 @@
 
   .meter-fill--memory {
     background: linear-gradient(90deg, #1eb854, #38bdf8);
+  }
+
+  .meter-fill--cpu {
+    background: linear-gradient(90deg, #22c55e, #eab308, #f97316);
   }
 
   .meter-fill--disk {

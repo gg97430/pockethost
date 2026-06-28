@@ -2,6 +2,8 @@ import { PUBLIC_MOTHERSHIP_URL } from '$lib/appEnv'
 import { createPocketbaseClient, type PocketbaseClient } from './PocketbaseClient'
 
 export type {
+  DashboardInstanceMetric,
+  DashboardInstanceMetricsResponse,
   InstanceBackup,
   InstanceBackupPolicy,
   InstanceBackupPolicyResponse,

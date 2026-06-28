@@ -50,6 +50,14 @@ routerAdd(
   $apis.requireAuth()
 )
 routerAdd(
+  'GET',
+  '/api/instances/metrics',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstancesMetrics(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
   'POST',
   '/api/instance/{id}/duplicate',
   (e) => {

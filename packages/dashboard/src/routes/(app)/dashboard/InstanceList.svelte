@@ -13,11 +13,12 @@
     type InstanceListViewMode,
   } from '$util/instanceListPrefs'
   import { type InstanceFields } from 'pockethost/common'
+  import { client, type DashboardInstanceMetric } from '$src/pocketbase-client'
   import InstanceCard from './InstanceCard.svelte'
   import InstanceTableRow from './InstanceTableRow.svelte'
   import { page } from '$app/state'
   import { browser } from '$app/environment'
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { goto } from '$app/navigation'
 
   const initialPrefs = instanceListPrefsHasUrlParams(page.url.searchParams)
@@ -29,6 +30,17 @@
   let viewMode: InstanceListViewMode = initialPrefs.viewMode
   let favoriteIds: string[] = browser ? loadInstanceFavoritesFromStorage() : []
   let syncReady = instanceListPrefsHasUrlParams(page.url.searchParams)
+  let instanceMetrics: Record<string, DashboardInstanceMetric> = {}
+  let metricsTimer: ReturnType<typeof setInterval> | undefined
+
+  const refreshInstanceMetrics = async () => {
+    try {
+      const result = await client().getDashboardInstanceMetrics()
+      instanceMetrics = result.instances
+    } catch {
+      instanceMetrics = {}
+    }
+  }
 
   onMount(() => {
     if (!syncReady) {
@@ -38,6 +50,13 @@
       viewMode = stored.viewMode
       syncReady = true
     }
+
+    void refreshInstanceMetrics()
+    metricsTimer = setInterval(refreshInstanceMetrics, 30_000)
+  })
+
+  onDestroy(() => {
+    if (metricsTimer) clearInterval(metricsTimer)
   })
 
   $: validInstanceIds = new Set(Object.keys($globalInstancesStore))
@@ -152,6 +171,7 @@
         <tr>
           <th>Nom</th>
           <th>État</th>
+          <th>Ressources</th>
           <th>Version</th>
           <th>Actions</th>
           <th>Alimentation</th>
@@ -161,6 +181,7 @@
         {#each filteredInstances as instance (instance.id)}
           <InstanceTableRow
             {instance}
+            metrics={instanceMetrics[instance.id]}
             isFavorite={favoriteIds.includes(instance.id)}
             onToggleFavorite={() => handleToggleFavorite(instance.id)}
           />
@@ -173,6 +194,7 @@
     {#each filteredInstances as instance (instance.id)}
       <InstanceCard
         {instance}
+        metrics={instanceMetrics[instance.id]}
         isFavorite={favoriteIds.includes(instance.id)}
         onToggleFavorite={() => handleToggleFavorite(instance.id)}
       />

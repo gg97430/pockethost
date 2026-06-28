@@ -8,10 +8,13 @@
   import InstanceRuntimeBadge from '$components/InstanceRuntimeBadge.svelte'
   import { isInstanceShuttingDown } from '$util/instancePower'
   import type { InstanceFields } from 'pockethost/common'
+  import type { DashboardInstanceMetric } from '$src/pocketbase-client'
   import DuplicateInstanceButton from './DuplicateInstanceButton.svelte'
   import BackupInstanceButton from './BackupInstanceButton.svelte'
+  import InstanceResourceMeters from './InstanceResourceMeters.svelte'
 
   export let instance: InstanceFields
+  export let metrics: DashboardInstanceMetric | undefined
   export let isFavorite = false
   export let onToggleFavorite: () => void = () => {}
 
@@ -44,13 +47,7 @@
 </script>
 
 <!-- div, not button — avoids WA focus ring + invalid <a> inside <button> -->
-<div
-  class="instance-card"
-  role="link"
-  tabindex="0"
-  onclick={openInstance}
-  onkeydown={onKeydown}
->
+<div class="instance-card" role="link" tabindex="0" onclick={openInstance} onkeydown={onKeydown}>
   <div class="w-full flex flex-row items-center justify-between gap-4 p-4 min-h-[5.5rem]">
     <div class="flex flex-col items-start gap-2 flex-1 min-w-0 relative">
       <div class="flex items-center gap-1.5 w-full min-w-0">
@@ -82,6 +79,7 @@
       <div class="flex items-center min-h-5">
         <InstanceRuntimeBadge {instance} />
       </div>
+      <InstanceResourceMeters {metrics} variant="card" />
     </div>
 
     <div class="flex flex-shrink-0 self-center min-w-[10.5rem] justify-end" onclick={(e) => e.stopPropagation()}>

@@ -8,10 +8,13 @@
   import InstanceFavoriteButton from '$components/InstanceFavoriteButton.svelte'
   import Toggle from '../instances/[instanceId]/Toggle.svelte'
   import type { InstanceFields } from 'pockethost/common'
+  import type { DashboardInstanceMetric } from '$src/pocketbase-client'
   import DuplicateInstanceButton from './DuplicateInstanceButton.svelte'
   import BackupInstanceButton from './BackupInstanceButton.svelte'
+  import InstanceResourceMeters from './InstanceResourceMeters.svelte'
 
   export let instance: InstanceFields
+  export let metrics: DashboardInstanceMetric | undefined
   export let isFavorite = false
   export let onToggleFavorite: () => void = () => {}
 
@@ -54,6 +57,9 @@
   </td>
   <td class="instance-table-status">
     <InstanceRuntimeBadge {instance} />
+  </td>
+  <td class="instance-table-resources">
+    <InstanceResourceMeters {metrics} variant="table" />
   </td>
   <td class="instance-table-version">v{instance.version}</td>
   <td class="instance-table-actions" onclick={(e) => e.stopPropagation()}>
@@ -134,6 +140,11 @@
 
   .instance-table-status {
     white-space: nowrap;
+  }
+
+  .instance-table-resources {
+    width: 24rem;
+    min-width: 20rem;
   }
 
   .instance-table-version {

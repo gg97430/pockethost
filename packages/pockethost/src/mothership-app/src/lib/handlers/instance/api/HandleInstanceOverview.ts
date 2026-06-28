@@ -1,5 +1,25 @@
 import { refreshImportedBackupSizeMetadata, serializeInstanceBackup } from './HandleInstanceBackups'
 
+type DockerStatsRow = {
+  BlockIO?: string
+  CPUPerc?: string
+  MemPerc?: string
+  MemUsage?: string
+  Name?: string
+}
+
+export type InstanceResourceMetrics = {
+  instanceId: string
+  cpuPercent: number | null
+  memoryBytes: number | null
+  memoryLimitBytes: number | null
+  memoryPercent: number | null
+  diskBytes: number | null
+  blockReadBytes: number | null
+  blockWriteBytes: number | null
+  containerName: string
+}
+
 const assertSafeInstanceId = (id: string) => {
   if (!id.match(/^[a-z0-9]+$/)) {
     throw new BadRequestError("Identifiant d'instance invalide.")
@@ -52,6 +72,95 @@ const getDirectorySizeBytes = (path: string) => {
   }
 }
 
+const parseDockerPercent = (value?: string) => {
+  const normalized = `${value || ''}`.trim().replace('%', '').replace(',', '.')
+  const number = Number(normalized)
+  return Number.isFinite(number) ? Math.max(0, number) : null
+}
+
+const dockerByteUnits: Record<string, number> = {
+  b: 1,
+  kb: 1000,
+  mb: 1000 ** 2,
+  gb: 1000 ** 3,
+  tb: 1000 ** 4,
+  kib: 1024,
+  mib: 1024 ** 2,
+  gib: 1024 ** 3,
+  tib: 1024 ** 4,
+}
+
+const parseDockerBytes = (value?: string) => {
+  const match = `${value || ''}`
+    .trim()
+    .replace(',', '.')
+    .match(/^([0-9.]+)\s*([a-zA-Z]+)$/)
+  if (!match) return null
+
+  const number = Number(match[1])
+  const unit = match[2].toLowerCase()
+  const factor = dockerByteUnits[unit]
+  if (!Number.isFinite(number) || !factor) return null
+  return Math.round(number * factor)
+}
+
+const parseDockerBytePair = (value?: string): [number | null, number | null] => {
+  const parts = `${value || ''}`.split('/').map((part) => part.trim())
+  return [parseDockerBytes(parts[0]), parseDockerBytes(parts[1])]
+}
+
+const readDockerStatsByName = () => {
+  const rows = new Map<string, DockerStatsRow>()
+
+  try {
+    const output = toString($os.cmd('docker', 'stats', '--no-stream', '--format', '{{json .}}').combinedOutput()).trim()
+    if (!output) return rows
+
+    for (const line of output.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+
+      try {
+        const row = JSON.parse(trimmed) as DockerStatsRow
+        const name = `${row.Name || ''}`
+        if (name) rows.set(name, row)
+      } catch {
+        // Ignore one malformed stats line instead of hiding all other metrics.
+      }
+    }
+  } catch {
+    return rows
+  }
+
+  return rows
+}
+
+const serializeInstanceResourceMetrics = (instance: core.Record, dockerStatsByName: Map<string, DockerStatsRow>) => {
+  const row = dockerStatsByName.get(instance.id)
+  const [memoryBytes, memoryLimitBytes] = parseDockerBytePair(row?.MemUsage)
+  const [blockReadBytes, blockWriteBytes] = parseDockerBytePair(row?.BlockIO)
+
+  return {
+    instanceId: instance.id,
+    cpuPercent: parseDockerPercent(row?.CPUPerc),
+    memoryBytes,
+    memoryLimitBytes,
+    memoryPercent: parseDockerPercent(row?.MemPerc),
+    diskBytes: getDirectorySizeBytes(instanceRoot(instance.id)),
+    blockReadBytes,
+    blockWriteBytes,
+    containerName: row?.Name || '',
+  }
+}
+
+const findAccessibleInstances = (authRecord: core.Record) => {
+  const records = authRecord.getBool('superAdmin')
+    ? $app.findRecordsByFilter('instances', '1=1', 'subdomain', 500, 0)
+    : $app.findRecordsByFilter('instances', 'uid = {:uid}', 'subdomain', 500, 0, { uid: authRecord.id })
+
+  return records.filter((record): record is core.Record => !!record)
+}
+
 const sortBackupsNewestFirst = (backups: core.Record[]) => {
   return backups.sort((a, b) => {
     const aValue = a.getString('updated') || a.getString('created') || a.getString('filename') || a.id
@@ -74,6 +183,7 @@ export const HandleInstanceOverview = (e: core.RequestEvent) => {
 
   const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup)
   const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0)
+  const runtime = serializeInstanceResourceMetrics(instance, readDockerStatsByName())
 
   return e.json(200, {
     instance,
@@ -86,8 +196,24 @@ export const HandleInstanceOverview = (e: core.RequestEvent) => {
       latest: backups[0] || null,
     },
     storage: {
-      instanceBytes: getDirectorySizeBytes(instanceRoot(instance.id)),
+      instanceBytes: runtime.diskBytes,
     },
+    runtime,
+    collectedAt: new Date().toISOString(),
+  })
+}
+
+export const HandleInstancesMetrics = (e: core.RequestEvent) => {
+  const authRecord = requireAuthRecord(e.auth)
+  const dockerStatsByName = readDockerStatsByName()
+  const metrics: Record<string, InstanceResourceMetrics> = {}
+
+  for (const instance of findAccessibleInstances(authRecord)) {
+    metrics[instance.id] = serializeInstanceResourceMetrics(instance, dockerStatsByName)
+  }
+
+  return e.json(200, {
+    instances: metrics,
     collectedAt: new Date().toISOString(),
   })
 }

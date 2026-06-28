@@ -241,6 +241,24 @@ export type InstanceOverview = {
   storage: {
     instanceBytes: number | null
   }
+  runtime: DashboardInstanceMetric
+  collectedAt: string
+}
+
+export type DashboardInstanceMetric = {
+  instanceId: string
+  cpuPercent: number | null
+  memoryBytes: number | null
+  memoryLimitBytes: number | null
+  memoryPercent: number | null
+  diskBytes: number | null
+  blockReadBytes: number | null
+  blockWriteBytes: number | null
+  containerName: string
+}
+
+export type DashboardInstanceMetricsResponse = {
+  instances: Record<string, DashboardInstanceMetric>
   collectedAt: string
 }
 
@@ -360,6 +378,11 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
 
   const getInstanceOverview = (id: InstanceId) =>
     client.send<InstanceOverview>(`/api/instance/${id}/overview`, {
+      method: 'GET',
+    })
+
+  const getDashboardInstanceMetrics = () =>
+    client.send<DashboardInstanceMetricsResponse>('/api/instances/metrics', {
       method: 'GET',
     })
 
@@ -901,6 +924,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     deleteInstance,
     duplicateInstance,
     getInstanceOverview,
+    getDashboardInstanceMetrics,
     createInstanceBackup,
     importInstanceBackup,
     listInstanceBackups,

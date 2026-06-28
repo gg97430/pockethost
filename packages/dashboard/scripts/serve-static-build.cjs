@@ -10,7 +10,8 @@ const path = require('node:path')
 const root = path.resolve(process.argv[2] || 'build')
 const host = process.env.HOST || '127.0.0.1'
 const port = Number(process.env.PORT || '5174')
-const mothershipProxyTarget = process.env.MOTHERSHIP_PROXY_TARGET || process.env.MOTHERSHIP_URL || 'http://127.0.0.1:8091'
+const mothershipProxyTarget =
+  process.env.MOTHERSHIP_PROXY_TARGET || process.env.MOTHERSHIP_URL || 'http://127.0.0.1:8091'
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -94,6 +95,36 @@ const percent = (used, total) => {
   return Math.round((used / total) * 1000) / 10
 }
 
+let previousCpuSample = null
+
+const readCpuSample = (cpus) => {
+  let idle = 0
+  let total = 0
+
+  for (const cpu of cpus) {
+    idle += cpu.times.idle
+    total += Object.values(cpu.times).reduce((sum, value) => sum + value, 0)
+  }
+
+  return { idle, total }
+}
+
+const getCpuUsedPercent = (cpus, loadAverage) => {
+  const current = readCpuSample(cpus)
+  const previous = previousCpuSample
+  previousCpuSample = current
+
+  if (!previous) {
+    return percent(Math.min(loadAverage[0] || 0, cpus.length), cpus.length)
+  }
+
+  const idleDelta = current.idle - previous.idle
+  const totalDelta = current.total - previous.total
+  if (totalDelta <= 0) return 0
+
+  return percent(Math.max(0, totalDelta - idleDelta), totalDelta)
+}
+
 const getSystemMetrics = async () => {
   const diskPath = process.env.SYSTEM_METRICS_PATH || root
   const disk = await fs.statfs(diskPath)
@@ -105,14 +136,17 @@ const getSystemMetrics = async () => {
   const freeMemoryBytes = os.freemem()
   const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes)
   const processMemory = process.memoryUsage()
+  const cpus = os.cpus()
+  const loadAverage = os.loadavg()
 
   return {
     collectedAt: new Date().toISOString(),
     hostname: os.hostname(),
     uptimeSeconds: Math.round(os.uptime()),
     cpu: {
-      count: os.cpus().length,
-      loadAverage: os.loadavg(),
+      count: cpus.length,
+      loadAverage,
+      usedPercent: getCpuUsedPercent(cpus, loadAverage),
     },
     memory: {
       totalBytes: totalMemoryBytes,

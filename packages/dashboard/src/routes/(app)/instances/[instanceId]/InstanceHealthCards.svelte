@@ -9,6 +9,11 @@
 
   const nf = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 })
 
+  const formatPercent = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return 'Indispo.'
+    return `${nf.format(Math.max(0, Math.min(100, value)))} %`
+  }
+
   const formatBytes = (bytes: number | null | undefined) => {
     if (bytes === null || bytes === undefined) return 'Indispo.'
     if (!bytes) return '0 o'
@@ -27,6 +32,7 @@
   }
 
   $: latestBackup = overview?.backups.latest
+  $: runtime = overview?.runtime
   $: domainLabel = INSTANCE_HOST(instance)
   $: backupLabel = latestBackup ? formatDate(latestBackup.created) : 'Aucune'
   $: backupTone = latestBackup?.status === 'failed' ? 'danger' : latestBackup?.status === 'running' ? 'warning' : 'good'
@@ -38,6 +44,22 @@
     <span class="instance-health-label">Runtime</span>
     <strong><InstanceRuntimeBadge {instance} /></strong>
     <small>Power {instance.power ? 'activé' : 'désactivé'} · statut {instance.status || 'inconnu'}</small>
+  </article>
+
+  <article class="instance-health-card">
+    <span class="instance-health-label">CPU instance</span>
+    <strong>{formatPercent(runtime?.cpuPercent)}</strong>
+    <small>{runtime?.containerName ? `Conteneur ${runtime.containerName}` : 'Conteneur non mesuré'}</small>
+  </article>
+
+  <article class="instance-health-card">
+    <span class="instance-health-label">RAM instance</span>
+    <strong>{formatBytes(runtime?.memoryBytes)}</strong>
+    <small>
+      {formatPercent(runtime?.memoryPercent)} utilisée{runtime?.memoryLimitBytes
+        ? ` · limite ${formatBytes(runtime.memoryLimitBytes)}`
+        : ''}
+    </small>
   </article>
 
   <article class="instance-health-card">
@@ -62,7 +84,10 @@
 <section class="instance-config-strip" aria-label="Configuration active">
   <div class="instance-config-item">
     <span>Dernière sauvegarde</span>
-    <strong class:instance-config-danger={backupTone === 'danger'} class:instance-config-warning={backupTone === 'warning'}>
+    <strong
+      class:instance-config-danger={backupTone === 'danger'}
+      class:instance-config-warning={backupTone === 'warning'}
+    >
       {backupLabel}
     </strong>
   </div>
@@ -103,9 +128,7 @@
 
   .instance-health-card--runtime {
     border-color: rgb(30 184 84 / 0.32);
-    background:
-      linear-gradient(135deg, rgb(30 184 84 / 0.14), transparent 62%),
-      var(--app-surface);
+    background: linear-gradient(135deg, rgb(30 184 84 / 0.14), transparent 62%), var(--app-surface);
   }
 
   .instance-health-label {

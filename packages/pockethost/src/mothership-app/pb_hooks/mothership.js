@@ -2965,6 +2965,72 @@ const getDirectorySizeBytes = (path) => {
 		return null;
 	}
 };
+const parseDockerPercent = (value) => {
+	const normalized = `${value || ""}`.trim().replace("%", "").replace(",", ".");
+	const number = Number(normalized);
+	return Number.isFinite(number) ? Math.max(0, number) : null;
+};
+const dockerByteUnits = {
+	b: 1,
+	kb: 1e3,
+	mb: 1e3 ** 2,
+	gb: 1e3 ** 3,
+	tb: 1e3 ** 4,
+	kib: 1024,
+	mib: 1024 ** 2,
+	gib: 1024 ** 3,
+	tib: 1024 ** 4
+};
+const parseDockerBytes = (value) => {
+	const match = `${value || ""}`.trim().replace(",", ".").match(/^([0-9.]+)\s*([a-zA-Z]+)$/);
+	if (!match) return null;
+	const number = Number(match[1]);
+	const factor = dockerByteUnits[match[2].toLowerCase()];
+	if (!Number.isFinite(number) || !factor) return null;
+	return Math.round(number * factor);
+};
+const parseDockerBytePair = (value) => {
+	const parts = `${value || ""}`.split("/").map((part) => part.trim());
+	return [parseDockerBytes(parts[0]), parseDockerBytes(parts[1])];
+};
+const readDockerStatsByName = () => {
+	const rows = /* @__PURE__ */ new Map();
+	try {
+		const output = toString($os.cmd("docker", "stats", "--no-stream", "--format", "{{json .}}").combinedOutput()).trim();
+		if (!output) return rows;
+		for (const line of output.split("\n")) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			try {
+				const row = JSON.parse(trimmed);
+				const name = `${row.Name || ""}`;
+				if (name) rows.set(name, row);
+			} catch {}
+		}
+	} catch {
+		return rows;
+	}
+	return rows;
+};
+const serializeInstanceResourceMetrics = (instance, dockerStatsByName) => {
+	const row = dockerStatsByName.get(instance.id);
+	const [memoryBytes, memoryLimitBytes] = parseDockerBytePair(row?.MemUsage);
+	const [blockReadBytes, blockWriteBytes] = parseDockerBytePair(row?.BlockIO);
+	return {
+		instanceId: instance.id,
+		cpuPercent: parseDockerPercent(row?.CPUPerc),
+		memoryBytes,
+		memoryLimitBytes,
+		memoryPercent: parseDockerPercent(row?.MemPerc),
+		diskBytes: getDirectorySizeBytes(instanceRoot(instance.id)),
+		blockReadBytes,
+		blockWriteBytes,
+		containerName: row?.Name || ""
+	};
+};
+const findAccessibleInstances = (authRecord) => {
+	return (authRecord.getBool("superAdmin") ? $app.findRecordsByFilter("instances", "1=1", "subdomain", 500, 0) : $app.findRecordsByFilter("instances", "uid = {:uid}", "subdomain", 500, 0, { uid: authRecord.id })).filter((record) => !!record);
+};
 const sortBackupsNewestFirst = (backups) => {
 	return backups.sort((a, b) => {
 		const aValue = a.getString("updated") || a.getString("created") || a.getString("filename") || a.id;
@@ -2980,6 +3046,7 @@ const HandleInstanceOverview = (e) => {
 	assertInstanceAccess(instance, authRecord);
 	const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
 	const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0);
+	const runtime = serializeInstanceResourceMetrics(instance, readDockerStatsByName());
 	return e.json(200, {
 		instance,
 		backups: {
@@ -2990,7 +3057,18 @@ const HandleInstanceOverview = (e) => {
 			totalCompressedBytes,
 			latest: backups[0] || null
 		},
-		storage: { instanceBytes: getDirectorySizeBytes(instanceRoot(instance.id)) },
+		storage: { instanceBytes: runtime.diskBytes },
+		runtime,
+		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
+	});
+};
+const HandleInstancesMetrics = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const dockerStatsByName = readDockerStatsByName();
+	const metrics = {};
+	for (const instance of findAccessibleInstances(authRecord)) metrics[instance.id] = serializeInstanceResourceMetrics(instance, dockerStatsByName);
+	return e.json(200, {
+		instances: metrics,
 		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
 	});
 };
@@ -6418,6 +6496,7 @@ exports.HandleInstanceLitestreamPolicyGet = HandleInstanceLitestreamPolicyGet;
 exports.HandleInstanceLitestreamPolicyUpdate = HandleInstanceLitestreamPolicyUpdate;
 exports.HandleInstanceOverview = HandleInstanceOverview;
 exports.HandleInstanceUpdate = HandleInstanceUpdate;
+exports.HandleInstancesMetrics = HandleInstancesMetrics;
 exports.HandleInstancesResetIdle = HandleInstancesResetIdle;
 exports.HandleInstancesRuntimeReset = HandleInstancesRuntimeReset;
 exports.HandleLemonSqueezySale = HandleLemonSqueezySale;

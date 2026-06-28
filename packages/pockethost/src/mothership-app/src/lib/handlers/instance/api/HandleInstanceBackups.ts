@@ -1892,7 +1892,7 @@ const startOrRestartLitestreamService = (configPath: string) => {
     'sh',
     '-c',
     `set -e
-if pm2 describe ${LITESTREAM_SERVICE_NAME} >/dev/null 2>&1; then
+if pm2 jlist | grep -q '"name":"${LITESTREAM_SERVICE_NAME}"'; then
   pm2 restart ${LITESTREAM_SERVICE_NAME} --update-env
 else
   litestream_bin=$(command -v litestream)

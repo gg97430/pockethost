@@ -4,6 +4,7 @@
   import CronSchedulePicker from '$components/CronSchedulePicker.svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
   import { validateCronExpression } from '$lib/cronExpression'
+  import { NATURAL_CRON_EXAMPLES, parseNaturalCron } from '$lib/naturalCron'
   import {
     client,
     type InstanceBackup,
@@ -64,6 +65,7 @@
   let backupPolicy: InstanceBackupPolicy | null = null
   let backupPolicyDraft = defaultPolicyDraft()
   let backupPolicyS3Enabled = false
+  let backupPolicyNaturalSchedule = 'tous les jours à 2h'
   let litestreamPolicy: InstanceLitestreamPolicy | null = null
   let litestreamDraft = defaultLitestreamDraft()
   let litestreamCapabilities: InstanceLitestreamPolicyResponse['capabilities'] = {
@@ -139,6 +141,7 @@
   $: liveOperationCount =
     liveOperationKind === 'restore' ? (hasActiveRestore || isRestoreAction ? 1 : 0) : runningBackups.length || 1
   $: policyStatusText = backupPolicy ? policyStatusLabel(backupPolicy.lastStatus) : 'Non configurée'
+  $: backupPolicyNaturalResult = parseNaturalCron(backupPolicyNaturalSchedule)
   $: litestreamStatusText = litestreamPolicy ? litestreamStatusLabel(litestreamPolicy.status) : 'Non configurée'
   $: litestreamRuntimeReady = litestreamCapabilities.litestreamInstalled && litestreamCapabilities.pm2Installed
   $: litestreamS3Ready = litestreamS3DraftValid(litestreamDraft)
@@ -318,6 +321,19 @@
       remoteRetentionDays: policy.remoteRetentionDays,
       activeBehavior: policy.activeBehavior,
     }
+  }
+
+  function applyNaturalBackupSchedule() {
+    const result = parseNaturalCron(backupPolicyNaturalSchedule)
+    if (!result.ok) return
+
+    backupPolicyDraft.cron = result.cron
+  }
+
+  function useNaturalBackupScheduleExample(example: string) {
+    backupPolicyNaturalSchedule = example
+    const result = parseNaturalCron(example)
+    if (result.ok) backupPolicyDraft.cron = result.cron
   }
 
   function syncLitestreamDraft(policy: InstanceLitestreamPolicy) {
@@ -927,6 +943,50 @@
 
         <div class="backup-policy-field backup-policy-field--wide">
           <label for="backup-policy-cron">Fréquence</label>
+          <div class="backup-cron-wizard">
+            <div class="backup-cron-wizard__main">
+              <input
+                id="backup-policy-natural-schedule"
+                class="backup-policy-input"
+                bind:value={backupPolicyNaturalSchedule}
+                disabled={!!policyAction}
+                placeholder="Ex. tous les jours à 2h"
+                aria-label="Planification en langage naturel"
+              />
+              <button
+                type="button"
+                class="backup-policy-secondary"
+                disabled={!!policyAction || !backupPolicyNaturalResult.ok}
+                onclick={applyNaturalBackupSchedule}
+              >
+                <wa-icon name="wand-magic-sparkles"></wa-icon>
+                Convertir
+              </button>
+            </div>
+            <div class="backup-cron-wizard__examples">
+              {#each NATURAL_CRON_EXAMPLES as example}
+                <button
+                  type="button"
+                  class="backup-cron-chip"
+                  disabled={!!policyAction}
+                  onclick={() => useNaturalBackupScheduleExample(example)}
+                >
+                  {example}
+                </button>
+              {/each}
+            </div>
+            {#if backupPolicyNaturalResult.ok}
+              <div class="backup-cron-result backup-cron-result--ok">
+                <strong>{backupPolicyNaturalResult.cron}</strong>
+                <span>{backupPolicyNaturalResult.localDescription}</span>
+                <span>{backupPolicyNaturalResult.serverDescription}</span>
+              </div>
+            {:else}
+              <div class="backup-cron-result backup-cron-result--error">
+                {backupPolicyNaturalResult.message}
+              </div>
+            {/if}
+          </div>
           <CronSchedulePicker
             id="backup-policy-cron"
             bind:value={backupPolicyDraft.cron}
@@ -1835,6 +1895,82 @@
     line-height: 1.45;
   }
 
+  .backup-cron-wizard {
+    display: grid;
+    gap: 0.6rem;
+    border: 1px solid rgb(59 130 246 / 0.22);
+    border-radius: 0.55rem;
+    background: linear-gradient(135deg, rgb(59 130 246 / 0.08), transparent 64%), var(--app-surface);
+    padding: 0.75rem;
+  }
+
+  .backup-cron-wizard__main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .backup-cron-wizard__examples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .backup-cron-chip {
+    border: 1px solid var(--app-border);
+    border-radius: 999px;
+    background: var(--app-surface-soft);
+    padding: 0.34rem 0.6rem;
+    color: var(--app-text);
+    font-size: 0.72rem;
+    font-weight: 820;
+    cursor: pointer;
+  }
+
+  .backup-cron-chip:hover:not(:disabled) {
+    border-color: rgb(30 184 84 / 0.45);
+    color: #16a34a;
+  }
+
+  .backup-cron-chip:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .backup-cron-result {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.7rem;
+    align-items: center;
+    border-radius: 0.45rem;
+    padding: 0.55rem 0.65rem;
+    font-size: 0.76rem;
+    font-weight: 760;
+    line-height: 1.45;
+  }
+
+  .backup-cron-result strong {
+    border-radius: 0.34rem;
+    background: rgb(15 23 42 / 0.1);
+    padding: 0.16rem 0.38rem;
+    color: var(--app-text-strong);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 900;
+  }
+
+  .backup-cron-result--ok {
+    border: 1px solid rgb(30 184 84 / 0.26);
+    background: rgb(30 184 84 / 0.08);
+    color: var(--app-text-muted);
+  }
+
+  .backup-cron-result--error {
+    border: 1px solid rgb(239 68 68 / 0.26);
+    background: rgb(239 68 68 / 0.08);
+    color: #ef4444;
+  }
+
   .backup-policy-input:disabled,
   .backup-policy-check input:disabled,
   .backup-policy-toggle input:disabled {
@@ -2305,6 +2441,10 @@
     .backup-policy-field--wide {
       grid-template-columns: 1fr;
       grid-column: auto;
+    }
+
+    .backup-cron-wizard__main {
+      grid-template-columns: 1fr;
     }
 
     .backup-policy-retention {

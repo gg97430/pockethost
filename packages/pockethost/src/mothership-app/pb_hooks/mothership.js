@@ -652,6 +652,32 @@ const sortBackupsNewestFirst$1 = (backups) => {
 const findInstanceBackups$1 = (instanceId) => {
 	return sortBackupsNewestFirst$1($app.findRecordsByFilter("instance_backups", "instance = {:instance}", "", 100, 0, { instance: instanceId }).filter((record) => !!record));
 };
+const normalizeBaseSubdomain$1 = (subdomain) => {
+	const clean = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+	return (clean.match(/^[a-z]/) ? clean : `base-${clean}`).slice(0, 34).replace(/-+$/g, "") || "base";
+};
+const assertValidSubdomain = (subdomain) => {
+	if (!subdomain.match(/^[a-z][a-z0-9-]{2,39}$/)) throw new BadRequestError("Nom de nouvelle instance invalide.");
+};
+const subdomainExists$1 = (subdomain) => {
+	try {
+		$app.findFirstRecordByData("instances", "subdomain", subdomain);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const suggestRestoreSubdomain = (sourceSubdomain) => {
+	const base = normalizeBaseSubdomain$1(sourceSubdomain);
+	const fixed = `${base.slice(0, 31).replace(/-+$/g, "")}-restore`;
+	if (fixed.match(/^[a-z][a-z0-9-]{2,39}$/) && !subdomainExists$1(fixed)) return fixed;
+	for (let i = 0; i < 25; i++) {
+		const suffix = $security.randomStringWithAlphabet(5 + Math.min(i, 4), "abcdefghijklmnopqrstuvwxyz0123456789");
+		const candidate = `${base.slice(0, 39 - suffix.length).replace(/-+$/g, "")}-${suffix}`;
+		if (candidate.match(/^[a-z][a-z0-9-]{2,39}$/) && !subdomainExists$1(candidate)) return candidate;
+	}
+	throw new BadRequestError("Impossible de generer un nom d'instance disponible.");
+};
 const getBackupRecord = (instance, backupId) => {
 	assertSafeBackupId(backupId);
 	const backup = $app.findRecordById("instance_backups", backupId);
@@ -1004,8 +1030,8 @@ const restoreExtractedDirs = (instance, extractDir) => {
 		throw error;
 	}
 };
-const restoreArchive = (instance, backup) => {
-	const archivePath = ensureLocalArchive(instance, backup);
+const restoreArchive = (instance, backup, archiveInstance = instance) => {
+	const archivePath = ensureLocalArchive(archiveInstance, backup);
 	const filename = backup.getString("filename");
 	validateArchiveListing(archivePath, filename);
 	const extractDir = `${instanceRoot$2(instance.id)}/.restore-extract-${backup.id}`;
@@ -1032,6 +1058,36 @@ const restoreArchive = (instance, backup) => {
 		try {
 			$os.removeAll(normalizedDir);
 		} catch {}
+	}
+};
+const createRestoredInstanceFromBackup = (source, authRecord, backup, e) => {
+	const { subdomain } = readRestoreNewInput(e, source);
+	const collection = $app.findCollectionByNameOrId("instances");
+	const target = new Record(collection);
+	target.set("uid", authRecord.id);
+	target.set("subdomain", subdomain);
+	target.set("status", "idle");
+	target.set("power", false);
+	target.set("version", source.getString("version"));
+	target.set("dev", false);
+	target.set("syncAdmin", source.getBool("syncAdmin"));
+	target.set("autoVacuum", source.getBool("autoVacuum"));
+	target.set("secrets", source.get("secrets"));
+	target.set("webhooks", source.get("webhooks"));
+	try {
+		$app.save(target);
+		target.set("autoVacuum", source.getBool("autoVacuum"));
+		$app.save(target);
+		restoreArchive(target, backup, source);
+		return target;
+	} catch (error) {
+		try {
+			if (target.id) $app.delete(target);
+		} catch {}
+		try {
+			if (target.id) $os.removeAll(instanceRoot$2(target.id));
+		} catch {}
+		throw new ApiError(500, "Impossible de restaurer vers une nouvelle instance.", { error });
 	}
 };
 const importBackupFromServerPath = (instance, authRecord, serverPath) => {
@@ -1097,6 +1153,19 @@ const readServerPathInput = (e) => {
 		return data.serverPath || "";
 	} catch {}
 	return "";
+};
+const readRestoreNewInput = (e, source) => {
+	let data = new DynamicModel({ subdomain: "" });
+	try {
+		e.bindBody(data);
+		data = JSON.parse(JSON.stringify(data));
+	} catch {
+		data = { subdomain: "" };
+	}
+	const subdomain = (data.subdomain || "").trim().toLowerCase() || suggestRestoreSubdomain(source.getString("subdomain"));
+	assertValidSubdomain(subdomain);
+	if (subdomainExists$1(subdomain)) throw new BadRequestError("Ce nom de nouvelle instance est deja utilise.");
+	return { subdomain };
 };
 const backupManifestObject = (backup) => {
 	const value = backup.get("manifest");
@@ -1438,6 +1507,17 @@ const HandleInstanceBackupRestore = (e) => {
 		if (restored) restartIfNeeded(instance.id, power);
 	}
 	return e.json(200, { status: "ok" });
+};
+const HandleInstanceBackupRestoreNew = (e) => {
+	const log = mkLog("POST:instance:backup:restore:new");
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
+	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
+	const target = createRestoredInstanceFromBackup(instance, authRecord, backup, e);
+	log(`restored ${backup.id} from ${instance.id} into new instance ${target.id}`);
+	return e.json(200, { instance: target });
 };
 
 //#endregion
@@ -5039,6 +5119,7 @@ exports.HandleInstanceBackupDelete = HandleInstanceBackupDelete;
 exports.HandleInstanceBackupDownload = HandleInstanceBackupDownload;
 exports.HandleInstanceBackupImport = HandleInstanceBackupImport;
 exports.HandleInstanceBackupRestore = HandleInstanceBackupRestore;
+exports.HandleInstanceBackupRestoreNew = HandleInstanceBackupRestoreNew;
 exports.HandleInstanceBackupsList = HandleInstanceBackupsList;
 exports.HandleInstanceCreate = HandleInstanceCreate;
 exports.HandleInstanceDelete = HandleInstanceDelete;

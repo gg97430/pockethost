@@ -140,6 +140,14 @@ routerAdd(
   $apis.requireAuth()
 )
 routerAdd(
+  'POST',
+  '/api/instance/{id}/backups/{backupId}/restore-new',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceBackupRestoreNew(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
   'DELETE',
   '/api/instance/{id}',
   (e) => {

@@ -502,6 +502,12 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       method: 'POST',
     })
 
+  const restoreInstanceBackupToNewInstance = (id: InstanceId, backupId: string, input: { subdomain?: string }) =>
+    client.send<{ instance: InstanceFields }>(`/api/instance/${id}/backups/${backupId}/restore-new`, {
+      method: 'POST',
+      body: input,
+    })
+
   const deleteInstanceBackup = (id: InstanceId, backupId: string) =>
     client.send<{ status: 'ok' }>(`/api/instance/${id}/backups/${backupId}`, {
       method: 'DELETE',
@@ -766,6 +772,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     importInstanceBackup,
     listInstanceBackups,
     restoreInstanceBackup,
+    restoreInstanceBackupToNewInstance,
     deleteInstanceBackup,
     downloadInstanceBackup,
   }

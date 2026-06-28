@@ -124,6 +124,9 @@ routerAdd("DELETE", "/api/instance/{id}/backups/{backupId}", (e) => {
 routerAdd("POST", "/api/instance/{id}/backups/{backupId}/restore", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceBackupRestore(e);
 }, $apis.requireAuth());
+routerAdd("POST", "/api/instance/{id}/backups/{backupId}/restore-new", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceBackupRestoreNew(e);
+}, $apis.requireAuth());
 routerAdd("DELETE", "/api/instance/{id}", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceDelete(e);
 }, $apis.requireAuth());

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation'
   import { onMount } from 'svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
   import { client, type InstanceBackup, type UploadProgress } from '$src/pocketbase-client'
@@ -69,6 +70,16 @@
     if (kind === 'pre-restore') return 'Avant restauration'
     if (kind === 'import') return 'Importée'
     return 'Manuelle'
+  }
+
+  const suggestedRestoreSubdomain = () => {
+    const base = (subdomain || displayName || 'instance')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    const normalized = base.match(/^[a-z]/) ? base : `base-${base}`
+    return `${normalized.slice(0, 31).replace(/-+$/g, '')}-restore`
   }
 
   const loadBackups = async () => {
@@ -200,6 +211,30 @@
       await client().restoreInstanceBackup(id, backup.id)
       successMessage = 'Instance restaurée'
       await loadBackups()
+    } catch (error) {
+      errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      await loadBackups()
+    } finally {
+      action = ''
+    }
+  }
+
+  const restoreBackupToNewInstance = async (backup: InstanceBackup) => {
+    if (isBusy || backup.status !== 'ready') return
+
+    const subdomain = window.prompt(
+      `Nom de la nouvelle instance à créer depuis ${backup.filename || backup.id} ?\n\nElle sera créée éteinte, sans écraser ${displayName}.`,
+      suggestedRestoreSubdomain()
+    )
+    if (subdomain === null) return
+
+    action = `restore-new:${backup.id}`
+    errorMessage = ''
+    successMessage = ''
+    try {
+      const result = await client().restoreInstanceBackupToNewInstance(id, backup.id, { subdomain: subdomain.trim() })
+      successMessage = 'Nouvelle instance restaurée'
+      await goto(`/instances/${result.instance.id}`)
     } catch (error) {
       errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
       await loadBackups()
@@ -374,6 +409,17 @@
             >
               <wa-icon name={action === `restore:${backup.id}` ? 'rotate' : 'rotate-left'}></wa-icon>
               <span>Restaurer</span>
+            </button>
+            <button
+              type="button"
+              class="backup-action backup-action--restore-new"
+              disabled={isBusy || backup.status !== 'ready'}
+              onclick={() => restoreBackupToNewInstance(backup)}
+              title="Restaurer dans une nouvelle instance"
+              aria-label="Restaurer cette sauvegarde dans une nouvelle instance"
+            >
+              <wa-icon name={action === `restore-new:${backup.id}` ? 'rotate' : 'copy'}></wa-icon>
+              <span>Nouvelle instance</span>
             </button>
             <button
               type="button"
@@ -776,6 +822,18 @@
     border-color: rgb(59 130 246 / 0.42);
     background: rgb(59 130 246 / 0.1);
     color: #2563eb;
+  }
+
+  .backup-action--restore-new {
+    border-color: rgb(14 165 233 / 0.42);
+    background: rgb(14 165 233 / 0.1);
+    color: #0284c7;
+  }
+
+  .backup-action--restore-new:hover:not(:disabled) {
+    border-color: rgb(14 165 233 / 0.58);
+    background: rgb(14 165 233 / 0.16);
+    color: #0369a1;
   }
 
   .backup-action--danger:hover:not(:disabled) {

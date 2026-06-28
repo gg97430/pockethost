@@ -247,6 +247,46 @@ const findInstanceBackups = (instanceId: string) => {
   return sortBackupsNewestFirst(records.filter((record): record is core.Record => !!record))
 }
 
+const normalizeBaseSubdomain = (subdomain: string) => {
+  const clean = subdomain
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  const base = clean.match(/^[a-z]/) ? clean : `base-${clean}`
+  return base.slice(0, 34).replace(/-+$/g, '') || 'base'
+}
+
+const assertValidSubdomain = (subdomain: string) => {
+  if (!subdomain.match(/^[a-z][a-z0-9-]{2,39}$/)) {
+    throw new BadRequestError('Nom de nouvelle instance invalide.')
+  }
+}
+
+const subdomainExists = (subdomain: string) => {
+  try {
+    $app.findFirstRecordByData('instances', 'subdomain', subdomain)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const suggestRestoreSubdomain = (sourceSubdomain: string) => {
+  const base = normalizeBaseSubdomain(sourceSubdomain)
+  const fixed = `${base.slice(0, 31).replace(/-+$/g, '')}-restore`
+  if (fixed.match(/^[a-z][a-z0-9-]{2,39}$/) && !subdomainExists(fixed)) return fixed
+
+  for (let i = 0; i < 25; i++) {
+    const suffix = $security.randomStringWithAlphabet(5 + Math.min(i, 4), 'abcdefghijklmnopqrstuvwxyz0123456789')
+    const candidate = `${base.slice(0, 39 - suffix.length).replace(/-+$/g, '')}-${suffix}`
+    if (candidate.match(/^[a-z][a-z0-9-]{2,39}$/) && !subdomainExists(candidate)) return candidate
+  }
+
+  throw new BadRequestError("Impossible de generer un nom d'instance disponible.")
+}
+
 const getBackupRecord = (instance: core.Record, backupId: string) => {
   assertSafeBackupId(backupId)
   const backup = $app.findRecordById('instance_backups', backupId)
@@ -784,8 +824,8 @@ const restoreExtractedDirs = (instance: core.Record, extractDir: string) => {
   }
 }
 
-const restoreArchive = (instance: core.Record, backup: core.Record) => {
-  const archivePath = ensureLocalArchive(instance, backup)
+const restoreArchive = (instance: core.Record, backup: core.Record, archiveInstance = instance) => {
+  const archivePath = ensureLocalArchive(archiveInstance, backup)
   const filename = backup.getString('filename')
   validateArchiveListing(archivePath, filename)
 
@@ -815,6 +855,47 @@ const restoreArchive = (instance: core.Record, backup: core.Record) => {
     try {
       $os.removeAll(normalizedDir)
     } catch {}
+  }
+}
+
+const createRestoredInstanceFromBackup = (
+  source: core.Record,
+  authRecord: core.Record,
+  backup: core.Record,
+  e: core.RequestEvent
+) => {
+  const { subdomain } = readRestoreNewInput(e, source)
+  const collection = $app.findCollectionByNameOrId('instances')
+  const target = new Record(collection)
+
+  target.set('uid', authRecord.id)
+  target.set('subdomain', subdomain)
+  target.set('status', 'idle')
+  target.set('power', false)
+  target.set('version', source.getString('version'))
+  target.set('dev', false)
+  target.set('syncAdmin', source.getBool('syncAdmin'))
+  target.set('autoVacuum', source.getBool('autoVacuum'))
+  target.set('secrets', source.get('secrets'))
+  target.set('webhooks', source.get('webhooks'))
+
+  try {
+    $app.save(target)
+
+    // The create hook defaults autoVacuum. Save once more so the target preserves the source option.
+    target.set('autoVacuum', source.getBool('autoVacuum'))
+    $app.save(target)
+
+    restoreArchive(target, backup, source)
+    return target
+  } catch (error) {
+    try {
+      if (target.id) $app.delete(target)
+    } catch {}
+    try {
+      if (target.id) $os.removeAll(instanceRoot(target.id))
+    } catch {}
+    throw new ApiError(500, 'Impossible de restaurer vers une nouvelle instance.', { error })
   }
 }
 
@@ -892,6 +973,25 @@ const readServerPathInput = (e: core.RequestEvent) => {
   } catch {}
 
   return ''
+}
+
+const readRestoreNewInput = (e: core.RequestEvent, source: core.Record) => {
+  let data = new DynamicModel({
+    subdomain: '',
+  }) as { subdomain?: string }
+
+  try {
+    e.bindBody(data)
+    data = JSON.parse(JSON.stringify(data))
+  } catch {
+    data = { subdomain: '' }
+  }
+
+  const requested = (data.subdomain || '').trim().toLowerCase()
+  const subdomain = requested || suggestRestoreSubdomain(source.getString('subdomain'))
+  assertValidSubdomain(subdomain)
+  if (subdomainExists(subdomain)) throw new BadRequestError('Ce nom de nouvelle instance est deja utilise.')
+  return { subdomain }
 }
 
 const backupManifestObject = (backup: core.Record) => {
@@ -1359,4 +1459,21 @@ export const HandleInstanceBackupRestore = (e: core.RequestEvent) => {
   }
 
   return e.json(200, { status: 'ok' })
+}
+
+export const HandleInstanceBackupRestoreNew = (e: core.RequestEvent) => {
+  const log = mkLog('POST:instance:backup:restore:new')
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  const backup = getBackupRecord(instance, pathValue(e, 'backupId'))
+  if (backup.getString('status') !== 'ready') {
+    throw new BadRequestError("Cette sauvegarde n'est pas prete.")
+  }
+
+  const target = createRestoredInstanceFromBackup(instance, authRecord, backup, e)
+  log(`restored ${backup.id} from ${instance.id} into new instance ${target.id}`)
+
+  return e.json(200, { instance: target })
 }

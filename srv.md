@@ -392,6 +392,39 @@ Le process de sauvegarde:
 5. calcule la taille et le checksum SHA256;
 6. redemarre l'instance si elle etait active.
 
+### Plafonner les ressources des sauvegardes
+
+Les grosses bases peuvent monopoliser le CPU et le disque pendant la compression. Installer `cpulimit` pour activer un
+plafond CPU strict:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y cpulimit
+```
+
+Puis ajouter dans `.env`:
+
+```env
+INSTANCE_BACKUP_CPU_LIMIT_PERCENT=50
+INSTANCE_BACKUP_GZIP_LEVEL=1
+INSTANCE_BACKUP_NICE_LEVEL=19
+INSTANCE_BACKUP_IONICE_CLASS=3
+```
+
+Effets:
+
+- `INSTANCE_BACKUP_CPU_LIMIT_PERCENT=50` limite la compression a 50 % d'un CPU. Mettre `0` pour desactiver.
+- `INSTANCE_BACKUP_GZIP_LEVEL=1` reduit fortement le temps CPU, avec des archives un peu plus grosses.
+- `INSTANCE_BACKUP_NICE_LEVEL=19` laisse les autres process passer avant la sauvegarde.
+- `INSTANCE_BACKUP_IONICE_CLASS=3` met les lectures/ecritures de sauvegarde en priorite disque idle.
+
+Apres modification:
+
+```bash
+pm2 restart mothership --update-env
+pm2 save
+```
+
 ### Importer une grosse archive
 
 La page `Sauvegardes` accepte aussi l'import d'une archive existante en `.zip`, `.tgz` ou `.tar.gz`.

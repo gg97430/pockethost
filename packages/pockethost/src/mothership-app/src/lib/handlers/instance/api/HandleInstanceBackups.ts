@@ -10,6 +10,9 @@ const PRIVATE_FILE_MODE = 0o600 as any
 const DEFAULT_IMPORT_CHUNK_SIZE_BYTES = 32 * 1024 * 1024
 const MIN_IMPORT_CHUNK_SIZE_BYTES = 1024 * 1024
 const MAX_IMPORT_CHUNKS = 20_000
+const DEFAULT_BACKUP_GZIP_LEVEL = 1
+const DEFAULT_BACKUP_NICE_LEVEL = 19
+const DEFAULT_BACKUP_IONICE_CLASS = 3
 
 type BackupKind = 'manual' | 'pre-restore' | 'import'
 type ArchiveFormat = 'tar.gz' | 'zip'
@@ -102,6 +105,77 @@ const fileSize = (path: string) => {
 }
 
 const runCommand = (name: string, ...args: string[]) => toString($os.cmd(name, ...args).combinedOutput()).trim()
+
+const parseIntegerEnv = (name: string, fallback: number, min: number, max: number) => {
+  const raw = `${$os.getenv(name) || ''}`.trim()
+  if (!raw) return fallback
+
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(value)))
+}
+
+const commandExists = (name: string) => {
+  if (!name.match(/^[a-z0-9_-]+$/i)) return false
+  return runCommand('sh', '-c', `command -v ${name} >/dev/null 2>&1; echo $?`) === '0'
+}
+
+const backupGzipLevel = () => parseIntegerEnv('INSTANCE_BACKUP_GZIP_LEVEL', DEFAULT_BACKUP_GZIP_LEVEL, 1, 9)
+const backupCpuLimitPercent = () => parseIntegerEnv('INSTANCE_BACKUP_CPU_LIMIT_PERCENT', 0, 0, 1000)
+const backupNiceLevel = () => parseIntegerEnv('INSTANCE_BACKUP_NICE_LEVEL', DEFAULT_BACKUP_NICE_LEVEL, -20, 19)
+const backupIoniceClass = () => parseIntegerEnv('INSTANCE_BACKUP_IONICE_CLASS', DEFAULT_BACKUP_IONICE_CLASS, 0, 3)
+const backupIonicePriority = () => parseIntegerEnv('INSTANCE_BACKUP_IONICE_PRIORITY', 7, 0, 7)
+
+const backupResourceSettings = () => ({
+  gzipLevel: backupGzipLevel(),
+  cpuLimitPercent: backupCpuLimitPercent(),
+  niceLevel: backupNiceLevel(),
+  ioniceClass: backupIoniceClass(),
+  ionicePriority: backupIonicePriority(),
+})
+
+const withBackupResourceLimits = (command: string[]) => {
+  const settings = backupResourceSettings()
+  let limited = [...command]
+
+  if (commandExists('nice')) {
+    limited = ['nice', '-n', `${settings.niceLevel}`, ...limited]
+  }
+
+  if (commandExists('ionice')) {
+    const ioniceArgs = ['ionice', '-c', `${settings.ioniceClass}`]
+    if (settings.ioniceClass === 2) ioniceArgs.push('-n', `${settings.ionicePriority}`)
+    limited = [...ioniceArgs, ...limited]
+  }
+
+  if (settings.cpuLimitPercent > 0) {
+    if (!commandExists('cpulimit')) {
+      throw new Error('INSTANCE_BACKUP_CPU_LIMIT_PERCENT requiert le paquet systeme cpulimit.')
+    }
+    limited = ['cpulimit', '-q', '-m', '-f', '-l', `${settings.cpuLimitPercent}`, '--', ...limited]
+  }
+
+  return limited
+}
+
+const runBackupArchiveCommand = (tmpPath: string, root: string, stagingDir: string) => {
+  const settings = backupResourceSettings()
+  const command = withBackupResourceLimits([
+    'tar',
+    '-I',
+    `gzip -${settings.gzipLevel}`,
+    '-cf',
+    tmpPath,
+    '-C',
+    root,
+    ...BACKUP_DIRS,
+    '-C',
+    stagingDir,
+    'manifest.json',
+  ])
+
+  return runCommand(command[0]!, ...command.slice(1))
+}
 
 const sleepOneSecond = () => {
   $os.cmd('sleep', '1').combinedOutput()
@@ -540,6 +614,7 @@ const createArchive = (instance: core.Record, backup: core.Record, kind: BackupK
   const tmpPath = `${finalPath}.tmp`
   const stagingDir = `${dir}/.staging-${backup.id}`
   const manifestPath = `${stagingDir}/manifest.json`
+  const resourceSettings = backupResourceSettings()
 
   assertSafeBackupFilename(filename)
   $os.mkdirAll(dir, DIR_MODE)
@@ -569,16 +644,27 @@ const createArchive = (instance: core.Record, backup: core.Record, kind: BackupK
     included: BACKUP_DIRS,
     excluded: ['logs'],
     sourceSizeBytes: sizeBytes,
+    compression: {
+      format: 'tar.gz',
+      gzipLevel: resourceSettings.gzipLevel,
+      cpuLimitPercent: resourceSettings.cpuLimitPercent,
+      niceLevel: resourceSettings.niceLevel,
+      ioniceClass: resourceSettings.ioniceClass,
+      ionicePriority: resourceSettings.ionicePriority,
+    },
   }
 
   try {
     $os.writeFile(manifestPath, JSON.stringify(manifest, null, 2), PRIVATE_FILE_MODE)
     updateBackupOperation(backup, 'compressing', {
-      label: "Compression de l'archive en cours",
+      label:
+        resourceSettings.cpuLimitPercent > 0
+          ? `Compression limitee a ${resourceSettings.cpuLimitPercent} % CPU`
+          : "Compression de l'archive en cours",
       percent: 36,
       sourceSizeBytes: sizeBytes,
     })
-    runCommand('tar', '-czf', tmpPath, '-C', root, ...BACKUP_DIRS, '-C', stagingDir, 'manifest.json')
+    runBackupArchiveCommand(tmpPath, root, stagingDir)
     $os.rename(tmpPath, finalPath)
 
     const compressedBytes = fileSize(finalPath)

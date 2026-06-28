@@ -16,6 +16,12 @@ type ArchiveFormat = 'tar.gz' | 'zip'
 type ManagedPower = {
   shouldRestart: boolean
 }
+type BackupOperationInput = {
+  label?: string
+  percent?: number
+  sourceSizeBytes?: number
+  compressedBytes?: number
+}
 type ImportedArchive = {
   filename: string
   localPath: string
@@ -353,6 +359,7 @@ const restartIfNeeded = (instanceId: string, managedPower: ManagedPower) => {
 const createBackupRecord = (instance: core.Record, authRecord: core.Record, kind: BackupKind) => {
   const collection = $app.findCollectionByNameOrId('instance_backups')
   const backup = new Record(collection)
+  const now = new Date().toISOString()
   backup.set('user', instance.getString('uid') || authRecord.id)
   backup.set('instance', instance.id)
   backup.set('kind', kind)
@@ -363,9 +370,59 @@ const createBackupRecord = (instance: core.Record, authRecord: core.Record, kind
   backup.set('checksum', '')
   backup.set('error', '')
   backup.set('remoteError', '')
-  backup.set('manifest', null)
+  backup.set('manifest', {
+    operation: {
+      phase: 'queued',
+      label:
+        kind === 'manual'
+          ? 'Sauvegarde demandee'
+          : kind === 'pre-restore'
+            ? 'Sauvegarde de securite demandee'
+            : 'Import demande',
+      percent: 2,
+      startedAt: now,
+      updatedAt: now,
+    },
+  })
   $app.save(backup)
   return backup
+}
+
+const updateBackupOperation = (backup: core.Record, phase: string, input: BackupOperationInput = {}) => {
+  let manifest: Record<string, any> = {}
+
+  try {
+    const current = backup.get('manifest')
+    if (current && typeof current === 'object' && !Array.isArray(current)) {
+      manifest = JSON.parse(JSON.stringify(current))
+    }
+  } catch {}
+
+  const currentOperation =
+    manifest.operation && typeof manifest.operation === 'object' && !Array.isArray(manifest.operation)
+      ? manifest.operation
+      : {}
+  const now = new Date().toISOString()
+
+  backup.set('manifest', {
+    ...manifest,
+    operation: {
+      ...currentOperation,
+      phase,
+      label: input.label || currentOperation.label || phase,
+      percent:
+        typeof input.percent === 'number'
+          ? Math.max(0, Math.min(99, Math.round(input.percent)))
+          : currentOperation.percent || 0,
+      sourceSizeBytes:
+        typeof input.sourceSizeBytes === 'number' ? input.sourceSizeBytes : currentOperation.sourceSizeBytes || 0,
+      compressedBytes:
+        typeof input.compressedBytes === 'number' ? input.compressedBytes : currentOperation.compressedBytes || 0,
+      startedAt: currentOperation.startedAt || now,
+      updatedAt: now,
+    },
+  })
+  $app.save(backup)
 }
 
 type BackupDetails = {
@@ -492,6 +549,10 @@ const createArchive = (instance: core.Record, backup: core.Record, kind: BackupK
 
   ensureInstanceDirs(root)
 
+  updateBackupOperation(backup, 'scanning', {
+    label: 'Analyse de la taille des fichiers',
+    percent: 18,
+  })
   const sizeBytes = sourceSizeBytes(root)
   const manifest = {
     format: BACKUP_FORMAT,
@@ -512,8 +573,37 @@ const createArchive = (instance: core.Record, backup: core.Record, kind: BackupK
 
   try {
     $os.writeFile(manifestPath, JSON.stringify(manifest, null, 2), PRIVATE_FILE_MODE)
+    updateBackupOperation(backup, 'compressing', {
+      label: "Compression de l'archive en cours",
+      percent: 36,
+      sourceSizeBytes: sizeBytes,
+    })
     runCommand('tar', '-czf', tmpPath, '-C', root, ...BACKUP_DIRS, '-C', stagingDir, 'manifest.json')
     $os.rename(tmpPath, finalPath)
+
+    const compressedBytes = fileSize(finalPath)
+    updateBackupOperation(backup, 'checksum', {
+      label: "Calcul de l'empreinte SHA-256",
+      percent: 86,
+      sourceSizeBytes: sizeBytes,
+      compressedBytes,
+    })
+    const checksum = sha256(finalPath)
+    updateBackupOperation(backup, 'finalizing', {
+      label: 'Finalisation de la sauvegarde',
+      percent: 92,
+      sourceSizeBytes: sizeBytes,
+      compressedBytes,
+    })
+
+    return {
+      filename,
+      localPath: finalPath,
+      sizeBytes,
+      compressedBytes,
+      checksum,
+      manifest,
+    }
   } finally {
     try {
       $os.remove(tmpPath)
@@ -522,19 +612,9 @@ const createArchive = (instance: core.Record, backup: core.Record, kind: BackupK
       $os.removeAll(stagingDir)
     } catch {}
   }
-
-  return {
-    filename,
-    localPath: finalPath,
-    sizeBytes,
-    compressedBytes: fileSize(finalPath),
-    checksum: sha256(finalPath),
-    manifest,
-  }
 }
 
 const markBackupReady = (backup: core.Record, details: BackupDetails) => {
-  backup.set('status', 'ready')
   backup.set('filename', details.filename)
   backup.set('localPath', details.localPath)
   backup.set('sizeBytes', details.sizeBytes)
@@ -544,6 +624,26 @@ const markBackupReady = (backup: core.Record, details: BackupDetails) => {
   backup.set('error', '')
 
   try {
+    if (s3Config()) {
+      backup.set('manifest', {
+        ...details.manifest,
+        operation: {
+          phase: 'remote',
+          label: 'Copie distante R2/S3 en cours',
+          percent: 95,
+          sourceSizeBytes: details.sizeBytes,
+          compressedBytes: details.compressedBytes,
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      })
+      updateBackupOperation(backup, 'remote', {
+        label: 'Copie distante R2/S3 en cours',
+        percent: 95,
+        sourceSizeBytes: details.sizeBytes,
+        compressedBytes: details.compressedBytes,
+      })
+    }
     const remoteKey = uploadBackupToS3(backup.getString('instance'), details.filename, details.localPath)
     backup.set('remoteKey', remoteKey)
     backup.set('remoteError', '')
@@ -551,10 +651,15 @@ const markBackupReady = (backup: core.Record, details: BackupDetails) => {
     backup.set('remoteError', errorMessage(error))
   }
 
+  backup.set('status', 'ready')
+  backup.set('manifest', details.manifest)
   $app.save(backup)
 }
 
 const markBackupFailed = (backup: core.Record, error: unknown) => {
+  updateBackupOperation(backup, 'failed', {
+    label: 'Sauvegarde en echec',
+  })
   backup.set('status', 'failed')
   backup.set('error', errorMessage(error))
   $app.save(backup)
@@ -574,11 +679,23 @@ const createBackupForInstance = (
 
   try {
     if (managePower) {
+      updateBackupOperation(backup, 'stopping', {
+        label: instance.getBool('power') ? "Arret de l'instance avant sauvegarde" : "Verification de l'instance",
+        percent: 8,
+      })
       power = stopForFilesystemOperation(instance)
     } else {
+      updateBackupOperation(backup, 'waiting', {
+        label: "Attente de l'arret de l'instance",
+        percent: 8,
+      })
       waitUntilIdle(instance.id)
     }
 
+    updateBackupOperation(backup, 'snapshot', {
+      label: 'Instance arretee, preparation des fichiers',
+      percent: 14,
+    })
     const stoppedInstance = findInstance(instance.id)
     const details = createArchive(stoppedInstance, backup, kind)
     markBackupReady(backup, details)

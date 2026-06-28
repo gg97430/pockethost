@@ -1,9 +1,19 @@
 <script lang="ts">
   import { goto } from '$app/navigation'
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
   import { client, type InstanceBackup, type UploadProgress } from '$src/pocketbase-client'
   import { instance } from '../store'
+
+  type BackupOperation = {
+    phase: string
+    label: string
+    percent: number
+    startedAt: number
+    updatedAt: number
+    sourceSizeBytes: number
+    compressedBytes: number
+  }
 
   let backups: InstanceBackup[] = []
   let isLoading = true
@@ -15,10 +25,26 @@
   let fileInput: HTMLInputElement | undefined
   let uploadProgress: UploadProgress | null = null
   let uploadPhase = ''
+  let now = Date.now()
+  let operationStartedAt = 0
+  let pollTimer: ReturnType<typeof setInterval> | undefined
+  let clockTimer: ReturnType<typeof setInterval> | undefined
+  let lastSilentRefreshAt = 0
 
   $: ({ id, subdomain, cname, power } = $instance)
   $: displayName = cname || subdomain
-  $: isBusy = !!action
+  $: runningBackups = backups.filter((backup) => backup.status === 'running')
+  $: hasRunningBackup = runningBackups.length > 0
+  $: isBusy = !!action || hasRunningBackup
+  $: activeRunningBackup = runningBackups[0] || null
+  $: activeRunningOperation = activeRunningBackup ? backupOperation(activeRunningBackup) : null
+  $: liveOperationVisible = action === 'create' || hasRunningBackup
+  $: liveOperationLabel = activeRunningOperation?.label || 'Demande envoyée au serveur'
+  $: liveOperationPercent = activeRunningOperation?.percent || (action === 'create' ? 6 : 0)
+  $: liveOperationStartedAt = activeRunningOperation?.startedAt || operationStartedAt || now
+  $: liveOperationElapsed = formatDuration(Math.max(0, now - liveOperationStartedAt))
+  $: liveOperationSource = activeRunningOperation?.sourceSizeBytes || 0
+  $: liveOperationCompressed = activeRunningOperation?.compressedBytes || 0
   $: selectedArchiveLabel = archiveFile
     ? `${archiveFile.name} - ${formatBytes(archiveFile.size)}`
     : '1. Choisir un ZIP, TGZ ou TAR.GZ'
@@ -52,6 +78,17 @@
     return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: value >= 10 ? 0 : 1 }).format(value)} ${units[index]}`
   }
 
+  function formatDuration(durationMs: number) {
+    const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+
+    if (hours > 0) return `${hours} h ${String(minutes).padStart(2, '0')} min`
+    if (minutes > 0) return `${minutes} min ${String(seconds).padStart(2, '0')} s`
+    return `${seconds} s`
+  }
+
   const formatDate = (value: string) => {
     if (!value) return '-'
     return new Intl.DateTimeFormat('fr-FR', {
@@ -60,16 +97,58 @@
     }).format(new Date(value))
   }
 
-  const statusLabel = (status: InstanceBackup['status']) => {
+  function statusLabel(status: InstanceBackup['status']) {
     if (status === 'ready') return 'Prête'
     if (status === 'running') return 'En cours'
     return 'Échec'
   }
 
-  const kindLabel = (kind: InstanceBackup['kind']) => {
+  function kindLabel(kind: InstanceBackup['kind']) {
     if (kind === 'pre-restore') return 'Avant restauration'
     if (kind === 'import') return 'Importée'
     return 'Manuelle'
+  }
+
+  function manifestObject(manifest: unknown) {
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return {}
+    return manifest as Record<string, unknown>
+  }
+
+  function backupOperation(backup: InstanceBackup): BackupOperation {
+    const manifest = manifestObject(backup.manifest)
+    const rawOperation = manifest.operation
+    const operation =
+      rawOperation && typeof rawOperation === 'object' && !Array.isArray(rawOperation)
+        ? (rawOperation as Record<string, unknown>)
+        : {}
+
+    const startedAt = Date.parse(`${operation.startedAt || backup.created || ''}`)
+    const updatedAt = Date.parse(`${operation.updatedAt || backup.updated || backup.created || ''}`)
+    const sourceSizeBytes = Number(operation.sourceSizeBytes || backup.sizeBytes || manifest.sourceSizeBytes || 0)
+    const compressedBytes = Number(operation.compressedBytes || backup.compressedBytes || 0)
+    const rawPercent = Number(operation.percent || 0)
+
+    return {
+      phase: typeof operation.phase === 'string' ? operation.phase : backup.status,
+      label:
+        typeof operation.label === 'string' && operation.label.trim()
+          ? operation.label
+          : backup.status === 'running'
+            ? 'Sauvegarde en cours'
+            : statusLabel(backup.status),
+      percent:
+        Number.isFinite(rawPercent) && rawPercent > 0
+          ? Math.max(0, Math.min(99, Math.round(rawPercent)))
+          : backup.status === 'running'
+            ? 12
+            : backup.status === 'ready'
+              ? 100
+              : 0,
+      startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
+      updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+      sourceSizeBytes: Number.isFinite(sourceSizeBytes) ? sourceSizeBytes : 0,
+      compressedBytes: Number.isFinite(compressedBytes) ? compressedBytes : 0,
+    }
   }
 
   const suggestedRestoreSubdomain = () => {
@@ -82,20 +161,45 @@
     return `${normalized.slice(0, 31).replace(/-+$/g, '')}-restore`
   }
 
-  const loadBackups = async () => {
-    isLoading = true
-    errorMessage = ''
+  const loadBackups = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) {
+      isLoading = true
+      errorMessage = ''
+    }
     try {
       backups = (await client().listInstanceBackups(id)).backups
     } catch (error) {
-      errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      if (!silent) {
+        errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      }
     } finally {
-      isLoading = false
+      if (!silent) isLoading = false
     }
+  }
+
+  const refreshBackupsSilently = async () => {
+    const current = Date.now()
+    if (current - lastSilentRefreshAt < 1200) return
+
+    lastSilentRefreshAt = current
+    await loadBackups({ silent: true })
   }
 
   onMount(() => {
     void loadBackups()
+    clockTimer = setInterval(() => {
+      now = Date.now()
+    }, 1000)
+    pollTimer = setInterval(() => {
+      if (action || backups.some((backup) => backup.status === 'running')) {
+        void refreshBackupsSilently()
+      }
+    }, 3000)
+  })
+
+  onDestroy(() => {
+    if (clockTimer) clearInterval(clockTimer)
+    if (pollTimer) clearInterval(pollTimer)
   })
 
   const createBackup = async () => {
@@ -107,9 +211,11 @@
     if (!confirmed) return
 
     action = 'create'
+    operationStartedAt = Date.now()
     errorMessage = ''
     successMessage = ''
     try {
+      setTimeout(() => void refreshBackupsSilently(), 1200)
       const result = await client().createInstanceBackup(id)
       backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup.id)]
       successMessage = 'Sauvegarde créée'
@@ -118,6 +224,7 @@
       await loadBackups()
     } finally {
       action = ''
+      operationStartedAt = 0
     }
   }
 
@@ -352,6 +459,38 @@
     </div>
   </section>
 
+  {#if liveOperationVisible}
+    <section class="backup-live" aria-live="polite">
+      <div class="backup-live__icon">
+        <wa-icon name="rotate"></wa-icon>
+      </div>
+      <div class="backup-live__body">
+        <div class="backup-live__header">
+          <strong>{liveOperationLabel}</strong>
+          <span>Depuis {liveOperationElapsed}</span>
+        </div>
+        <p>
+          La sauvegarde travaille en arrière-plan. Vous pouvez laisser cette page ouverte, elle se rafraîchit
+          automatiquement.
+        </p>
+        <div
+          class="backup-live__track"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={liveOperationPercent}
+        >
+          <span style={`width: ${liveOperationPercent}%`}></span>
+        </div>
+        <div class="backup-live__stats">
+          <span>Source : {liveOperationSource ? formatBytes(liveOperationSource) : 'calcul en cours'}</span>
+          <span>Archive : {liveOperationCompressed ? formatBytes(liveOperationCompressed) : 'préparation'}</span>
+          <span>{runningBackups.length || (action === 'create' ? 1 : 0)} opération en cours</span>
+        </div>
+      </div>
+    </section>
+  {/if}
+
   {#if isLoading}
     <div class="backup-empty">Chargement des sauvegardes...</div>
   {:else if backups.length === 0}
@@ -362,7 +501,11 @@
   {:else}
     <div class="backup-list">
       {#each backups as backup (backup.id)}
-        <article class="backup-row" class:backup-row--failed={backup.status === 'failed'}>
+        <article
+          class="backup-row"
+          class:backup-row--running={backup.status === 'running'}
+          class:backup-row--failed={backup.status === 'failed'}
+        >
           <div class="backup-main">
             <div class="backup-title-row">
               <span class="backup-title">{backup.filename || backup.id}</span>
@@ -374,6 +517,24 @@
               <span>{formatBytes(backup.compressedBytes)} compressés</span>
               <span>{formatBytes(backup.sizeBytes)} source</span>
             </div>
+            {#if backup.status === 'running'}
+              {@const operation = backupOperation(backup)}
+              <div class="backup-row-progress" aria-live="polite">
+                <div class="backup-row-progress__meta">
+                  <strong>{operation.label}</strong>
+                  <span>{formatDuration(Math.max(0, now - operation.startedAt))}</span>
+                </div>
+                <div
+                  class="backup-row-progress__track"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow={operation.percent}
+                >
+                  <span style={`width: ${operation.percent}%`}></span>
+                </div>
+              </div>
+            {/if}
             {#if backup.checksum}
               <code class="backup-checksum">sha256:{backup.checksum.slice(0, 16)}...</code>
             {/if}
@@ -632,6 +793,103 @@
     transition: width 160ms ease;
   }
 
+  .backup-live {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.85rem;
+    align-items: start;
+    margin-bottom: 1rem;
+    border: 1px solid rgb(245 158 11 / 0.34);
+    border-radius: 0.65rem;
+    background: linear-gradient(135deg, rgb(245 158 11 / 0.12), transparent 58%), var(--app-surface);
+    padding: 0.95rem;
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .backup-live__icon {
+    display: grid;
+    width: 2.35rem;
+    height: 2.35rem;
+    place-items: center;
+    border: 1px solid rgb(245 158 11 / 0.36);
+    border-radius: 0.5rem;
+    background: rgb(245 158 11 / 0.13);
+    color: #d97706;
+  }
+
+  .backup-live__icon wa-icon {
+    animation: backup-spin 1.1s linear infinite;
+  }
+
+  .backup-live__body {
+    display: grid;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .backup-live__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.4rem 0.75rem;
+  }
+
+  .backup-live__header strong {
+    color: var(--app-text-strong);
+    font-size: 0.95rem;
+    font-weight: 950;
+  }
+
+  .backup-live__header span,
+  .backup-live__stats,
+  .backup-live p {
+    color: var(--app-text-muted);
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .backup-live p {
+    margin: 0;
+    line-height: 1.45;
+  }
+
+  .backup-live__track,
+  .backup-row-progress__track {
+    position: relative;
+    height: 0.65rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgb(245 158 11 / 0.14);
+  }
+
+  .backup-live__track::before,
+  .backup-row-progress__track::before {
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.16), transparent);
+    animation: backup-sweep 1.8s ease-in-out infinite;
+  }
+
+  .backup-live__track span,
+  .backup-row-progress__track span {
+    position: relative;
+    display: block;
+    height: 100%;
+    min-width: 0.45rem;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #f59e0b, #22c55e);
+    box-shadow: 0 0 18px rgb(245 158 11 / 0.28);
+    transition: width 240ms ease;
+  }
+
+  .backup-live__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.85rem;
+  }
+
   .backup-list {
     display: grid;
     gap: 0.75rem;
@@ -691,6 +949,11 @@
     border-color: rgb(239 68 68 / 0.35);
   }
 
+  .backup-row--running {
+    border-color: rgb(245 158 11 / 0.38);
+    background: linear-gradient(135deg, rgb(245 158 11 / 0.08), transparent 45%), var(--app-surface);
+  }
+
   .backup-main {
     min-width: 0;
   }
@@ -747,6 +1010,29 @@
     color: var(--app-text-muted);
     font-size: 0.78rem;
     font-weight: 600;
+  }
+
+  .backup-row-progress {
+    display: grid;
+    gap: 0.4rem;
+    margin-top: 0.7rem;
+    max-width: 34rem;
+  }
+
+  .backup-row-progress__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem 0.75rem;
+    color: var(--app-text-muted);
+    font-size: 0.75rem;
+    font-weight: 750;
+  }
+
+  .backup-row-progress__meta strong {
+    color: var(--app-text-strong);
+    font-weight: 900;
   }
 
   .backup-checksum {
@@ -864,8 +1150,28 @@
     font-weight: 700;
   }
 
+  @keyframes backup-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes backup-sweep {
+    from {
+      transform: translateX(-100%);
+    }
+
+    to {
+      transform: translateX(100%);
+    }
+  }
+
   @media (max-width: 720px) {
     .backup-import-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .backup-live {
       grid-template-columns: 1fr;
     }
 

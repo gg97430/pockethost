@@ -7,7 +7,7 @@
   $: isSuperAdmin = !!$userStore?.superAdmin
 </script>
 
-<div class="px-4 md:px-20 relative z-10 max-w-content mx-auto pt-6 md:pt-10">
+<div class="app-content-shell">
   <UserLoggedIn>
     {#if maxInstances === 0 && !isSuperAdmin}
       <wa-callout variant="warning" class="wa-callout-padded py-2 mt-2">
@@ -31,3 +31,20 @@
     </div>
   </UserLoggedOut>
 </div>
+
+<style>
+  .app-content-shell {
+    position: relative;
+    z-index: 10;
+    width: min(100%, 110rem);
+    margin-inline: auto;
+    padding: 1.5rem 1rem 0;
+  }
+
+  @media (min-width: 768px) {
+    .app-content-shell {
+      padding-top: 2.5rem;
+      padding-inline: clamp(2rem, 4vw, 5rem);
+    }
+  }
+</style>

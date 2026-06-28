@@ -305,7 +305,7 @@
   }
 
   .instance-table-wrap {
-    overflow-x: auto;
+    overflow: hidden;
     border: 1px solid var(--app-border);
     border-radius: 0.75rem;
     background: var(--app-surface);
@@ -314,6 +314,7 @@
 
   .instance-table {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 0.875rem;
   }
@@ -339,6 +340,7 @@
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--app-border);
     vertical-align: middle;
+    min-width: 0;
   }
 
   .instance-table :global(tr:last-child td) {
@@ -347,7 +349,84 @@
 
   .instance-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
     gap: 0.75rem;
+  }
+
+  @media (max-width: 1180px) {
+    .instance-table-wrap {
+      overflow: visible;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .instance-table,
+    .instance-table tbody,
+    .instance-table :global(tr),
+    .instance-table :global(td) {
+      display: block;
+      width: 100%;
+    }
+
+    .instance-table thead {
+      display: none;
+    }
+
+    .instance-table :global(tr) {
+      margin-bottom: 0.75rem;
+      border: 1px solid var(--app-border);
+      border-radius: 0.75rem;
+      background: var(--app-surface);
+      box-shadow: var(--app-shadow-sm);
+      overflow: hidden;
+    }
+
+    .instance-table :global(td) {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--app-border);
+    }
+
+    .instance-table :global(td::before) {
+      flex: 0 0 7.5rem;
+      color: var(--app-text-faint);
+      content: attr(data-label);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .instance-table :global(td:first-child) {
+      align-items: flex-start;
+      background: var(--app-surface-soft);
+    }
+
+    .instance-table :global(td:last-child) {
+      border-bottom: 0;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .instance-list-toolbar-actions {
+      width: 100%;
+      margin-left: 0;
+      justify-content: flex-end;
+    }
+
+    .instance-table :global(td) {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.45rem;
+      justify-items: stretch;
+    }
+
+    .instance-table :global(td::before) {
+      flex-basis: auto;
+    }
   }
 </style>

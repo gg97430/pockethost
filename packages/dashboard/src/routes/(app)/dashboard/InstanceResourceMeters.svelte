@@ -75,9 +75,10 @@
   }
 
   .resource-meters--table {
-    grid-template-columns: minmax(4.75rem, 0.8fr) minmax(8rem, 1.35fr) minmax(5.5rem, 0.9fr);
+    width: 100%;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.35fr) minmax(0, 0.9fr);
     align-items: center;
-    min-width: 19rem;
+    min-width: 0;
   }
 
   .resource-meters--card {

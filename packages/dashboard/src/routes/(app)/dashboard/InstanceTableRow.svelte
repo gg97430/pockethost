@@ -44,7 +44,7 @@
 </script>
 
 <tr class="instance-table-row" tabindex="0" role="link" onclick={openInstance} onkeydown={onRowKeydown}>
-  <td class="instance-table-name" onclick={(e) => e.stopPropagation()}>
+  <td class="instance-table-name" data-label="Nom" onclick={(e) => e.stopPropagation()}>
     <div class="instance-table-name-cell">
       <InstanceFavoriteButton {isFavorite} onToggle={onToggleFavorite} />
       <div class="instance-table-name-label">
@@ -55,14 +55,14 @@
       </div>
     </div>
   </td>
-  <td class="instance-table-status">
+  <td class="instance-table-status" data-label="État">
     <InstanceRuntimeBadge {instance} />
   </td>
-  <td class="instance-table-resources">
+  <td class="instance-table-resources" data-label="Ressources">
     <InstanceResourceMeters {metrics} variant="table" />
   </td>
-  <td class="instance-table-version">v{instance.version}</td>
-  <td class="instance-table-actions" onclick={(e) => e.stopPropagation()}>
+  <td class="instance-table-version" data-label="Version">v{instance.version}</td>
+  <td class="instance-table-actions" data-label="Actions" onclick={(e) => e.stopPropagation()}>
     <div class="instance-table-action-row">
       <a
         href={INSTANCE_ADMIN_URL(instance)}
@@ -76,7 +76,7 @@
       <DuplicateInstanceButton {instance} compact />
     </div>
   </td>
-  <td class="instance-table-power" onclick={(e) => e.stopPropagation()}>
+  <td class="instance-table-power" data-label="Alimentation" onclick={(e) => e.stopPropagation()}>
     <Toggle checked={instance.power} loading={isShuttingDown} disabled={isShuttingDown} onChange={handlePowerChange} />
   </td>
 </tr>
@@ -101,8 +101,8 @@
   }
 
   .instance-table-name {
-    min-width: 12rem;
-    max-width: 22rem;
+    width: 24%;
+    min-width: 0;
   }
 
   .instance-table-name-cell {
@@ -113,29 +113,38 @@
   }
 
   .instance-table-name-label {
+    flex: 1 1 0;
     min-width: 0;
   }
 
   .instance-table-name-link {
-    display: inline;
+    display: block;
+    width: 100%;
+    min-width: 0;
     padding: 0;
     border: none;
     background: transparent;
     font: inherit;
     text-align: left;
     cursor: pointer;
-    min-width: 0;
   }
 
   .instance-table-name-text {
+    display: block;
+    overflow: hidden;
     font-weight: 600;
     color: var(--app-text-strong);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .instance-table-sub {
-    margin-left: 0.125rem;
+    display: block;
+    overflow: hidden;
     font-size: 0.75rem;
     color: var(--app-text-faint);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .instance-table-status {
@@ -143,11 +152,12 @@
   }
 
   .instance-table-resources {
-    width: 24rem;
-    min-width: 20rem;
+    width: 30%;
+    min-width: 0;
   }
 
   .instance-table-version {
+    width: 8%;
     font-size: 0.8125rem;
     color: var(--app-text-muted);
     white-space: nowrap;
@@ -155,8 +165,9 @@
 
   .instance-table-action-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.35rem;
     justify-content: flex-start;
   }
 
@@ -172,11 +183,12 @@
   }
 
   .instance-table-power {
-    width: 11rem;
+    width: 9rem;
     text-align: right;
   }
 
   .instance-table-actions {
-    min-width: 16rem;
+    width: 18%;
+    min-width: 0;
   }
 </style>

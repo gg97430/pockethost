@@ -45,6 +45,13 @@
   })
   const defaultLitestreamDraft = (): UpdateInstanceLitestreamPolicyInput => ({
     enabled: false,
+    s3Endpoint: '',
+    s3Bucket: '',
+    s3Prefix: '',
+    s3Region: 'auto',
+    s3AccessKeyId: '',
+    s3SecretAccessKey: '',
+    s3ForcePathStyle: false,
     syncInterval: '10s',
     monitorInterval: '10s',
     checkpointInterval: '1m',
@@ -60,7 +67,7 @@
   let litestreamPolicy: InstanceLitestreamPolicy | null = null
   let litestreamDraft = defaultLitestreamDraft()
   let litestreamCapabilities: InstanceLitestreamPolicyResponse['capabilities'] = {
-    s3Enabled: false,
+    s3PerInstance: true,
     litestreamInstalled: false,
     pm2Installed: false,
     serviceName: '',
@@ -133,9 +140,11 @@
     liveOperationKind === 'restore' ? (hasActiveRestore || isRestoreAction ? 1 : 0) : runningBackups.length || 1
   $: policyStatusText = backupPolicy ? policyStatusLabel(backupPolicy.lastStatus) : 'Non configurée'
   $: litestreamStatusText = litestreamPolicy ? litestreamStatusLabel(litestreamPolicy.status) : 'Non configurée'
-  $: litestreamReady =
-    litestreamCapabilities.s3Enabled && litestreamCapabilities.litestreamInstalled && litestreamCapabilities.pm2Installed
+  $: litestreamRuntimeReady = litestreamCapabilities.litestreamInstalled && litestreamCapabilities.pm2Installed
+  $: litestreamS3Ready = litestreamS3DraftValid(litestreamDraft)
+  $: litestreamReady = litestreamRuntimeReady && litestreamS3Ready
   $: litestreamMissingText = litestreamMissingPrerequisites().join(', ')
+  $: litestreamReplicaPreview = litestreamRemotePreview(litestreamDraft)
   $: policyDestinationText = [
     backupPolicyDraft.localEnabled ? 'Interne' : '',
     backupPolicyDraft.remoteEnabled ? 'S3/R2' : '',
@@ -265,11 +274,35 @@
     ].every((value) => litestreamDurationValid(`${value || ''}`))
   }
 
+  function normalizedLitestreamPrefix(prefix: string) {
+    return `${prefix || ''}`.trim().replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/')
+  }
+
+  function litestreamHasSecret(draft: UpdateInstanceLitestreamPolicyInput) {
+    return !!`${draft.s3SecretAccessKey || ''}`.trim() || !!litestreamPolicy?.hasS3SecretAccessKey
+  }
+
+  function litestreamS3DraftValid(draft: UpdateInstanceLitestreamPolicyInput) {
+    return (
+      !!draft.s3Endpoint.trim() &&
+      !!draft.s3Bucket.trim() &&
+      !!draft.s3AccessKeyId.trim() &&
+      litestreamHasSecret(draft)
+    )
+  }
+
+  function litestreamRemotePreview(draft: UpdateInstanceLitestreamPolicyInput) {
+    const prefix = normalizedLitestreamPrefix(draft.s3Prefix)
+    const path = [prefix, 'litestream', 'instances', id, 'data.db'].filter(Boolean).join('/')
+    const bucket = draft.s3Bucket.trim()
+    return bucket ? `s3://${bucket}/${path}` : path || litestreamPolicy?.replicaPath || 'Non configurée'
+  }
+
   function litestreamMissingPrerequisites() {
     const missing = []
-    if (!litestreamCapabilities.s3Enabled) missing.push('R2/S3')
     if (!litestreamCapabilities.litestreamInstalled) missing.push('Litestream')
     if (!litestreamCapabilities.pm2Installed) missing.push('PM2')
+    if (!litestreamS3DraftValid(litestreamDraft)) missing.push('paramètres S3/R2')
     return missing
   }
 
@@ -290,6 +323,13 @@
   function syncLitestreamDraft(policy: InstanceLitestreamPolicy) {
     litestreamDraft = {
       enabled: policy.enabled,
+      s3Endpoint: policy.s3Endpoint || '',
+      s3Bucket: policy.s3Bucket || '',
+      s3Prefix: policy.s3Prefix || '',
+      s3Region: policy.s3Region || 'auto',
+      s3AccessKeyId: policy.s3AccessKeyId || '',
+      s3SecretAccessKey: '',
+      s3ForcePathStyle: policy.s3ForcePathStyle,
       syncInterval: policy.syncInterval || '10s',
       monitorInterval: policy.monitorInterval || '10s',
       checkpointInterval: policy.checkpointInterval || '1m',
@@ -1055,12 +1095,103 @@
           <input
             type="checkbox"
             bind:checked={litestreamDraft.enabled}
-            disabled={!!litestreamAction || (!litestreamReady && !litestreamDraft.enabled)}
+            disabled={!!litestreamAction || (!litestreamRuntimeReady && !litestreamDraft.enabled)}
           />
           <span>
             <strong>Activer</strong>
-            <small>{litestreamDraft.enabled ? 'Réplication active demandée' : 'Aucun daemon Litestream'}</small>
+            <small>{litestreamDraft.enabled ? 'Réplication active demandée' : 'Configuration prête à enregistrer'}</small>
           </span>
+        </label>
+
+        <div class="backup-policy-section-title backup-policy-field--wide">
+          <strong>Paramètres S3/R2 de cette instance</strong>
+          <span>Chaque instance peut utiliser son propre endpoint, bucket et jeu de clés.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-s3-endpoint">Endpoint</label>
+          <input
+            id="litestream-s3-endpoint"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.s3Endpoint}
+            disabled={!!litestreamAction}
+            placeholder="https://xxxxxxxx.r2.cloudflarestorage.com"
+            autocomplete="off"
+          />
+          <span class="backup-policy-help">URL de l’endpoint S3 compatible.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-s3-bucket">Bucket</label>
+          <input
+            id="litestream-s3-bucket"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.s3Bucket}
+            disabled={!!litestreamAction}
+            placeholder="mon-bucket"
+            autocomplete="off"
+          />
+          <span class="backup-policy-help">Bucket cible pour cette instance.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-s3-prefix">Préfixe</label>
+          <input
+            id="litestream-s3-prefix"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.s3Prefix}
+            disabled={!!litestreamAction}
+            placeholder="client-a"
+            autocomplete="off"
+          />
+          <span class="backup-policy-help">Optionnel. Un chemin Litestream sera ajouté automatiquement.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-s3-region">Région</label>
+          <input
+            id="litestream-s3-region"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.s3Region}
+            disabled={!!litestreamAction}
+            placeholder="auto"
+            autocomplete="off"
+          />
+          <span class="backup-policy-help">Pour R2, gardez généralement <code>auto</code>.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-s3-access-key">Access key ID</label>
+          <input
+            id="litestream-s3-access-key"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.s3AccessKeyId}
+            disabled={!!litestreamAction}
+            placeholder="Access key ID"
+            autocomplete="off"
+          />
+          <span class="backup-policy-help">Identifiant de clé autorisé sur ce bucket.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-s3-secret-key">Secret access key</label>
+          <input
+            id="litestream-s3-secret-key"
+            class="backup-policy-input"
+            type="password"
+            bind:value={litestreamDraft.s3SecretAccessKey}
+            disabled={!!litestreamAction}
+            placeholder={litestreamPolicy?.hasS3SecretAccessKey ? 'Déjà enregistrée' : 'Secret access key'}
+            autocomplete="new-password"
+          />
+          <span class="backup-policy-help">
+            {litestreamPolicy?.hasS3SecretAccessKey ? 'Laissez vide pour conserver la clé existante.' : 'Requise pour activer Litestream.'}
+          </span>
+        </div>
+
+        <label class="backup-policy-check backup-policy-field backup-policy-field--wide">
+          <input type="checkbox" bind:checked={litestreamDraft.s3ForcePathStyle} disabled={!!litestreamAction} />
+          <span>Forcer le path-style S3</span>
         </label>
 
         <div class="backup-policy-field">
@@ -1113,7 +1244,7 @@
 
         <div class="backup-policy-field backup-policy-field--wide">
           <span class="backup-policy-field-label">Destination distante</span>
-          <code class="backup-policy-code">{litestreamPolicy?.replicaPath || 'Non configurée'}</code>
+          <code class="backup-policy-code">{litestreamReplicaPreview}</code>
           <span class="backup-policy-help">
             Service PM2 : {litestreamCapabilities.serviceName || 'pockethost-litestream'}
           </span>
@@ -1645,6 +1776,26 @@
 
   .backup-policy-field--wide {
     grid-column: span 2;
+  }
+
+  .backup-policy-section-title {
+    display: grid;
+    gap: 0.2rem;
+    border-top: 1px solid var(--app-border);
+    padding-top: 0.25rem;
+  }
+
+  .backup-policy-section-title strong {
+    color: var(--app-text-strong);
+    font-size: 0.82rem;
+    font-weight: 950;
+  }
+
+  .backup-policy-section-title span {
+    color: var(--app-text-muted);
+    font-size: 0.76rem;
+    font-weight: 720;
+    line-height: 1.4;
   }
 
   .backup-policy-check {

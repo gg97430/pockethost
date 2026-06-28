@@ -523,6 +523,7 @@ const DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL = "1m";
 const DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL = "1h";
 const DEFAULT_LITESTREAM_SNAPSHOT_RETENTION = "72h";
 const DEFAULT_LITESTREAM_VALIDATION_INTERVAL = "6h";
+const DEFAULT_LITESTREAM_S3_REGION = "auto";
 const BACKUP_POLICY_CRON_MACROS = [
 	"@yearly",
 	"@annually",
@@ -1624,23 +1625,71 @@ const longestDuration = (values, fallback) => {
 	return normalized.sort((a, b) => durationSeconds(b) - durationSeconds(a))[0] || fallback;
 };
 const yamlValue = (value) => JSON.stringify(value);
+const normalizeLitestreamText = (value, fallback, max) => {
+	return `${(value === void 0 || value === null ? fallback : value) || ""}`.trim().slice(0, max);
+};
+const normalizeLitestreamPrefix = (value) => {
+	return normalizeLitestreamText(value, "", 500).replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+};
+const litestreamDefaultS3Values = () => {
+	try {
+		const config = s3Config();
+		if (config) return {
+			endpoint: config.endpoint,
+			bucket: config.bucket,
+			prefix: config.prefix,
+			region: config.region
+		};
+	} catch {}
+	return {
+		endpoint: "",
+		bucket: "",
+		prefix: "",
+		region: DEFAULT_LITESTREAM_S3_REGION
+	};
+};
 const litestreamCapabilities = () => ({
-	s3Enabled: s3BackupsAvailable(),
+	s3PerInstance: true,
 	litestreamInstalled: commandExists("litestream"),
 	pm2Installed: commandExists("pm2"),
 	serviceName: LITESTREAM_SERVICE_NAME,
 	configPath: litestreamConfigPath()
 });
-const litestreamReplicaPathFor = (instanceId) => {
-	const config = s3Config();
-	if (!config) return "";
-	return `${config.prefix}/litestream/instances/${instanceId}/data.db`.replace(/^\/+/, "");
+const litestreamReplicaPathFor = (instanceId, prefix = "") => {
+	return [
+		normalizeLitestreamPrefix(prefix),
+		"litestream",
+		"instances",
+		instanceId,
+		"data.db"
+	].filter(Boolean).join("/");
 };
-const litestreamReplicaUrlFor = (instanceId) => {
-	const config = s3Config();
-	const remotePath = litestreamReplicaPathFor(instanceId);
-	if (!config || !remotePath) return "";
-	return `s3://${config.bucket}/${remotePath}`;
+const litestreamS3ConfigFor = (policy, instanceId) => {
+	const prefix = normalizeLitestreamPrefix(policy.getString("s3Prefix"));
+	const bucket = normalizeLitestreamText(policy.getString("s3Bucket"), "", 255);
+	const replicaPath = litestreamReplicaPathFor(instanceId, prefix);
+	return {
+		endpoint: normalizeLitestreamText(policy.getString("s3Endpoint"), "", 500),
+		bucket,
+		prefix,
+		region: normalizeLitestreamText(policy.getString("s3Region"), DEFAULT_LITESTREAM_S3_REGION, 64) || DEFAULT_LITESTREAM_S3_REGION,
+		accessKeyId: normalizeLitestreamText(policy.getString("s3AccessKeyId"), "", 255),
+		secretAccessKey: normalizeLitestreamText(policy.getString("s3SecretAccessKey"), "", 1024),
+		forcePathStyle: policy.getBool("s3ForcePathStyle"),
+		replicaPath,
+		replicaUrl: bucket && replicaPath ? `s3://${bucket}/${replicaPath}` : ""
+	};
+};
+const litestreamS3MissingFields = (config) => {
+	const missing = [];
+	if (!config.endpoint) missing.push("endpoint");
+	if (!config.bucket) missing.push("bucket");
+	if (!config.accessKeyId) missing.push("access key");
+	if (!config.secretAccessKey) missing.push("secret key");
+	return missing;
+};
+const litestreamPolicyHasS3Config = (policy) => {
+	return litestreamS3MissingFields(litestreamS3ConfigFor(policy, policy.getString("instance"))).length === 0;
 };
 const litestreamPolicyCollection = () => $app.findCollectionByNameOrId("instance_litestream_replicas");
 const litestreamPm2Status = () => {
@@ -1667,7 +1716,7 @@ const updateLitestreamPolicyState = (policy, status, input = {}) => {
 const runtimeLitestreamStatus = (policy) => {
 	if (!policy.getBool("enabled")) return "disabled";
 	const capabilities = litestreamCapabilities();
-	if (!capabilities.s3Enabled || !capabilities.litestreamInstalled || !capabilities.pm2Installed) return "unavailable";
+	if (!litestreamPolicyHasS3Config(policy) || !capabilities.litestreamInstalled || !capabilities.pm2Installed) return "unavailable";
 	const status = litestreamPm2Status();
 	if (status === "online") return "running";
 	if (status) return "failed";
@@ -1685,6 +1734,13 @@ const serializeLitestreamPolicy = (policy) => ({
 	enabled: policy.getBool("enabled"),
 	status: policy.getString("status") || "disabled",
 	replicaPath: policy.getString("replicaPath"),
+	s3Endpoint: policy.getString("s3Endpoint"),
+	s3Bucket: policy.getString("s3Bucket"),
+	s3Prefix: policy.getString("s3Prefix"),
+	s3Region: policy.getString("s3Region") || DEFAULT_LITESTREAM_S3_REGION,
+	s3AccessKeyId: policy.getString("s3AccessKeyId"),
+	hasS3SecretAccessKey: !!policy.getString("s3SecretAccessKey"),
+	s3ForcePathStyle: policy.getBool("s3ForcePathStyle"),
 	syncInterval: policy.getString("syncInterval") || DEFAULT_LITESTREAM_SYNC_INTERVAL,
 	monitorInterval: policy.getString("monitorInterval") || DEFAULT_LITESTREAM_MONITOR_INTERVAL,
 	checkpointInterval: policy.getString("checkpointInterval") || DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL,
@@ -1706,12 +1762,20 @@ const findLitestreamPolicyForInstance = (instanceId) => {
 	}
 };
 const createDefaultLitestreamPolicy = (instance) => {
+	const defaultS3 = litestreamDefaultS3Values();
 	const policy = new Record(litestreamPolicyCollection());
 	policy.set("user", instance.getString("uid"));
 	policy.set("instance", instance.id);
 	policy.set("enabled", false);
 	policy.set("status", "disabled");
-	policy.set("replicaPath", litestreamReplicaPathFor(instance.id));
+	policy.set("replicaPath", litestreamReplicaPathFor(instance.id, defaultS3.prefix));
+	policy.set("s3Endpoint", defaultS3.endpoint);
+	policy.set("s3Bucket", defaultS3.bucket);
+	policy.set("s3Prefix", defaultS3.prefix);
+	policy.set("s3Region", defaultS3.region);
+	policy.set("s3AccessKeyId", "");
+	policy.set("s3SecretAccessKey", "");
+	policy.set("s3ForcePathStyle", false);
 	policy.set("syncInterval", DEFAULT_LITESTREAM_SYNC_INTERVAL);
 	policy.set("monitorInterval", DEFAULT_LITESTREAM_MONITOR_INTERVAL);
 	policy.set("checkpointInterval", DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL);
@@ -1731,6 +1795,13 @@ const getOrCreateLitestreamPolicy = (instance) => {
 const readLitestreamPolicyInput = (e) => {
 	let data = new DynamicModel({
 		enabled: false,
+		s3Endpoint: "",
+		s3Bucket: "",
+		s3Prefix: "",
+		s3Region: DEFAULT_LITESTREAM_S3_REGION,
+		s3AccessKeyId: "",
+		s3SecretAccessKey: "",
+		s3ForcePathStyle: false,
 		syncInterval: DEFAULT_LITESTREAM_SYNC_INTERVAL,
 		monitorInterval: DEFAULT_LITESTREAM_MONITOR_INTERVAL,
 		checkpointInterval: DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL,
@@ -1748,6 +1819,13 @@ const readLitestreamPolicyInput = (e) => {
 };
 const applyLitestreamPolicyInput = (policy, instance, input) => {
 	const enabled = normalizeBool(input.enabled, policy.getBool("enabled"));
+	const s3Endpoint = normalizeLitestreamText(input.s3Endpoint, policy.getString("s3Endpoint"), 500);
+	const s3Bucket = normalizeLitestreamText(input.s3Bucket, policy.getString("s3Bucket"), 255);
+	const s3Prefix = normalizeLitestreamPrefix(input.s3Prefix ?? policy.getString("s3Prefix"));
+	const s3Region = normalizeLitestreamText(input.s3Region, policy.getString("s3Region") || DEFAULT_LITESTREAM_S3_REGION, 64) || DEFAULT_LITESTREAM_S3_REGION;
+	const s3AccessKeyId = normalizeLitestreamText(input.s3AccessKeyId, policy.getString("s3AccessKeyId"), 255);
+	const s3SecretAccessKey = normalizeLitestreamText(input.s3SecretAccessKey, "", 1024) || policy.getString("s3SecretAccessKey");
+	const s3ForcePathStyle = normalizeBool(input.s3ForcePathStyle, policy.getBool("s3ForcePathStyle"));
 	const syncInterval = normalizeLitestreamDuration(input.syncInterval || policy.getString("syncInterval") || DEFAULT_LITESTREAM_SYNC_INTERVAL, DEFAULT_LITESTREAM_SYNC_INTERVAL, "Intervalle de synchronisation", 5, 1440 * 60);
 	const monitorInterval = normalizeLitestreamDuration(input.monitorInterval || policy.getString("monitorInterval") || DEFAULT_LITESTREAM_MONITOR_INTERVAL, DEFAULT_LITESTREAM_MONITOR_INTERVAL, "Intervalle de surveillance", 5, 1440 * 60);
 	const checkpointInterval = normalizeLitestreamDuration(input.checkpointInterval || policy.getString("checkpointInterval") || DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL, DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL, "Intervalle checkpoint", 10, 1440 * 60);
@@ -1756,7 +1834,18 @@ const applyLitestreamPolicyInput = (policy, instance, input) => {
 	const validationInterval = normalizeLitestreamDuration(input.validationInterval || policy.getString("validationInterval") || DEFAULT_LITESTREAM_VALIDATION_INTERVAL, DEFAULT_LITESTREAM_VALIDATION_INTERVAL, "Intervalle de validation", 60, 720 * 60 * 60);
 	if (enabled) {
 		const capabilities = litestreamCapabilities();
-		if (!capabilities.s3Enabled) throw new BadRequestError("R2/S3 doit etre configure avant d'activer Litestream.");
+		const missingS3 = litestreamS3MissingFields({
+			endpoint: s3Endpoint,
+			bucket: s3Bucket,
+			prefix: s3Prefix,
+			region: s3Region,
+			accessKeyId: s3AccessKeyId,
+			secretAccessKey: s3SecretAccessKey,
+			forcePathStyle: s3ForcePathStyle,
+			replicaPath: litestreamReplicaPathFor(instance.id, s3Prefix),
+			replicaUrl: s3Bucket ? `s3://${s3Bucket}/${litestreamReplicaPathFor(instance.id, s3Prefix)}` : ""
+		});
+		if (missingS3.length) throw new BadRequestError(`Parametres R2/S3 incomplets pour cette instance : ${missingS3.join(", ")}.`);
 		if (!capabilities.litestreamInstalled) throw new BadRequestError("Litestream n'est pas installe sur ce serveur.");
 		if (!capabilities.pm2Installed) throw new BadRequestError("PM2 n'est pas installe sur ce serveur.");
 		if (!pathExists$1(litestreamDbPath(instance.id))) throw new BadRequestError("data.db est introuvable. Demarrez l'instance une fois avant d'activer Litestream.");
@@ -1765,7 +1854,14 @@ const applyLitestreamPolicyInput = (policy, instance, input) => {
 	policy.set("instance", instance.id);
 	policy.set("enabled", enabled);
 	policy.set("status", enabled ? "configured" : "disabled");
-	policy.set("replicaPath", litestreamReplicaPathFor(instance.id));
+	policy.set("replicaPath", litestreamReplicaPathFor(instance.id, s3Prefix));
+	policy.set("s3Endpoint", s3Endpoint);
+	policy.set("s3Bucket", s3Bucket);
+	policy.set("s3Prefix", s3Prefix);
+	policy.set("s3Region", s3Region);
+	policy.set("s3AccessKeyId", s3AccessKeyId);
+	policy.set("s3SecretAccessKey", s3SecretAccessKey);
+	policy.set("s3ForcePathStyle", s3ForcePathStyle);
 	policy.set("syncInterval", syncInterval);
 	policy.set("monitorInterval", monitorInterval);
 	policy.set("checkpointInterval", checkpointInterval);
@@ -1783,8 +1879,6 @@ const enabledLitestreamPolicies = () => {
 	}
 };
 const buildLitestreamConfig = (policies) => {
-	const config = s3Config();
-	if (!config) throw new Error("Configuration R2/S3 absente.");
 	const validPolicies = [];
 	const dbLines = [];
 	for (const policy of policies) try {
@@ -1794,9 +1888,13 @@ const buildLitestreamConfig = (policies) => {
 			updateLitestreamPolicyState(policy, "failed", { lastError: "data.db introuvable pour cette instance." });
 			continue;
 		}
-		const replicaPath = litestreamReplicaPathFor(instance.id);
-		const replicaUrl = litestreamReplicaUrlFor(instance.id);
-		policy.set("replicaPath", replicaPath);
+		const s3 = litestreamS3ConfigFor(policy, instance.id);
+		const missingS3 = litestreamS3MissingFields(s3);
+		if (missingS3.length) {
+			updateLitestreamPolicyState(policy, "failed", { lastError: `Parametres R2/S3 incomplets : ${missingS3.join(", ")}.` });
+			continue;
+		}
+		policy.set("replicaPath", s3.replicaPath);
 		$app.save(policy);
 		validPolicies.push(policy);
 		dbLines.push(`  - path: ${yamlValue(dbPath)}`);
@@ -1804,9 +1902,12 @@ const buildLitestreamConfig = (policies) => {
 		dbLines.push(`    checkpoint-interval: ${policy.getString("checkpointInterval") || DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL}`);
 		dbLines.push("    busy-timeout: 30s");
 		dbLines.push("    replica:");
-		dbLines.push(`      url: ${yamlValue(replicaUrl)}`);
-		dbLines.push(`      endpoint: ${yamlValue(config.endpoint)}`);
-		dbLines.push(`      region: ${yamlValue(config.region)}`);
+		dbLines.push(`      url: ${yamlValue(s3.replicaUrl)}`);
+		dbLines.push(`      endpoint: ${yamlValue(s3.endpoint)}`);
+		dbLines.push(`      region: ${yamlValue(s3.region)}`);
+		dbLines.push(`      access-key-id: ${yamlValue(s3.accessKeyId)}`);
+		dbLines.push(`      secret-access-key: ${yamlValue(s3.secretAccessKey)}`);
+		dbLines.push(`      force-path-style: ${s3.forcePathStyle ? "true" : "false"}`);
 		dbLines.push(`      sync-interval: ${policy.getString("syncInterval") || DEFAULT_LITESTREAM_SYNC_INTERVAL}`);
 	} catch (error) {
 		updateLitestreamPolicyState(policy, "failed", { lastError: errorMessage(error) });
@@ -1845,11 +1946,10 @@ const stopLitestreamService = () => {
 const startOrRestartLitestreamService = (configPath) => {
 	runCommand("sh", "-c", `set -e
 if pm2 jlist | grep -q '"name":"${LITESTREAM_SERVICE_NAME}"'; then
-  pm2 restart ${LITESTREAM_SERVICE_NAME} --update-env
-else
-  litestream_bin=$(command -v litestream)
-  pm2 start "$litestream_bin" --name ${LITESTREAM_SERVICE_NAME} --time -- replicate -config "$1"
+  pm2 delete ${LITESTREAM_SERVICE_NAME} >/dev/null 2>&1 || true
 fi
+litestream_bin=$(command -v litestream)
+pm2 start "$litestream_bin" --name ${LITESTREAM_SERVICE_NAME} --time -- replicate -no-expand-env -config "$1"
 pm2 save >/dev/null 2>&1 || true`, "sh", configPath);
 };
 const reconcileLitestreamService = () => {
@@ -1862,8 +1962,8 @@ const reconcileLitestreamService = () => {
 		return [];
 	}
 	const capabilities = litestreamCapabilities();
-	if (!capabilities.s3Enabled || !capabilities.litestreamInstalled || !capabilities.pm2Installed) {
-		const missing = !capabilities.s3Enabled ? "Configuration R2/S3 absente." : !capabilities.litestreamInstalled ? "Litestream non installe." : "PM2 non installe.";
+	if (!capabilities.litestreamInstalled || !capabilities.pm2Installed) {
+		const missing = !capabilities.litestreamInstalled ? "Litestream non installe." : "PM2 non installe.";
 		for (const policy of policies) updateLitestreamPolicyState(policy, "unavailable", { lastError: missing });
 		stopLitestreamService();
 		throw new Error(missing);

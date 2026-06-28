@@ -138,6 +138,13 @@ export type InstanceLitestreamPolicy = {
   enabled: boolean
   status: 'disabled' | 'configured' | 'running' | 'failed' | 'unavailable'
   replicaPath: string
+  s3Endpoint: string
+  s3Bucket: string
+  s3Prefix: string
+  s3Region: string
+  s3AccessKeyId: string
+  hasS3SecretAccessKey: boolean
+  s3ForcePathStyle: boolean
   syncInterval: string
   monitorInterval: string
   checkpointInterval: string
@@ -155,7 +162,7 @@ export type InstanceLitestreamPolicy = {
 export type InstanceLitestreamPolicyResponse = {
   policy: InstanceLitestreamPolicy
   capabilities: {
-    s3Enabled: boolean
+    s3PerInstance: boolean
     litestreamInstalled: boolean
     pm2Installed: boolean
     serviceName: string
@@ -179,13 +186,21 @@ export type UpdateInstanceBackupPolicyInput = Pick<
 export type UpdateInstanceLitestreamPolicyInput = Pick<
   InstanceLitestreamPolicy,
   | 'enabled'
+  | 's3Endpoint'
+  | 's3Bucket'
+  | 's3Prefix'
+  | 's3Region'
+  | 's3AccessKeyId'
+  | 's3ForcePathStyle'
   | 'syncInterval'
   | 'monitorInterval'
   | 'checkpointInterval'
   | 'snapshotInterval'
   | 'snapshotRetention'
   | 'validationInterval'
->
+> & {
+  s3SecretAccessKey?: string
+}
 
 export type UploadProgress = {
   loaded: number

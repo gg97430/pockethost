@@ -246,6 +246,26 @@
     return shouldShowRestoreProgress(backup) ? restoreOperation(backup) : backupOperation(backup)
   }
 
+  function completedRestoreOperation(backup: InstanceBackup) {
+    const operation = restoreOperation(backup)
+    return operation.phase === 'ready' ? operation : null
+  }
+
+  function restoreTagLabel(backup: InstanceBackup) {
+    const operation = completedRestoreOperation(backup)
+    if (!operation) return ''
+    if (operation.mode === 'new-instance') {
+      return `Restaurée vers ${operation.targetSubdomain || 'nouvelle instance'}`
+    }
+    return 'Restaurée sur cette instance'
+  }
+
+  function restoreTagTitle(backup: InstanceBackup) {
+    const operation = completedRestoreOperation(backup)
+    if (!operation) return ''
+    return `Restauration terminée le ${formatDate(new Date(operation.updatedAt).toISOString())}`
+  }
+
   const suggestedRestoreSubdomain = () => {
     const base = (subdomain || displayName || 'instance')
       .toLowerCase()
@@ -609,6 +629,12 @@
             <div class="backup-title-row">
               <span class="backup-title">{backup.filename || backup.id}</span>
               <span class="backup-status backup-status--{backup.status}">{statusLabel(backup.status)}</span>
+              {#if restoreTagLabel(backup)}
+                <span class="backup-restore-tag" title={restoreTagTitle(backup)}>
+                  <wa-icon name="rotate-left"></wa-icon>
+                  {restoreTagLabel(backup)}
+                </span>
+              {/if}
             </div>
             <div class="backup-meta">
               <span>{formatDate(backup.created)}</span>
@@ -1104,6 +1130,21 @@
     border-color: rgb(239 68 68 / 0.35);
     color: #ef4444;
     background: rgb(239 68 68 / 0.1);
+  }
+
+  .backup-restore-tag {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.32rem;
+    border: 1px solid rgb(59 130 246 / 0.35);
+    border-radius: 999px;
+    background: rgb(59 130 246 / 0.1);
+    padding: 0.15rem 0.55rem;
+    color: #2563eb;
+    font-size: 0.7rem;
+    font-weight: 850;
+    line-height: 1.2;
   }
 
   .backup-meta {

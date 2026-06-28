@@ -5,12 +5,15 @@ export type {
   InstanceBackup,
   InstanceBackupPolicy,
   InstanceBackupPolicyResponse,
+  InstanceLitestreamPolicy,
+  InstanceLitestreamPolicyResponse,
   InstanceOverview,
   InstanceOverviewBackup,
   OperatorAdminOverview,
   OperatorSettings,
   OperatorUser,
   UpdateInstanceBackupPolicyInput,
+  UpdateInstanceLitestreamPolicyInput,
   UploadProgress,
 } from './PocketbaseClient'
 

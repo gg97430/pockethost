@@ -18,6 +18,13 @@ const DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_COUNT = 7
 const DEFAULT_BACKUP_POLICY_LOCAL_RETENTION_DAYS = 14
 const DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_COUNT = 30
 const DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_DAYS = 90
+const LITESTREAM_SERVICE_NAME = 'pockethost-litestream'
+const DEFAULT_LITESTREAM_SYNC_INTERVAL = '10s'
+const DEFAULT_LITESTREAM_MONITOR_INTERVAL = '10s'
+const DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL = '1m'
+const DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL = '1h'
+const DEFAULT_LITESTREAM_SNAPSHOT_RETENTION = '72h'
+const DEFAULT_LITESTREAM_VALIDATION_INTERVAL = '6h'
 const BACKUP_POLICY_CRON_MACROS = [
   '@yearly',
   '@annually',
@@ -62,6 +69,7 @@ type ArchiveResourceSettings = {
 }
 type BackupPolicyStatus = 'never' | 'running' | 'ready' | 'failed' | 'skipped'
 type BackupPolicyActiveBehavior = 'stop-restart' | 'skip-active'
+type LitestreamStatus = 'disabled' | 'configured' | 'running' | 'failed' | 'unavailable'
 type BackupPolicyInput = {
   enabled?: boolean
   cron?: string
@@ -72,6 +80,15 @@ type BackupPolicyInput = {
   remoteRetentionCount?: number | string
   remoteRetentionDays?: number | string
   activeBehavior?: BackupPolicyActiveBehavior
+}
+type LitestreamPolicyInput = {
+  enabled?: boolean
+  syncInterval?: string
+  monitorInterval?: string
+  checkpointInterval?: string
+  snapshotInterval?: string
+  snapshotRetention?: string
+  validationInterval?: string
 }
 type BackupStorageOptions = {
   uploadRemote?: boolean
@@ -1504,6 +1521,437 @@ const s3BackupsAvailable = () => {
   }
 }
 
+const litestreamRoot = () => $os.getenv('LITESTREAM_ROOT') || `${dataRoot()}/litestream`
+const litestreamConfigPath = () => `${litestreamRoot()}/litestream.yml`
+const litestreamDbPath = (instanceId: string) => `${instanceRoot(instanceId)}/pb_data/data.db`
+
+const durationSeconds = (value: string) => {
+  const match = `${value || ''}`.trim().match(/^(\d+)(s|m|h)$/i)
+  if (!match) return 0
+
+  const amount = Number(match[1])
+  const unit = match[2]!.toLowerCase()
+  if (!Number.isFinite(amount) || amount <= 0) return 0
+  if (unit === 'h') return amount * 60 * 60
+  if (unit === 'm') return amount * 60
+  return amount
+}
+
+const normalizeLitestreamDuration = (
+  value: unknown,
+  fallback: string,
+  field: string,
+  minSeconds: number,
+  maxSeconds: number
+) => {
+  const raw = `${value || fallback}`.trim().toLowerCase()
+  const seconds = durationSeconds(raw)
+  if (!seconds || seconds < minSeconds || seconds > maxSeconds) {
+    throw new BadRequestError(`${field} invalide. Utilisez une duree comme 10s, 5m ou 1h.`)
+  }
+  return raw
+}
+
+const shortestDuration = (values: string[], fallback: string) => {
+  const normalized = values.filter((value) => durationSeconds(value) > 0)
+  if (!normalized.length) return fallback
+  return normalized.sort((a, b) => durationSeconds(a) - durationSeconds(b))[0] || fallback
+}
+
+const longestDuration = (values: string[], fallback: string) => {
+  const normalized = values.filter((value) => durationSeconds(value) > 0)
+  if (!normalized.length) return fallback
+  return normalized.sort((a, b) => durationSeconds(b) - durationSeconds(a))[0] || fallback
+}
+
+const yamlValue = (value: string) => JSON.stringify(value)
+
+const litestreamCapabilities = () => ({
+  s3Enabled: s3BackupsAvailable(),
+  litestreamInstalled: commandExists('litestream'),
+  pm2Installed: commandExists('pm2'),
+  serviceName: LITESTREAM_SERVICE_NAME,
+  configPath: litestreamConfigPath(),
+})
+
+const litestreamReplicaPathFor = (instanceId: string) => {
+  const config = s3Config()
+  if (!config) return ''
+
+  return `${config.prefix}/litestream/instances/${instanceId}/data.db`.replace(/^\/+/, '')
+}
+
+const litestreamReplicaUrlFor = (instanceId: string) => {
+  const config = s3Config()
+  const remotePath = litestreamReplicaPathFor(instanceId)
+  if (!config || !remotePath) return ''
+
+  return `s3://${config.bucket}/${remotePath}`
+}
+
+const litestreamPolicyCollection = () => $app.findCollectionByNameOrId('instance_litestream_replicas')
+
+const litestreamPm2Status = () => {
+  if (!commandExists('pm2')) return ''
+
+  try {
+    const output = runCommand('pm2', 'jlist')
+    const processes = JSON.parse(output || '[]')
+    if (!Array.isArray(processes)) return ''
+    const process = processes.find((entry) => entry && entry.name === LITESTREAM_SERVICE_NAME)
+    if (!process || !process.pm2_env) return ''
+    return `${process.pm2_env.status || ''}`
+  } catch {
+    return ''
+  }
+}
+
+const updateLitestreamPolicyState = (
+  policy: core.Record,
+  status: LitestreamStatus,
+  input: Record<string, unknown> = {}
+) => {
+  policy.set('status', status)
+  policy.set('lastCheckedAt', new Date().toISOString())
+  if (typeof input.lastError === 'string') policy.set('lastError', input.lastError)
+  if (typeof input.lastStartedAt === 'string') policy.set('lastStartedAt', input.lastStartedAt)
+  if (typeof input.lastStoppedAt === 'string') policy.set('lastStoppedAt', input.lastStoppedAt)
+  $app.save(policy)
+}
+
+const runtimeLitestreamStatus = (policy: core.Record): LitestreamStatus => {
+  if (!policy.getBool('enabled')) return 'disabled'
+
+  const capabilities = litestreamCapabilities()
+  if (!capabilities.s3Enabled || !capabilities.litestreamInstalled || !capabilities.pm2Installed) return 'unavailable'
+
+  const status = litestreamPm2Status()
+  if (status === 'online') return 'running'
+  if (status) return 'failed'
+  return policy.getString('status') === 'running' ? 'failed' : 'configured'
+}
+
+const refreshLitestreamPolicyState = (policy: core.Record) => {
+  const status = runtimeLitestreamStatus(policy)
+  const current = policy.getString('status')
+  if (current !== status || policy.getBool('enabled')) {
+    updateLitestreamPolicyState(policy, status)
+  }
+  return policy
+}
+
+const serializeLitestreamPolicy = (policy: core.Record) => ({
+  id: policy.id,
+  user: policy.getString('user'),
+  instance: policy.getString('instance'),
+  enabled: policy.getBool('enabled'),
+  status: (policy.getString('status') || 'disabled') as LitestreamStatus,
+  replicaPath: policy.getString('replicaPath'),
+  syncInterval: policy.getString('syncInterval') || DEFAULT_LITESTREAM_SYNC_INTERVAL,
+  monitorInterval: policy.getString('monitorInterval') || DEFAULT_LITESTREAM_MONITOR_INTERVAL,
+  checkpointInterval: policy.getString('checkpointInterval') || DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL,
+  snapshotInterval: policy.getString('snapshotInterval') || DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL,
+  snapshotRetention: policy.getString('snapshotRetention') || DEFAULT_LITESTREAM_SNAPSHOT_RETENTION,
+  validationInterval: policy.getString('validationInterval') || DEFAULT_LITESTREAM_VALIDATION_INTERVAL,
+  lastStartedAt: policy.getString('lastStartedAt'),
+  lastStoppedAt: policy.getString('lastStoppedAt'),
+  lastCheckedAt: policy.getString('lastCheckedAt'),
+  lastError: policy.getString('lastError'),
+  created: policy.getString('created'),
+  updated: policy.getString('updated'),
+})
+
+const findLitestreamPolicyForInstance = (instanceId: string) => {
+  try {
+    return $app.findFirstRecordByFilter('instance_litestream_replicas', 'instance = {:instance}', {
+      instance: instanceId,
+    })
+  } catch {
+    return null
+  }
+}
+
+const createDefaultLitestreamPolicy = (instance: core.Record) => {
+  const policy = new Record(litestreamPolicyCollection())
+  policy.set('user', instance.getString('uid'))
+  policy.set('instance', instance.id)
+  policy.set('enabled', false)
+  policy.set('status', 'disabled')
+  policy.set('replicaPath', litestreamReplicaPathFor(instance.id))
+  policy.set('syncInterval', DEFAULT_LITESTREAM_SYNC_INTERVAL)
+  policy.set('monitorInterval', DEFAULT_LITESTREAM_MONITOR_INTERVAL)
+  policy.set('checkpointInterval', DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL)
+  policy.set('snapshotInterval', DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL)
+  policy.set('snapshotRetention', DEFAULT_LITESTREAM_SNAPSHOT_RETENTION)
+  policy.set('validationInterval', DEFAULT_LITESTREAM_VALIDATION_INTERVAL)
+  policy.set('lastStartedAt', '')
+  policy.set('lastStoppedAt', '')
+  policy.set('lastCheckedAt', '')
+  policy.set('lastError', '')
+  $app.save(policy)
+  return policy
+}
+
+const getOrCreateLitestreamPolicy = (instance: core.Record) => {
+  return findLitestreamPolicyForInstance(instance.id) || createDefaultLitestreamPolicy(instance)
+}
+
+const readLitestreamPolicyInput = (e: core.RequestEvent) => {
+  let data = new DynamicModel({
+    enabled: false,
+    syncInterval: DEFAULT_LITESTREAM_SYNC_INTERVAL,
+    monitorInterval: DEFAULT_LITESTREAM_MONITOR_INTERVAL,
+    checkpointInterval: DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL,
+    snapshotInterval: DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL,
+    snapshotRetention: DEFAULT_LITESTREAM_SNAPSHOT_RETENTION,
+    validationInterval: DEFAULT_LITESTREAM_VALIDATION_INTERVAL,
+  }) as LitestreamPolicyInput
+
+  try {
+    e.bindBody(data)
+    data = JSON.parse(JSON.stringify(data))
+  } catch {
+    data = {}
+  }
+
+  return data
+}
+
+const applyLitestreamPolicyInput = (policy: core.Record, instance: core.Record, input: LitestreamPolicyInput) => {
+  const enabled = normalizeBool(input.enabled, policy.getBool('enabled'))
+  const syncInterval = normalizeLitestreamDuration(
+    input.syncInterval || policy.getString('syncInterval') || DEFAULT_LITESTREAM_SYNC_INTERVAL,
+    DEFAULT_LITESTREAM_SYNC_INTERVAL,
+    'Intervalle de synchronisation',
+    5,
+    24 * 60 * 60
+  )
+  const monitorInterval = normalizeLitestreamDuration(
+    input.monitorInterval || policy.getString('monitorInterval') || DEFAULT_LITESTREAM_MONITOR_INTERVAL,
+    DEFAULT_LITESTREAM_MONITOR_INTERVAL,
+    'Intervalle de surveillance',
+    5,
+    24 * 60 * 60
+  )
+  const checkpointInterval = normalizeLitestreamDuration(
+    input.checkpointInterval || policy.getString('checkpointInterval') || DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL,
+    DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL,
+    'Intervalle checkpoint',
+    10,
+    24 * 60 * 60
+  )
+  const snapshotInterval = normalizeLitestreamDuration(
+    input.snapshotInterval || policy.getString('snapshotInterval') || DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL,
+    DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL,
+    'Intervalle snapshot',
+    60,
+    30 * 24 * 60 * 60
+  )
+  const snapshotRetention = normalizeLitestreamDuration(
+    input.snapshotRetention || policy.getString('snapshotRetention') || DEFAULT_LITESTREAM_SNAPSHOT_RETENTION,
+    DEFAULT_LITESTREAM_SNAPSHOT_RETENTION,
+    'Retention snapshot',
+    60 * 60,
+    365 * 24 * 60 * 60
+  )
+  const validationInterval = normalizeLitestreamDuration(
+    input.validationInterval || policy.getString('validationInterval') || DEFAULT_LITESTREAM_VALIDATION_INTERVAL,
+    DEFAULT_LITESTREAM_VALIDATION_INTERVAL,
+    'Intervalle de validation',
+    60,
+    30 * 24 * 60 * 60
+  )
+
+  if (enabled) {
+    const capabilities = litestreamCapabilities()
+    if (!capabilities.s3Enabled) throw new BadRequestError("R2/S3 doit etre configure avant d'activer Litestream.")
+    if (!capabilities.litestreamInstalled) {
+      throw new BadRequestError("Litestream n'est pas installe sur ce serveur.")
+    }
+    if (!capabilities.pm2Installed) {
+      throw new BadRequestError("PM2 n'est pas installe sur ce serveur.")
+    }
+    if (!pathExists(litestreamDbPath(instance.id))) {
+      throw new BadRequestError("data.db est introuvable. Demarrez l'instance une fois avant d'activer Litestream.")
+    }
+  }
+
+  policy.set('user', instance.getString('uid'))
+  policy.set('instance', instance.id)
+  policy.set('enabled', enabled)
+  policy.set('status', enabled ? 'configured' : 'disabled')
+  policy.set('replicaPath', litestreamReplicaPathFor(instance.id))
+  policy.set('syncInterval', syncInterval)
+  policy.set('monitorInterval', monitorInterval)
+  policy.set('checkpointInterval', checkpointInterval)
+  policy.set('snapshotInterval', snapshotInterval)
+  policy.set('snapshotRetention', snapshotRetention)
+  policy.set('validationInterval', validationInterval)
+  policy.set('lastError', '')
+  if (!enabled) policy.set('lastStoppedAt', new Date().toISOString())
+}
+
+const enabledLitestreamPolicies = () => {
+  try {
+    return $app
+      .findRecordsByFilter('instance_litestream_replicas', 'enabled = true', '', 500, 0)
+      .filter((record): record is core.Record => !!record)
+  } catch {
+    return []
+  }
+}
+
+const buildLitestreamConfig = (policies: core.Record[]) => {
+  const config = s3Config()
+  if (!config) throw new Error('Configuration R2/S3 absente.')
+
+  const validPolicies: core.Record[] = []
+  const dbLines: string[] = []
+
+  for (const policy of policies) {
+    try {
+      const instance = findInstance(policy.getString('instance'))
+      const dbPath = litestreamDbPath(instance.id)
+      if (!pathExists(dbPath)) {
+        updateLitestreamPolicyState(policy, 'failed', {
+          lastError: 'data.db introuvable pour cette instance.',
+        })
+        continue
+      }
+
+      const replicaPath = litestreamReplicaPathFor(instance.id)
+      const replicaUrl = litestreamReplicaUrlFor(instance.id)
+      policy.set('replicaPath', replicaPath)
+      $app.save(policy)
+      validPolicies.push(policy)
+
+      dbLines.push(`  - path: ${yamlValue(dbPath)}`)
+      dbLines.push(`    monitor-interval: ${policy.getString('monitorInterval') || DEFAULT_LITESTREAM_MONITOR_INTERVAL}`)
+      dbLines.push(
+        `    checkpoint-interval: ${policy.getString('checkpointInterval') || DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL}`
+      )
+      dbLines.push('    busy-timeout: 30s')
+      dbLines.push('    replica:')
+      dbLines.push(`      url: ${yamlValue(replicaUrl)}`)
+      dbLines.push(`      endpoint: ${yamlValue(config.endpoint)}`)
+      dbLines.push(`      region: ${yamlValue(config.region)}`)
+      dbLines.push(`      sync-interval: ${policy.getString('syncInterval') || DEFAULT_LITESTREAM_SYNC_INTERVAL}`)
+    } catch (error) {
+      updateLitestreamPolicyState(policy, 'failed', {
+        lastError: errorMessage(error),
+      })
+    }
+  }
+
+  if (!validPolicies.length) return { config: '', policies: validPolicies }
+
+  const snapshotInterval = shortestDuration(
+    validPolicies.map((policy) => policy.getString('snapshotInterval')),
+    DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL
+  )
+  const snapshotRetention = longestDuration(
+    validPolicies.map((policy) => policy.getString('snapshotRetention')),
+    DEFAULT_LITESTREAM_SNAPSHOT_RETENTION
+  )
+  const validationInterval = shortestDuration(
+    validPolicies.map((policy) => policy.getString('validationInterval')),
+    DEFAULT_LITESTREAM_VALIDATION_INTERVAL
+  )
+
+  const lines = [
+    'logging:',
+    '  level: info',
+    '  type: text',
+    '  stderr: true',
+    'snapshot:',
+    `  interval: ${snapshotInterval}`,
+    `  retention: ${snapshotRetention}`,
+    'validation:',
+    `  interval: ${validationInterval}`,
+    'dbs:',
+    ...dbLines,
+    '',
+  ]
+
+  return { config: lines.join('\n'), policies: validPolicies }
+}
+
+const stopLitestreamService = () => {
+  if (!commandExists('pm2')) return
+  try {
+    runCommand(
+      'sh',
+      '-c',
+      `pm2 delete ${LITESTREAM_SERVICE_NAME} >/dev/null 2>&1 || true; pm2 save >/dev/null 2>&1 || true`
+    )
+  } catch {}
+}
+
+const startOrRestartLitestreamService = (configPath: string) => {
+  runCommand(
+    'sh',
+    '-c',
+    `set -e
+if pm2 describe ${LITESTREAM_SERVICE_NAME} >/dev/null 2>&1; then
+  pm2 restart ${LITESTREAM_SERVICE_NAME} --update-env
+else
+  litestream_bin=$(command -v litestream)
+  pm2 start "$litestream_bin" --name ${LITESTREAM_SERVICE_NAME} --time -- replicate -config "$1"
+fi
+pm2 save >/dev/null 2>&1 || true`,
+    'sh',
+    configPath
+  )
+}
+
+const reconcileLitestreamService = () => {
+  const policies = enabledLitestreamPolicies()
+  if (!policies.length) {
+    stopLitestreamService()
+    try {
+      $os.remove(litestreamConfigPath())
+    } catch {}
+    return []
+  }
+
+  const capabilities = litestreamCapabilities()
+  if (!capabilities.s3Enabled || !capabilities.litestreamInstalled || !capabilities.pm2Installed) {
+    const missing = !capabilities.s3Enabled
+      ? 'Configuration R2/S3 absente.'
+      : !capabilities.litestreamInstalled
+        ? 'Litestream non installe.'
+        : 'PM2 non installe.'
+    for (const policy of policies) {
+      updateLitestreamPolicyState(policy, 'unavailable', { lastError: missing })
+    }
+    stopLitestreamService()
+    throw new Error(missing)
+  }
+
+  $os.mkdirAll(litestreamRoot(), PRIVATE_DIR_MODE)
+  const { config, policies: validPolicies } = buildLitestreamConfig(policies)
+
+  if (!validPolicies.length) {
+    stopLitestreamService()
+    throw new Error('Aucune base data.db valide pour Litestream.')
+  }
+
+  $os.writeFile(litestreamConfigPath(), config, PRIVATE_FILE_MODE)
+  startOrRestartLitestreamService(litestreamConfigPath())
+
+  const now = new Date().toISOString()
+  const pm2Status = litestreamPm2Status()
+  const status: LitestreamStatus = pm2Status === 'online' ? 'running' : pm2Status ? 'failed' : 'configured'
+  for (const policy of validPolicies) {
+    updateLitestreamPolicyState(policy, status, {
+      lastStartedAt: now,
+      lastError: status === 'failed' ? `PM2 status: ${pm2Status}` : '',
+    })
+  }
+
+  return validPolicies
+}
+
 const activeBehaviorFor = (value: string): BackupPolicyActiveBehavior => {
   return value === 'skip-active' ? 'skip-active' : 'stop-restart'
 }
@@ -2316,8 +2764,57 @@ export const HandleInstanceBackupPolicyRun = (e: core.RequestEvent) => {
   })
 }
 
+export const HandleInstanceLitestreamPolicyGet = (e: core.RequestEvent) => {
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  const policy = refreshLitestreamPolicyState(getOrCreateLitestreamPolicy(instance))
+  return e.json(200, {
+    policy: serializeLitestreamPolicy(policy),
+    capabilities: litestreamCapabilities(),
+  })
+}
+
+export const HandleInstanceLitestreamPolicyUpdate = (e: core.RequestEvent) => {
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  const policy = getOrCreateLitestreamPolicy(instance)
+  applyLitestreamPolicyInput(policy, instance, readLitestreamPolicyInput(e))
+  $app.save(policy)
+
+  try {
+    reconcileLitestreamService()
+  } catch (error) {
+    const saved = $app.findRecordById('instance_litestream_replicas', policy.id)
+    if (saved) {
+      updateLitestreamPolicyState(saved, saved.getBool('enabled') ? 'failed' : 'disabled', {
+        lastError: errorMessage(error),
+      })
+    }
+    throw new BadRequestError(errorMessage(error))
+  }
+
+  const refreshed = refreshLitestreamPolicyState($app.findRecordById('instance_litestream_replicas', policy.id))
+  return e.json(200, {
+    policy: serializeLitestreamPolicy(refreshed),
+    capabilities: litestreamCapabilities(),
+  })
+}
+
 export const HandleInstanceBackupPoliciesBootstrap = () => {
   registerAllBackupPolicyCrons()
+}
+
+export const HandleInstanceLitestreamBootstrap = () => {
+  try {
+    reconcileLitestreamService()
+  } catch (error) {
+    const log = mkLog('bootstrap:litestream')
+    log(errorMessage(error))
+  }
 }
 
 export const HandleInstanceBackupDownload = (e: core.RequestEvent) => {

@@ -124,6 +124,12 @@ routerAdd("PUT", "/api/instance/{id}/backups/policy", (e) => {
 routerAdd("POST", "/api/instance/{id}/backups/policy/run", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceBackupPolicyRun(e);
 }, $apis.requireAuth());
+routerAdd("GET", "/api/instance/{id}/backups/litestream", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceLitestreamPolicyGet(e);
+}, $apis.requireAuth());
+routerAdd("PUT", "/api/instance/{id}/backups/litestream", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceLitestreamPolicyUpdate(e);
+}, $apis.requireAuth());
 routerAdd("GET", "/api/instance/{id}/backups/{backupId}/download", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceBackupDownload(e);
 }, $apis.requireAuth());
@@ -170,6 +176,11 @@ onBootstrap((e) => {
 onBootstrap((e) => {
 	e.next();
 	return require(`${__hooks}/mothership`).HandleInstanceBackupPoliciesBootstrap(e);
+});
+/** Reconcile optional Litestream replication */
+onBootstrap((e) => {
+	e.next();
+	return require(`${__hooks}/mothership`).HandleInstanceLitestreamBootstrap(e);
 });
 
 //#endregion

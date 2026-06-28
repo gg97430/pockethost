@@ -8,7 +8,10 @@
     client,
     type InstanceBackup,
     type InstanceBackupPolicy,
+    type InstanceLitestreamPolicy,
+    type InstanceLitestreamPolicyResponse,
     type UpdateInstanceBackupPolicyInput,
+    type UpdateInstanceLitestreamPolicyInput,
     type UploadProgress,
   } from '$src/pocketbase-client'
   import { instance } from '../store'
@@ -40,15 +43,36 @@
     remoteRetentionDays: 90,
     activeBehavior: 'stop-restart',
   })
+  const defaultLitestreamDraft = (): UpdateInstanceLitestreamPolicyInput => ({
+    enabled: false,
+    syncInterval: '10s',
+    monitorInterval: '10s',
+    checkpointInterval: '1m',
+    snapshotInterval: '1h',
+    snapshotRetention: '72h',
+    validationInterval: '6h',
+  })
 
   let backups: InstanceBackup[] = []
   let backupPolicy: InstanceBackupPolicy | null = null
   let backupPolicyDraft = defaultPolicyDraft()
   let backupPolicyS3Enabled = false
+  let litestreamPolicy: InstanceLitestreamPolicy | null = null
+  let litestreamDraft = defaultLitestreamDraft()
+  let litestreamCapabilities: InstanceLitestreamPolicyResponse['capabilities'] = {
+    s3Enabled: false,
+    litestreamInstalled: false,
+    pm2Installed: false,
+    serviceName: '',
+    configPath: '',
+  }
   let backupPolicyCustomCron = false
   let isPolicyLoading = true
+  let isLitestreamLoading = true
   let policyAction = ''
+  let litestreamAction = ''
   let policyErrorMessage = ''
+  let litestreamErrorMessage = ''
   let isLoading = true
   let action = ''
   let errorMessage = ''
@@ -108,6 +132,10 @@
   $: liveOperationCount =
     liveOperationKind === 'restore' ? (hasActiveRestore || isRestoreAction ? 1 : 0) : runningBackups.length || 1
   $: policyStatusText = backupPolicy ? policyStatusLabel(backupPolicy.lastStatus) : 'Non configurée'
+  $: litestreamStatusText = litestreamPolicy ? litestreamStatusLabel(litestreamPolicy.status) : 'Non configurée'
+  $: litestreamReady =
+    litestreamCapabilities.s3Enabled && litestreamCapabilities.litestreamInstalled && litestreamCapabilities.pm2Installed
+  $: litestreamMissingText = litestreamMissingPrerequisites().join(', ')
   $: policyDestinationText = [
     backupPolicyDraft.localEnabled ? 'Interne' : '',
     backupPolicyDraft.remoteEnabled ? 'S3/R2' : '',
@@ -120,6 +148,11 @@
     validateCronExpression(backupPolicyDraft.cron) &&
     (backupPolicyDraft.localEnabled || backupPolicyDraft.remoteEnabled) &&
     (!backupPolicyDraft.remoteEnabled || backupPolicyS3Enabled)
+  $: litestreamCanSave =
+    !isBusy &&
+    !litestreamAction &&
+    (!litestreamDraft.enabled || litestreamReady) &&
+    litestreamDurationsValid(litestreamDraft)
   $: selectedArchiveLabel = archiveFile
     ? `${archiveFile.name} - ${formatBytes(archiveFile.size)}`
     : '1. Choisir un ZIP, TGZ ou TAR.GZ'
@@ -201,6 +234,45 @@
     return 'backup-policy-status--never'
   }
 
+  function litestreamStatusLabel(status: InstanceLitestreamPolicy['status']) {
+    if (status === 'running') return 'Réplication active'
+    if (status === 'configured') return 'Configurée'
+    if (status === 'failed') return 'Erreur'
+    if (status === 'unavailable') return 'Pré-requis manquant'
+    return 'Désactivée'
+  }
+
+  function litestreamStatusClass(status: InstanceLitestreamPolicy['status'] | undefined) {
+    if (status === 'running') return 'backup-policy-status--ready'
+    if (status === 'configured') return 'backup-policy-status--running'
+    if (status === 'failed') return 'backup-policy-status--failed'
+    if (status === 'unavailable') return 'backup-policy-status--skipped'
+    return 'backup-policy-status--never'
+  }
+
+  function litestreamDurationValid(value: string) {
+    return /^[1-9]\d*(s|m|h)$/i.test(`${value || ''}`.trim())
+  }
+
+  function litestreamDurationsValid(draft: UpdateInstanceLitestreamPolicyInput) {
+    return [
+      draft.syncInterval,
+      draft.monitorInterval,
+      draft.checkpointInterval,
+      draft.snapshotInterval,
+      draft.snapshotRetention,
+      draft.validationInterval,
+    ].every((value) => litestreamDurationValid(`${value || ''}`))
+  }
+
+  function litestreamMissingPrerequisites() {
+    const missing = []
+    if (!litestreamCapabilities.s3Enabled) missing.push('R2/S3')
+    if (!litestreamCapabilities.litestreamInstalled) missing.push('Litestream')
+    if (!litestreamCapabilities.pm2Installed) missing.push('PM2')
+    return missing
+  }
+
   function syncPolicyDraft(policy: InstanceBackupPolicy) {
     backupPolicyDraft = {
       enabled: policy.enabled,
@@ -212,6 +284,18 @@
       remoteRetentionCount: policy.remoteRetentionCount,
       remoteRetentionDays: policy.remoteRetentionDays,
       activeBehavior: policy.activeBehavior,
+    }
+  }
+
+  function syncLitestreamDraft(policy: InstanceLitestreamPolicy) {
+    litestreamDraft = {
+      enabled: policy.enabled,
+      syncInterval: policy.syncInterval || '10s',
+      monitorInterval: policy.monitorInterval || '10s',
+      checkpointInterval: policy.checkpointInterval || '1m',
+      snapshotInterval: policy.snapshotInterval || '1h',
+      snapshotRetention: policy.snapshotRetention || '72h',
+      validationInterval: policy.validationInterval || '6h',
     }
   }
 
@@ -393,6 +477,25 @@
     }
   }
 
+  const loadLitestreamPolicy = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) {
+      isLitestreamLoading = true
+      litestreamErrorMessage = ''
+    }
+    try {
+      const result = await client().getInstanceLitestreamPolicy(id)
+      litestreamPolicy = result.policy
+      litestreamCapabilities = result.capabilities
+      syncLitestreamDraft(result.policy)
+    } catch (error) {
+      if (!silent) {
+        litestreamErrorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      }
+    } finally {
+      if (!silent) isLitestreamLoading = false
+    }
+  }
+
   const refreshBackupsSilently = async () => {
     const current = Date.now()
     if (current - lastSilentRefreshAt < 1200) return
@@ -404,6 +507,7 @@
   onMount(() => {
     void loadBackups()
     void loadBackupPolicy()
+    void loadLitestreamPolicy()
     clockTimer = setInterval(() => {
       now = Date.now()
     }, 1000)
@@ -461,6 +565,26 @@
       policyErrorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
     } finally {
       policyAction = ''
+    }
+  }
+
+  const saveLitestreamPolicy = async () => {
+    if (!litestreamCanSave) return
+
+    litestreamAction = 'save'
+    litestreamErrorMessage = ''
+    successMessage = ''
+    try {
+      const result = await client().updateInstanceLitestreamPolicy(id, litestreamDraft)
+      litestreamPolicy = result.policy
+      litestreamCapabilities = result.capabilities
+      syncLitestreamDraft(result.policy)
+      successMessage = litestreamDraft.enabled ? 'Réplication Litestream activée' : 'Réplication Litestream désactivée'
+    } catch (error) {
+      litestreamErrorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      await loadLitestreamPolicy({ silent: true })
+    } finally {
+      litestreamAction = ''
     }
   }
 
@@ -899,6 +1023,125 @@
     {/if}
   </section>
 
+  <section class="backup-policy backup-policy--litestream">
+    <div class="backup-policy__header">
+      <div>
+        <strong>Litestream à la demande</strong>
+        <span>Répliquer <code>data.db</code> en continu vers S3/R2 uniquement quand cette option est activée.</span>
+      </div>
+      <span class="backup-policy-status {litestreamStatusClass(litestreamPolicy?.status)}">{litestreamStatusText}</span>
+    </div>
+
+    {#if litestreamErrorMessage}
+      <p class="backup-policy-error">{litestreamErrorMessage}</p>
+    {/if}
+
+    {#if isLitestreamLoading}
+      <div class="backup-policy-loading">Chargement de Litestream...</div>
+    {:else}
+      {#if !litestreamReady}
+        <div class="backup-policy-warning">
+          Pré-requis manquant : {litestreamMissingText || 'configuration serveur'}.
+        </div>
+      {/if}
+
+      <div class="backup-policy-note">
+        Litestream accélère la reprise de <code>data.db</code>. Les fichiers uploadés, hooks et migrations restent couverts
+        par les sauvegardes complètes.
+      </div>
+
+      <div class="backup-policy-grid">
+        <label class="backup-policy-toggle">
+          <input
+            type="checkbox"
+            bind:checked={litestreamDraft.enabled}
+            disabled={!!litestreamAction || (!litestreamReady && !litestreamDraft.enabled)}
+          />
+          <span>
+            <strong>Activer</strong>
+            <small>{litestreamDraft.enabled ? 'Réplication active demandée' : 'Aucun daemon Litestream'}</small>
+          </span>
+        </label>
+
+        <div class="backup-policy-field">
+          <label for="litestream-sync">Synchronisation</label>
+          <input
+            id="litestream-sync"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.syncInterval}
+            disabled={!!litestreamAction}
+            placeholder="10s"
+          />
+          <span class="backup-policy-help">Intervalle d’envoi vers S3/R2.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-snapshot">Snapshot complet</label>
+          <input
+            id="litestream-snapshot"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.snapshotInterval}
+            disabled={!!litestreamAction}
+            placeholder="1h"
+          />
+          <span class="backup-policy-help">Point complet périodique.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-retention">Rétention</label>
+          <input
+            id="litestream-retention"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.snapshotRetention}
+            disabled={!!litestreamAction}
+            placeholder="72h"
+          />
+          <span class="backup-policy-help">Fenêtre restaurable Litestream.</span>
+        </div>
+
+        <div class="backup-policy-field">
+          <label for="litestream-validation">Validation</label>
+          <input
+            id="litestream-validation"
+            class="backup-policy-input"
+            bind:value={litestreamDraft.validationInterval}
+            disabled={!!litestreamAction}
+            placeholder="6h"
+          />
+          <span class="backup-policy-help">Contrôle périodique de continuité.</span>
+        </div>
+
+        <div class="backup-policy-field backup-policy-field--wide">
+          <span class="backup-policy-field-label">Destination distante</span>
+          <code class="backup-policy-code">{litestreamPolicy?.replicaPath || 'Non configurée'}</code>
+          <span class="backup-policy-help">
+            Service PM2 : {litestreamCapabilities.serviceName || 'pockethost-litestream'}
+          </span>
+        </div>
+      </div>
+
+      {#if !litestreamDurationsValid(litestreamDraft)}
+        <p class="backup-policy-error">Les durées doivent utiliser le format <code>10s</code>, <code>5m</code> ou <code>1h</code>.</p>
+      {/if}
+
+      <div class="backup-policy-footer">
+        <div class="backup-policy-last">
+          <span>Démarré : {litestreamPolicy?.lastStartedAt ? formatDate(litestreamPolicy.lastStartedAt) : '-'}</span>
+          <span>Contrôlé : {litestreamPolicy?.lastCheckedAt ? formatDate(litestreamPolicy.lastCheckedAt) : '-'}</span>
+          {#if litestreamPolicy?.lastError}
+            <span class="backup-policy-last-error">{litestreamPolicy.lastError}</span>
+          {/if}
+        </div>
+        <div class="backup-policy-actions">
+          <button type="button" class="backup-policy-primary" disabled={!litestreamCanSave} onclick={saveLitestreamPolicy}>
+            <wa-icon name={litestreamAction === 'save' ? 'rotate' : 'floppy-disk'}></wa-icon>
+            {litestreamAction === 'save' ? 'Enregistrement...' : 'Enregistrer Litestream'}
+          </button>
+        </div>
+      </div>
+    {/if}
+  </section>
+
   {#if liveOperationVisible}
     <section class="backup-live" aria-live="polite">
       <div class="backup-live__icon">
@@ -1248,6 +1491,11 @@
     box-shadow: var(--app-shadow-sm);
   }
 
+  .backup-policy--litestream {
+    border-color: rgb(37 99 235 / 0.24);
+    background: linear-gradient(135deg, rgb(37 99 235 / 0.08), transparent 54%), var(--app-surface);
+  }
+
   .backup-policy__header,
   .backup-policy-footer {
     display: flex;
@@ -1322,6 +1570,28 @@
     color: #ef4444;
     font-size: 0.82rem;
     font-weight: 800;
+  }
+
+  .backup-policy-warning,
+  .backup-policy-note {
+    margin: 0;
+    border-radius: 0.5rem;
+    padding: 0.65rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 780;
+    line-height: 1.45;
+  }
+
+  .backup-policy-warning {
+    border: 1px solid rgb(245 158 11 / 0.3);
+    background: rgb(245 158 11 / 0.09);
+    color: #d97706;
+  }
+
+  .backup-policy-note {
+    border: 1px solid rgb(37 99 235 / 0.2);
+    background: rgb(37 99 235 / 0.07);
+    color: var(--app-text-muted);
   }
 
   .backup-policy-grid {
@@ -1400,6 +1670,18 @@
     outline: none;
     border-color: rgb(30 184 84 / 0.55);
     box-shadow: 0 0 0 3px rgb(30 184 84 / 0.14);
+  }
+
+  .backup-policy-code {
+    display: block;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--app-border);
+    border-radius: 0.48rem;
+    background: color-mix(in srgb, var(--app-surface) 82%, transparent);
+    padding: 0.65rem;
+    color: var(--app-text-strong);
+    font-size: 0.78rem;
+    line-height: 1.45;
   }
 
   .backup-policy-input:disabled,

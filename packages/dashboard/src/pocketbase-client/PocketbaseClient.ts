@@ -131,6 +131,38 @@ export type InstanceBackupPolicyResponse = {
   }
 }
 
+export type InstanceLitestreamPolicy = {
+  id: string
+  user: string
+  instance: string
+  enabled: boolean
+  status: 'disabled' | 'configured' | 'running' | 'failed' | 'unavailable'
+  replicaPath: string
+  syncInterval: string
+  monitorInterval: string
+  checkpointInterval: string
+  snapshotInterval: string
+  snapshotRetention: string
+  validationInterval: string
+  lastStartedAt: string
+  lastStoppedAt: string
+  lastCheckedAt: string
+  lastError: string
+  created: string
+  updated: string
+}
+
+export type InstanceLitestreamPolicyResponse = {
+  policy: InstanceLitestreamPolicy
+  capabilities: {
+    s3Enabled: boolean
+    litestreamInstalled: boolean
+    pm2Installed: boolean
+    serviceName: string
+    configPath: string
+  }
+}
+
 export type UpdateInstanceBackupPolicyInput = Pick<
   InstanceBackupPolicy,
   | 'enabled'
@@ -142,6 +174,17 @@ export type UpdateInstanceBackupPolicyInput = Pick<
   | 'remoteRetentionCount'
   | 'remoteRetentionDays'
   | 'activeBehavior'
+>
+
+export type UpdateInstanceLitestreamPolicyInput = Pick<
+  InstanceLitestreamPolicy,
+  | 'enabled'
+  | 'syncInterval'
+  | 'monitorInterval'
+  | 'checkpointInterval'
+  | 'snapshotInterval'
+  | 'snapshotRetention'
+  | 'validationInterval'
 >
 
 export type UploadProgress = {
@@ -559,6 +602,17 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       }
     )
 
+  const getInstanceLitestreamPolicy = (id: InstanceId) =>
+    client.send<InstanceLitestreamPolicyResponse>(`/api/instance/${id}/backups/litestream`, {
+      method: 'GET',
+    })
+
+  const updateInstanceLitestreamPolicy = (id: InstanceId, input: UpdateInstanceLitestreamPolicyInput) =>
+    client.send<InstanceLitestreamPolicyResponse>(`/api/instance/${id}/backups/litestream`, {
+      method: 'PUT',
+      body: input,
+    })
+
   const restoreInstanceBackup = (id: InstanceId, backupId: string) =>
     client.send<{ status: 'ok' }>(`/api/instance/${id}/backups/${backupId}/restore`, {
       method: 'POST',
@@ -836,6 +890,8 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     getInstanceBackupPolicy,
     updateInstanceBackupPolicy,
     runInstanceBackupPolicy,
+    getInstanceLitestreamPolicy,
+    updateInstanceLitestreamPolicy,
     restoreInstanceBackup,
     restoreInstanceBackupToNewInstance,
     deleteInstanceBackup,

@@ -70,7 +70,7 @@ export const readOperatorSettings = (app: core.App = $app): OperatorSettings => 
   const defaults = defaultOperatorSettings()
   try {
     const record = app.findFirstRecordByData('settings', 'name', OPERATOR_SETTINGS_NAME)
-    return normalizeOperatorSettings({ ...defaults, ...parseSettingsValue(record.get('value')) })
+    return normalizeOperatorSettings({ ...defaults, ...parseSettingsValue(record.getString('value') || record.get('value')) })
   } catch {
     return defaults
   }
@@ -89,7 +89,7 @@ export const writeOperatorSettings = (settings: OperatorSettings, app: core.App 
     }
   })()
 
-  record.set('value', normalized)
+  record.set('value', JSON.stringify(normalized))
   app.save(record)
   return normalized
 }

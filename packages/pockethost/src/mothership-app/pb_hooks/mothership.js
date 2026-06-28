@@ -420,7 +420,7 @@ const readOperatorSettings = (app = $app) => {
 		const record = app.findFirstRecordByData("settings", "name", OPERATOR_SETTINGS_NAME);
 		return normalizeOperatorSettings({
 			...defaults,
-			...parseSettingsValue(record.get("value"))
+			...parseSettingsValue(record.getString("value") || record.get("value"))
 		});
 	} catch {
 		return defaults;
@@ -438,7 +438,7 @@ const writeOperatorSettings = (settings, app = $app) => {
 			return newRecord;
 		}
 	})();
-	record.set("value", normalized);
+	record.set("value", JSON.stringify(normalized));
 	app.save(record);
 	return normalized;
 };

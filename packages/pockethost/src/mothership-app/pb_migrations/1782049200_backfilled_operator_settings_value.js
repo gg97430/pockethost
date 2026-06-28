@@ -16,23 +16,25 @@ const parseSettingsValue = (raw) => {
 
 migrate(
   (app) => {
+    const collection = app.findCollectionByNameOrId('settings')
     const record = (() => {
       try {
         return app.findFirstRecordByData('settings', 'name', 'operator_settings')
       } catch {
-        return null
+        const next = new Record(collection)
+        next.set('name', 'operator_settings')
+        return next
       }
     })()
 
-    if (!record) return
-
     const settings = parseSettingsValue(record.getString('value') || record.get('value'))
-    if (settings.serverTimezone) return
-
-    record.set('value', JSON.stringify({
-      ...settings,
-      serverTimezone: DEFAULT_SERVER_TIMEZONE,
-    }))
+    record.set(
+      'value',
+      JSON.stringify({
+        ...settings,
+        serverTimezone: settings.serverTimezone || DEFAULT_SERVER_TIMEZONE,
+      })
+    )
     app.save(record)
   },
   (app) => {

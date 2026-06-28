@@ -56,14 +56,16 @@ export const defaultOperatorSettings = (): OperatorSettings => {
 
 const parseSettingsValue = (raw: unknown): Partial<OperatorSettings> => {
   if (!raw) return {}
+  let parsed = raw
   if (typeof raw === 'string') {
     try {
-      return JSON.parse(raw) as Partial<OperatorSettings>
+      parsed = JSON.parse(raw)
     } catch {
       return {}
     }
   }
-  return raw as Partial<OperatorSettings>
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  return parsed as Partial<OperatorSettings>
 }
 
 export const readOperatorSettings = (app: core.App = $app): OperatorSettings => {

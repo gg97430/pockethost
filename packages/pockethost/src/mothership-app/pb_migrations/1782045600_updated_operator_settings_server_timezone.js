@@ -4,14 +4,16 @@ const DEFAULT_SERVER_TIMEZONE = 'Indian/Reunion'
 
 const parseSettingsValue = (raw) => {
   if (!raw) return {}
+  let parsed = raw
   if (typeof raw === 'string') {
     try {
-      return JSON.parse(raw)
+      parsed = JSON.parse(raw)
     } catch {
       return {}
     }
   }
-  return raw
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  return parsed
 }
 
 migrate(

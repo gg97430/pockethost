@@ -291,6 +291,16 @@
           </label>
         </div>
         <label>
+          Fuseau horaire serveur
+          <input type="text" bind:value={settings.serverTimezone} list="admin-timezone-options" placeholder="Indian/Reunion" />
+          <span class="admin-field-help">Utilise par les sauvegardes automatiques et les taches planifiees serveur.</span>
+          <datalist id="admin-timezone-options">
+            <option value="Indian/Reunion"></option>
+            <option value="Europe/Paris"></option>
+            <option value="UTC"></option>
+          </datalist>
+        </label>
+        <label>
           Email support
           <input type="email" bind:value={settings.supportEmail} placeholder="support@monappli.re" />
         </label>
@@ -594,6 +604,13 @@
 
   .admin-panel textarea {
     resize: vertical;
+  }
+
+  .admin-field-help {
+    color: var(--app-text-faint);
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.35;
   }
 
   .admin-create,

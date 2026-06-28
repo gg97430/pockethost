@@ -46,6 +46,7 @@ export type OperatorSettings = {
   autoVerifyUsers: boolean
   defaultUserQuota: number
   defaultSubscription: 'free' | 'premium' | 'founder' | 'flounder' | 'legacy'
+  serverTimezone: string
   defaultInstancePower: boolean
   defaultInstanceDevMode: boolean
   defaultSyncAdmin: boolean
@@ -128,6 +129,7 @@ export type InstanceBackupPolicyResponse = {
   policy: InstanceBackupPolicy
   capabilities: {
     s3Enabled: boolean
+    serverTimezone: string
   }
 }
 

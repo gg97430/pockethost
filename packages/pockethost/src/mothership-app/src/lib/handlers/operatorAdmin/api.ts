@@ -1,4 +1,5 @@
 import { mkLog } from '$util/Logger'
+import { ReconcileBackupPolicyCrons } from '../instance/api/HandleInstanceBackups'
 import { requireOperatorAdmin } from './auth'
 import { normalizeOperatorSettings, readOperatorSettings, writeOperatorSettings } from './operatorSettings'
 
@@ -73,6 +74,14 @@ const ensureAnotherSuperAdminExists = (currentUserId: string) => {
 
   if (superAdmins.length <= 1 && superAdmins[0]?.id === currentUserId) {
     throw new BadRequestError('Impossible de retirer le dernier superadmin.')
+  }
+}
+
+const ensureValidServerTimezone = (timezoneName: string) => {
+  const zone = new Timezone(timezoneName)
+  const loadedName = zone.string()
+  if (!['UTC', 'Etc/UTC', 'Local'].includes(timezoneName) && loadedName === 'UTC') {
+    throw new BadRequestError(`Fuseau horaire serveur invalide: ${timezoneName}. Exemple: Indian/Reunion.`)
   }
 }
 
@@ -188,7 +197,10 @@ export const HandleOperatorAdminUpdateSettings = (e: core.RequestEvent) => {
   requireOperatorAdmin(e)
   const current = readOperatorSettings()
   const body = readJsonBody<Partial<ReturnType<typeof readOperatorSettings>>>(e)
-  const settings = writeOperatorSettings(normalizeOperatorSettings({ ...current, ...body }))
+  const nextSettings = normalizeOperatorSettings({ ...current, ...body })
+  ensureValidServerTimezone(nextSettings.serverTimezone)
+  const settings = writeOperatorSettings(nextSettings)
+  ReconcileBackupPolicyCrons()
 
   return e.json(200, { settings })
 }

@@ -81,6 +81,14 @@ pm2 -v
 
 Le projet demande Node `>=24`. Le serveur actuel tourne en Node `v24.17.0`.
 
+Mettre le serveur a l'heure de La Reunion:
+
+```bash
+sudo timedatectl set-timezone Indian/Reunion
+timedatectl
+date
+```
+
 Autoriser Node a ecouter les ports bas `80`, `443` et `21` sans lancer PM2 en root:
 
 ```bash
@@ -148,6 +156,7 @@ PH_SECRET=remplacer-par-un-secret-long
 MOTHERSHIP_ADMIN_USERNAME=admin@example.com
 MOTHERSHIP_ADMIN_PASSWORD=remplacer-par-un-mot-de-passe-fort
 TEST_EMAIL=admin@example.com
+PH_SERVER_TIMEZONE=Indian/Reunion
 
 DAEMON_PORT=3000
 MOTHERSHIP_PORT=8091

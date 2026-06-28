@@ -65,6 +65,7 @@
   let backupPolicy: InstanceBackupPolicy | null = null
   let backupPolicyDraft = defaultPolicyDraft()
   let backupPolicyS3Enabled = false
+  let backupPolicyServerTimezone = 'Indian/Reunion'
   let backupPolicyNaturalSchedule = 'tous les jours à 2h'
   let litestreamPolicy: InstanceLitestreamPolicy | null = null
   let litestreamDraft = defaultLitestreamDraft()
@@ -141,7 +142,9 @@
   $: liveOperationCount =
     liveOperationKind === 'restore' ? (hasActiveRestore || isRestoreAction ? 1 : 0) : runningBackups.length || 1
   $: policyStatusText = backupPolicy ? policyStatusLabel(backupPolicy.lastStatus) : 'Non configurée'
-  $: backupPolicyNaturalResult = parseNaturalCron(backupPolicyNaturalSchedule)
+  $: backupPolicyNaturalResult = parseNaturalCron(backupPolicyNaturalSchedule, {
+    timezoneLabel: backupPolicyServerTimezone,
+  })
   $: litestreamStatusText = litestreamPolicy ? litestreamStatusLabel(litestreamPolicy.status) : 'Non configurée'
   $: litestreamRuntimeReady = litestreamCapabilities.litestreamInstalled && litestreamCapabilities.pm2Installed
   $: litestreamS3Ready = litestreamS3DraftValid(litestreamDraft)
@@ -324,7 +327,9 @@
   }
 
   function applyNaturalBackupSchedule() {
-    const result = parseNaturalCron(backupPolicyNaturalSchedule)
+    const result = parseNaturalCron(backupPolicyNaturalSchedule, {
+      timezoneLabel: backupPolicyServerTimezone,
+    })
     if (!result.ok) return
 
     backupPolicyDraft.cron = result.cron
@@ -332,7 +337,9 @@
 
   function useNaturalBackupScheduleExample(example: string) {
     backupPolicyNaturalSchedule = example
-    const result = parseNaturalCron(example)
+    const result = parseNaturalCron(example, {
+      timezoneLabel: backupPolicyServerTimezone,
+    })
     if (result.ok) backupPolicyDraft.cron = result.cron
   }
 
@@ -523,6 +530,7 @@
       const result = await client().getInstanceBackupPolicy(id)
       backupPolicy = result.policy
       backupPolicyS3Enabled = result.capabilities.s3Enabled
+      backupPolicyServerTimezone = result.capabilities.serverTimezone || backupPolicyServerTimezone
       syncPolicyDraft(result.policy)
     } catch (error) {
       if (!silent) {
@@ -615,6 +623,7 @@
       const result = await client().updateInstanceBackupPolicy(id, backupPolicyDraft)
       backupPolicy = result.policy
       backupPolicyS3Enabled = result.capabilities.s3Enabled
+      backupPolicyServerTimezone = result.capabilities.serverTimezone || backupPolicyServerTimezone
       syncPolicyDraft(result.policy)
       successMessage = backupPolicyDraft.enabled ? 'Planification enregistrée' : 'Planification désactivée'
     } catch (error) {
@@ -975,6 +984,9 @@
                 </button>
               {/each}
             </div>
+            <div class="backup-cron-timezone">
+              Fuseau serveur : <strong>{backupPolicyServerTimezone}</strong>
+            </div>
             {#if backupPolicyNaturalResult.ok}
               <div class="backup-cron-result backup-cron-result--ok">
                 <strong>{backupPolicyNaturalResult.cron}</strong>
@@ -991,6 +1003,7 @@
             id="backup-policy-cron"
             bind:value={backupPolicyDraft.cron}
             bind:customMode={backupPolicyCustomCron}
+            timezoneLabel={backupPolicyServerTimezone}
           />
           {#if backupPolicyCustomCron}
             <input
@@ -1003,7 +1016,9 @@
           {#if backupPolicyDraft.cron && !validateCronExpression(backupPolicyDraft.cron)}
             <span class="backup-policy-help backup-policy-help--error">Expression cron invalide.</span>
           {:else}
-            <span class="backup-policy-help">Heure UTC. Exemple : <code>0 2 * * *</code> tous les jours à 02:00.</span>
+            <span class="backup-policy-help">
+              Heure serveur ({backupPolicyServerTimezone}). Exemple : <code>0 2 * * *</code> tous les jours à 02:00.
+            </span>
           {/if}
         </div>
 
@@ -1936,6 +1951,16 @@
   .backup-cron-chip:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+  }
+
+  .backup-cron-timezone {
+    color: var(--app-text-muted);
+    font-size: 0.72rem;
+    font-weight: 760;
+  }
+
+  .backup-cron-timezone strong {
+    color: var(--app-text-strong);
   }
 
   .backup-cron-result {

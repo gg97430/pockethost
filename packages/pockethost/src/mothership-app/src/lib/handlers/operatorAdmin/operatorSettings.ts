@@ -3,6 +3,7 @@ export type OperatorSettings = {
   autoVerifyUsers: boolean
   defaultUserQuota: number
   defaultSubscription: 'free' | 'premium' | 'founder' | 'flounder' | 'legacy'
+  serverTimezone: string
   defaultInstancePower: boolean
   defaultInstanceDevMode: boolean
   defaultSyncAdmin: boolean
@@ -13,6 +14,7 @@ export type OperatorSettings = {
 }
 
 export const OPERATOR_SETTINGS_NAME = 'operator_settings'
+export const DEFAULT_SERVER_TIMEZONE = 'Indian/Reunion'
 
 const envBoolean = (name: string, fallback: boolean) => {
   const raw = `${process.env[name] || ''}`.trim().toLowerCase()
@@ -26,6 +28,14 @@ const envNumber = (name: string, fallback: number) => {
   return value
 }
 
+export const normalizeServerTimezone = (value: unknown, fallback = DEFAULT_SERVER_TIMEZONE) => {
+  const raw = `${value || ''}`.trim()
+  if (!raw) return fallback
+  if (['UTC', 'Local'].includes(raw)) return raw
+  if (/^[A-Za-z_]+(?:\/[A-Za-z0-9._+-]+)+$/.test(raw)) return raw
+  return fallback
+}
+
 export const defaultOperatorSettings = (): OperatorSettings => {
   const autoVerifyUsers = envBoolean('PH_AUTO_VERIFY_SIGNUPS', true)
   return {
@@ -33,6 +43,7 @@ export const defaultOperatorSettings = (): OperatorSettings => {
     autoVerifyUsers,
     defaultUserQuota: envNumber('PH_SIGNUP_SUBSCRIPTION_QUANTITY', autoVerifyUsers ? 250 : 0),
     defaultSubscription: 'free',
+    serverTimezone: normalizeServerTimezone(process.env.PH_SERVER_TIMEZONE || DEFAULT_SERVER_TIMEZONE),
     defaultInstancePower: true,
     defaultInstanceDevMode: true,
     defaultSyncAdmin: true,
@@ -94,6 +105,7 @@ export const normalizeOperatorSettings = (value: Partial<OperatorSettings>): Ope
     defaultSubscription: ['free', 'premium', 'founder', 'flounder', 'legacy'].includes(defaultSubscription)
       ? (defaultSubscription as OperatorSettings['defaultSubscription'])
       : defaults.defaultSubscription,
+    serverTimezone: normalizeServerTimezone(value.serverTimezone, defaults.serverTimezone),
     defaultInstancePower: value.defaultInstancePower ?? defaults.defaultInstancePower,
     defaultInstanceDevMode: value.defaultInstanceDevMode ?? defaults.defaultInstanceDevMode,
     defaultSyncAdmin: value.defaultSyncAdmin ?? defaults.defaultSyncAdmin,

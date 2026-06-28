@@ -15,6 +15,7 @@ export type NaturalCronResult =
 type NaturalCronOptions = {
   timezoneOffsetMinutes?: number
   timezoneLabel?: string
+  convertToUtc?: boolean
 }
 
 type ParsedTime = {
@@ -163,9 +164,26 @@ function timezoneLabel(options: NaturalCronOptions) {
   return options.timezoneLabel || currentTimezoneLabel()
 }
 
+function toServerTime(time: ParsedTime, options: NaturalCronOptions) {
+  if (options.convertToUtc) {
+    return localToUtc(time.hour, time.minute, timezoneOffset(options))
+  }
+
+  return {
+    hour: time.hour,
+    minute: time.minute,
+    dayOffset: 0,
+  }
+}
+
+function serverTimezoneDescription(options: NaturalCronOptions, label: string) {
+  return options.convertToUtc ? 'UTC' : label
+}
+
 export function parseNaturalCron(input: string, options: NaturalCronOptions = {}): NaturalCronResult {
   const text = normalize(input)
   const label = timezoneLabel(options)
+  const serverLabel = serverTimezoneDescription(options, label)
 
   if (!text) {
     return {
@@ -204,12 +222,12 @@ export function parseNaturalCron(input: string, options: NaturalCronOptions = {}
     }
   }
 
-  const utc = localToUtc(time.hour, time.minute, timezoneOffset(options))
+  const serverTime = toServerTime(time, options)
   const defaultTimeNote = time.usedDefault ? ' à 02:00 par défaut' : ` à ${formatTime(time.hour, time.minute)}`
   const monthlyDay = parseMonthlyDay(text)
 
   if (monthlyDay !== null) {
-    let serverDay: number | 'L' = monthlyDay + utc.dayOffset
+    let serverDay: number | 'L' = monthlyDay + serverTime.dayOffset
     if (serverDay < 1) serverDay = 'L'
 
     if (serverDay === 32) {
@@ -222,9 +240,9 @@ export function parseNaturalCron(input: string, options: NaturalCronOptions = {}
 
     return {
       ok: true,
-      cron: `${utc.minute} ${utc.hour} ${serverDay} * *`,
+      cron: `${serverTime.minute} ${serverTime.hour} ${serverDay} * *`,
       localDescription: `Chaque mois le ${monthlyDay}${monthlyDay === 1 ? 'er' : ''}${defaultTimeNote} (${label})`,
-      serverDescription: `Serveur UTC : ${formatTime(utc.hour, utc.minute)}, jour ${serverDay}`,
+      serverDescription: `Serveur ${serverLabel} : ${formatTime(serverTime.hour, serverTime.minute)}, jour ${serverDay}`,
       timezoneLabel: label,
     }
   }
@@ -241,12 +259,12 @@ export function parseNaturalCron(input: string, options: NaturalCronOptions = {}
   }
 
   if (days) {
-    const serverDays = shiftWeekDays(days, utc.dayOffset)
+    const serverDays = shiftWeekDays(days, serverTime.dayOffset)
     return {
       ok: true,
-      cron: `${utc.minute} ${utc.hour} * * ${cronDays(serverDays)}`,
+      cron: `${serverTime.minute} ${serverTime.hour} * * ${cronDays(serverDays)}`,
       localDescription: `${rangeLabel(days)}${defaultTimeNote} (${label})`,
-      serverDescription: `Serveur UTC : ${rangeLabel(serverDays)} à ${formatTime(utc.hour, utc.minute)}`,
+      serverDescription: `Serveur ${serverLabel} : ${rangeLabel(serverDays)} à ${formatTime(serverTime.hour, serverTime.minute)}`,
       timezoneLabel: label,
     }
   }
@@ -254,9 +272,9 @@ export function parseNaturalCron(input: string, options: NaturalCronOptions = {}
   if (/\b(tous les jours|toutes les nuits|chaque jour|quotidien|quotidienne|journalier|journaliere)\b/.test(text)) {
     return {
       ok: true,
-      cron: `${utc.minute} ${utc.hour} * * *`,
+      cron: `${serverTime.minute} ${serverTime.hour} * * *`,
       localDescription: `Tous les jours${defaultTimeNote} (${label})`,
-      serverDescription: `Serveur UTC : tous les jours à ${formatTime(utc.hour, utc.minute)}`,
+      serverDescription: `Serveur ${serverLabel} : tous les jours à ${formatTime(serverTime.hour, serverTime.minute)}`,
       timezoneLabel: label,
     }
   }

@@ -1,4 +1,5 @@
 import { mkLog } from '$util/Logger'
+import { DEFAULT_SERVER_TIMEZONE, readOperatorSettings } from '../../operatorAdmin/operatorSettings'
 
 const BACKUP_FORMAT = 'gestion-pocketbase-instance-backup-v1'
 const BACKUP_DIRS = ['pb_data', 'pb_public', 'pb_migrations', 'pb_hooks']
@@ -285,6 +286,47 @@ const errorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message
   return `${error}`
 }
+
+const backupPolicyServerTimezone = () => readOperatorSettings().serverTimezone || DEFAULT_SERVER_TIMEZONE
+
+const resolveBackupPolicyCronTimezone = () => {
+  const configuredTimezone = backupPolicyServerTimezone()
+  const zone = new Timezone(configuredTimezone)
+  const loadedName = zone.string()
+  if (!['UTC', 'Etc/UTC', 'Local'].includes(configuredTimezone) && loadedName === 'UTC') {
+    throw new Error(`Fuseau horaire invalide: ${configuredTimezone}`)
+  }
+
+  return { configuredTimezone, zone }
+}
+
+const appliedBackupPolicyServerTimezone = () => {
+  try {
+    return resolveBackupPolicyCronTimezone().configuredTimezone
+  } catch {
+    return DEFAULT_SERVER_TIMEZONE
+  }
+}
+
+const applyBackupPolicyCronTimezone = () => {
+  const log = mkLog('cron:instance:backup-policy')
+
+  try {
+    const { configuredTimezone, zone } = resolveBackupPolicyCronTimezone()
+    $app.cron().setTimezone(zone)
+    return configuredTimezone
+  } catch (error) {
+    const fallbackZone = new Timezone(DEFAULT_SERVER_TIMEZONE)
+    $app.cron().setTimezone(fallbackZone)
+    log(`${errorMessage(error)}; fallback ${DEFAULT_SERVER_TIMEZONE}`)
+    return DEFAULT_SERVER_TIMEZONE
+  }
+}
+
+const backupPolicyCapabilities = () => ({
+  s3Enabled: s3BackupsAvailable(),
+  serverTimezone: appliedBackupPolicyServerTimezone(),
+})
 
 const realpath = (path: string) => runCommand('realpath', path)
 
@@ -2207,6 +2249,7 @@ const unregisterBackupPolicyCron = (policyId: string) => {
 }
 
 const registerBackupPolicyCron = (policy: core.Record) => {
+  applyBackupPolicyCronTimezone()
   unregisterBackupPolicyCron(policy.id)
   if (!policy.getBool('enabled')) return
 
@@ -2225,6 +2268,8 @@ const registerBackupPolicyCron = (policy: core.Record) => {
 }
 
 const registerAllBackupPolicyCrons = () => {
+  applyBackupPolicyCronTimezone()
+
   let policies: core.Record[] = []
   try {
     policies = $app.findRecordsByFilter('instance_backup_policies', 'enabled = true', '', 500, 0)
@@ -2834,9 +2879,7 @@ export const HandleInstanceBackupPolicyGet = (e: core.RequestEvent) => {
   const policy = getOrCreateBackupPolicy(instance)
   return e.json(200, {
     policy: serializeBackupPolicy(policy),
-    capabilities: {
-      s3Enabled: s3BackupsAvailable(),
-    },
+    capabilities: backupPolicyCapabilities(),
   })
 }
 
@@ -2852,10 +2895,12 @@ export const HandleInstanceBackupPolicyUpdate = (e: core.RequestEvent) => {
 
   return e.json(200, {
     policy: serializeBackupPolicy(policy),
-    capabilities: {
-      s3Enabled: s3BackupsAvailable(),
-    },
+    capabilities: backupPolicyCapabilities(),
   })
+}
+
+export const ReconcileBackupPolicyCrons = () => {
+  registerAllBackupPolicyCrons()
 }
 
 export const HandleInstanceBackupPolicyRun = (e: core.RequestEvent) => {

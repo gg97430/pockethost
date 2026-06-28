@@ -365,6 +365,7 @@ const listVersions = () => readPocketbaseVersions().map((entry) => entry.range);
 //#endregion
 //#region src/lib/handlers/operatorAdmin/operatorSettings.ts
 const OPERATOR_SETTINGS_NAME = "operator_settings";
+const DEFAULT_SERVER_TIMEZONE = "Indian/Reunion";
 const envBoolean = (name, fallback) => {
 	const raw = `${process.env[name] || ""}`.trim().toLowerCase();
 	if (!raw) return fallback;
@@ -380,6 +381,13 @@ const envNumber = (name, fallback) => {
 	if (!Number.isFinite(value) || value < 0) return fallback;
 	return value;
 };
+const normalizeServerTimezone = (value, fallback = DEFAULT_SERVER_TIMEZONE) => {
+	const raw = `${value || ""}`.trim();
+	if (!raw) return fallback;
+	if (["UTC", "Local"].includes(raw)) return raw;
+	if (/^[A-Za-z_]+(?:\/[A-Za-z0-9._+-]+)+$/.test(raw)) return raw;
+	return fallback;
+};
 const defaultOperatorSettings = () => {
 	const autoVerifyUsers = envBoolean("PH_AUTO_VERIFY_SIGNUPS", true);
 	return {
@@ -387,6 +395,7 @@ const defaultOperatorSettings = () => {
 		autoVerifyUsers,
 		defaultUserQuota: envNumber("PH_SIGNUP_SUBSCRIPTION_QUANTITY", autoVerifyUsers ? 250 : 0),
 		defaultSubscription: "free",
+		serverTimezone: normalizeServerTimezone(process.env.PH_SERVER_TIMEZONE || "Indian/Reunion"),
 		defaultInstancePower: true,
 		defaultInstanceDevMode: true,
 		defaultSyncAdmin: true,
@@ -447,6 +456,7 @@ const normalizeOperatorSettings = (value) => {
 			"flounder",
 			"legacy"
 		].includes(defaultSubscription) ? defaultSubscription : defaults.defaultSubscription,
+		serverTimezone: normalizeServerTimezone(value.serverTimezone, defaults.serverTimezone),
 		defaultInstancePower: value.defaultInstancePower ?? defaults.defaultInstancePower,
 		defaultInstanceDevMode: value.defaultInstanceDevMode ?? defaults.defaultInstanceDevMode,
 		defaultSyncAdmin: value.defaultSyncAdmin ?? defaults.defaultSyncAdmin,
@@ -676,6 +686,45 @@ const errorMessage = (error) => {
 	if (error instanceof Error) return error.message;
 	return `${error}`;
 };
+const backupPolicyServerTimezone = () => readOperatorSettings().serverTimezone || "Indian/Reunion";
+const resolveBackupPolicyCronTimezone = () => {
+	const configuredTimezone = backupPolicyServerTimezone();
+	const zone = new Timezone(configuredTimezone);
+	const loadedName = zone.string();
+	if (![
+		"UTC",
+		"Etc/UTC",
+		"Local"
+	].includes(configuredTimezone) && loadedName === "UTC") throw new Error(`Fuseau horaire invalide: ${configuredTimezone}`);
+	return {
+		configuredTimezone,
+		zone
+	};
+};
+const appliedBackupPolicyServerTimezone = () => {
+	try {
+		return resolveBackupPolicyCronTimezone().configuredTimezone;
+	} catch {
+		return DEFAULT_SERVER_TIMEZONE;
+	}
+};
+const applyBackupPolicyCronTimezone = () => {
+	const log = mkLog("cron:instance:backup-policy");
+	try {
+		const { configuredTimezone, zone } = resolveBackupPolicyCronTimezone();
+		$app.cron().setTimezone(zone);
+		return configuredTimezone;
+	} catch (error) {
+		const fallbackZone = new Timezone(DEFAULT_SERVER_TIMEZONE);
+		$app.cron().setTimezone(fallbackZone);
+		log(`${errorMessage(error)}; fallback ${DEFAULT_SERVER_TIMEZONE}`);
+		return DEFAULT_SERVER_TIMEZONE;
+	}
+};
+const backupPolicyCapabilities = () => ({
+	s3Enabled: s3BackupsAvailable(),
+	serverTimezone: appliedBackupPolicyServerTimezone()
+});
 const realpath = (path) => runCommand("realpath", path);
 const parentDir = (path) => {
 	const parts = path.replace(/\/+$/g, "").split("/");
@@ -2091,6 +2140,7 @@ const unregisterBackupPolicyCron = (policyId) => {
 	backupPolicyJobIds.delete(policyId);
 };
 const registerBackupPolicyCron = (policy) => {
+	applyBackupPolicyCronTimezone();
 	unregisterBackupPolicyCron(policy.id);
 	if (!policy.getBool("enabled")) return;
 	const cron = policy.getString("cron");
@@ -2105,6 +2155,7 @@ const registerBackupPolicyCron = (policy) => {
 	backupPolicyJobIds.add(policy.id);
 };
 const registerAllBackupPolicyCrons = () => {
+	applyBackupPolicyCronTimezone();
 	let policies = [];
 	try {
 		policies = $app.findRecordsByFilter("instance_backup_policies", "enabled = true", "", 500, 0);
@@ -2552,7 +2603,7 @@ const HandleInstanceBackupPolicyGet = (e) => {
 	const policy = getOrCreateBackupPolicy(instance);
 	return e.json(200, {
 		policy: serializeBackupPolicy(policy),
-		capabilities: { s3Enabled: s3BackupsAvailable() }
+		capabilities: backupPolicyCapabilities()
 	});
 };
 const HandleInstanceBackupPolicyUpdate = (e) => {
@@ -2565,8 +2616,11 @@ const HandleInstanceBackupPolicyUpdate = (e) => {
 	registerBackupPolicyCron(policy);
 	return e.json(200, {
 		policy: serializeBackupPolicy(policy),
-		capabilities: { s3Enabled: s3BackupsAvailable() }
+		capabilities: backupPolicyCapabilities()
 	});
+};
+const ReconcileBackupPolicyCrons = () => {
+	registerAllBackupPolicyCrons();
 };
 const HandleInstanceBackupPolicyRun = (e) => {
 	const log = mkLog("POST:instance:backup-policy:run");
@@ -3809,6 +3863,14 @@ const ensureAnotherSuperAdminExists = (currentUserId) => {
 	const superAdmins = $app.findRecordsByFilter("users", "superAdmin = true").filter((record) => !!record);
 	if (superAdmins.length <= 1 && superAdmins[0]?.id === currentUserId) throw new BadRequestError("Impossible de retirer le dernier superadmin.");
 };
+const ensureValidServerTimezone = (timezoneName) => {
+	const loadedName = new Timezone(timezoneName).string();
+	if (![
+		"UTC",
+		"Etc/UTC",
+		"Local"
+	].includes(timezoneName) && loadedName === "UTC") throw new BadRequestError(`Fuseau horaire serveur invalide: ${timezoneName}. Exemple: Indian/Reunion.`);
+};
 const HandleOperatorAdminOverview = (e) => {
 	requireOperatorAdmin(e);
 	const users = listOperatorUsers();
@@ -3883,10 +3945,13 @@ const HandleOperatorAdminUpdateSettings = (e) => {
 	requireOperatorAdmin(e);
 	const current = readOperatorSettings();
 	const body = readJsonBody(e);
-	const settings = writeOperatorSettings(normalizeOperatorSettings({
+	const nextSettings = normalizeOperatorSettings({
 		...current,
 		...body
-	}));
+	});
+	ensureValidServerTimezone(nextSettings.serverTimezone);
+	const settings = writeOperatorSettings(nextSettings);
+	ReconcileBackupPolicyCrons();
 	return e.json(200, { settings });
 };
 
@@ -6326,6 +6391,7 @@ exports.BeforeCreate_ssh_keys = BeforeCreate_ssh_keys;
 exports.BeforeUpdate_cname = BeforeUpdate_cname;
 exports.BeforeUpdate_ssh_keys = BeforeUpdate_ssh_keys;
 exports.BeforeUpdate_version = BeforeUpdate_version;
+exports.DEFAULT_SERVER_TIMEZONE = DEFAULT_SERVER_TIMEZONE;
 exports.HandleEdgeHeartbeat = HandleEdgeHeartbeat;
 exports.HandleInstanceBackupChunkedCancel = HandleInstanceBackupChunkedCancel;
 exports.HandleInstanceBackupChunkedComplete = HandleInstanceBackupChunkedComplete;
@@ -6378,6 +6444,7 @@ exports.HandleVersionsRequest = HandleVersionsRequest;
 exports.LIVE_PLATFORM_TOPIC = LIVE_PLATFORM_TOPIC;
 exports.LIVE_VIEW_STATS_TOPIC = LIVE_VIEW_STATS_TOPIC;
 exports.OPERATOR_SETTINGS_NAME = OPERATOR_SETTINGS_NAME;
+exports.ReconcileBackupPolicyCrons = ReconcileBackupPolicyCrons;
 exports.broadcastLivePlatformStats = broadcastLivePlatformStats;
 exports.broadcastLiveViewStats = broadcastLiveViewStats;
 exports.defaultOperatorSettings = defaultOperatorSettings;
@@ -6397,6 +6464,7 @@ exports.markStaleEdges = markStaleEdges;
 exports.mkPublicStatsPath = mkPublicStatsPath;
 exports.normalizeInstanceStatus = normalizeInstanceStatus;
 exports.normalizeOperatorSettings = normalizeOperatorSettings;
+exports.normalizeServerTimezone = normalizeServerTimezone;
 exports.readOperatorSettings = readOperatorSettings;
 exports.recountLivePlatformStats = recountLivePlatformStats;
 exports.refreshAndBroadcastLivePlatformStats = refreshAndBroadcastLivePlatformStats;

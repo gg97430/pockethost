@@ -5,15 +5,24 @@
     id?: string
     value?: string
     customMode?: boolean
+    timezoneLabel?: string
   }
 
-  let { id = 'webhook-schedule', value = $bindable(''), customMode = $bindable(false) }: Props = $props()
+  let {
+    id = 'webhook-schedule',
+    value = $bindable(''),
+    customMode = $bindable(false),
+    timezoneLabel = 'UTC',
+  }: Props = $props()
 
   let presetId = $state('')
   let userPickedCustom = $state(false)
 
   const selectedPreset = $derived(getCronPreset(presetId))
   const isCustom = $derived(presetId === CUSTOM_CRON_PRESET_ID)
+  const selectedPresetDescription = $derived(
+    selectedPreset?.description ? selectedPreset.description.replace(/\bUTC\b/g, timezoneLabel) : ''
+  )
 
   $effect(() => {
     customMode = isCustom
@@ -51,14 +60,14 @@
 </script>
 
 <div class="flex flex-col gap-2">
-  <wa-select {id} class="w-full" value={presetId} oninput={handlePresetChange} placeholder="Planification (UTC)">
+  <wa-select {id} class="w-full" value={presetId} oninput={handlePresetChange} placeholder="Planification ({timezoneLabel})">
     <wa-option value="" disabled>Choisir une planification</wa-option>
     {#each CRON_PRESETS as preset}
       <wa-option value={preset.id}>{preset.label}</wa-option>
     {/each}
   </wa-select>
 
-  {#if selectedPreset?.description && !isCustom}
-    <p class="text-xs leading-snug text-white/55">{selectedPreset.description}</p>
+  {#if selectedPresetDescription && !isCustom}
+    <p class="text-xs leading-snug text-white/55">{selectedPresetDescription}</p>
   {/if}
 </div>

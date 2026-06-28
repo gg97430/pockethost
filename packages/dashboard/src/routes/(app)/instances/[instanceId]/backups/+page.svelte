@@ -6,6 +6,7 @@
   import { instance } from '../store'
 
   type BackupOperation = {
+    kind: 'backup' | 'restore'
     phase: string
     label: string
     percent: number
@@ -13,7 +14,13 @@
     updatedAt: number
     sourceSizeBytes: number
     compressedBytes: number
+    mode?: 'in-place' | 'new-instance'
+    targetInstanceId?: string
+    targetSubdomain?: string
+    error?: string
   }
+
+  const RESTORE_OPERATION_STALE_MS = 36 * 60 * 60 * 1000
 
   let backups: InstanceBackup[] = []
   let isLoading = true
@@ -35,16 +42,33 @@
   $: displayName = cname || subdomain
   $: runningBackups = backups.filter((backup) => backup.status === 'running')
   $: hasRunningBackup = runningBackups.length > 0
-  $: isBusy = !!action || hasRunningBackup
   $: activeRunningBackup = runningBackups[0] || null
   $: activeRunningOperation = activeRunningBackup ? backupOperation(activeRunningBackup) : null
-  $: liveOperationVisible = action === 'create' || hasRunningBackup
-  $: liveOperationLabel = activeRunningOperation?.label || 'Demande envoyée au serveur'
-  $: liveOperationPercent = activeRunningOperation?.percent || (action === 'create' ? 6 : 0)
-  $: liveOperationStartedAt = activeRunningOperation?.startedAt || operationStartedAt || now
+  $: activeRestoreBackup =
+    backups.find((backup) => restoreActionMatchesBackup(backup) || isRestoreOperationActive(backup)) || null
+  $: activeRestoreOperation = activeRestoreBackup ? restoreOperation(activeRestoreBackup) : null
+  $: hasActiveRestore = backups.some(isRestoreOperationActive)
+  $: isRestoreAction =
+    action === 'restore:pending' || action.startsWith('restore:') || action.startsWith('restore-new:')
+  $: isBusy = !!action || hasRunningBackup || hasActiveRestore
+  $: liveOperationKind = activeRestoreOperation || isRestoreAction ? 'restore' : 'backup'
+  $: liveOperation = liveOperationKind === 'restore' ? activeRestoreOperation : activeRunningOperation
+  $: liveOperationVisible = action === 'create' || hasRunningBackup || isRestoreAction || hasActiveRestore
+  $: liveOperationLabel =
+    liveOperation?.label || (liveOperationKind === 'restore' ? 'Restauration demandée' : 'Demande envoyée au serveur')
+  $: liveOperationPercent =
+    liveOperation?.percent ||
+    (liveOperationKind === 'restore' ? (isRestoreAction ? 8 : 0) : action === 'create' ? 6 : 0)
+  $: liveOperationStartedAt = liveOperation?.startedAt || operationStartedAt || now
   $: liveOperationElapsed = formatDuration(Math.max(0, now - liveOperationStartedAt))
-  $: liveOperationSource = activeRunningOperation?.sourceSizeBytes || 0
-  $: liveOperationCompressed = activeRunningOperation?.compressedBytes || 0
+  $: liveOperationSource = liveOperation?.sourceSizeBytes || 0
+  $: liveOperationCompressed = liveOperation?.compressedBytes || 0
+  $: liveOperationText =
+    liveOperationKind === 'restore'
+      ? 'La restauration travaille en arrière-plan. Vous pouvez laisser cette page ouverte, elle se rafraîchit automatiquement.'
+      : 'La sauvegarde travaille en arrière-plan. Vous pouvez laisser cette page ouverte, elle se rafraîchit automatiquement.'
+  $: liveOperationCount =
+    liveOperationKind === 'restore' ? (hasActiveRestore || isRestoreAction ? 1 : 0) : runningBackups.length || 1
   $: selectedArchiveLabel = archiveFile
     ? `${archiveFile.name} - ${formatBytes(archiveFile.size)}`
     : '1. Choisir un ZIP, TGZ ou TAR.GZ'
@@ -129,6 +153,7 @@
     const rawPercent = Number(operation.percent || 0)
 
     return {
+      kind: 'backup',
       phase: typeof operation.phase === 'string' ? operation.phase : backup.status,
       label:
         typeof operation.label === 'string' && operation.label.trim()
@@ -149,6 +174,76 @@
       sourceSizeBytes: Number.isFinite(sourceSizeBytes) ? sourceSizeBytes : 0,
       compressedBytes: Number.isFinite(compressedBytes) ? compressedBytes : 0,
     }
+  }
+
+  function restoreActionMatchesBackup(backup: InstanceBackup) {
+    return action === `restore:${backup.id}` || action === `restore-new:${backup.id}`
+  }
+
+  function restoreOperation(backup: InstanceBackup): BackupOperation {
+    const manifest = manifestObject(backup.manifest)
+    const rawOperation = manifest.restoreOperation
+    const operation =
+      rawOperation && typeof rawOperation === 'object' && !Array.isArray(rawOperation)
+        ? (rawOperation as Record<string, unknown>)
+        : {}
+
+    const hasPendingAction = restoreActionMatchesBackup(backup)
+    const startedAt = Date.parse(`${operation.startedAt || ''}`)
+    const updatedAt = Date.parse(`${operation.updatedAt || backup.updated || backup.created || ''}`)
+    const sourceSizeBytes = Number(operation.sourceSizeBytes || backup.sizeBytes || manifest.sourceSizeBytes || 0)
+    const compressedBytes = Number(operation.compressedBytes || backup.compressedBytes || 0)
+    const rawPercent = Number(operation.percent || 0)
+    const phase =
+      typeof operation.phase === 'string' && operation.phase ? operation.phase : hasPendingAction ? 'queued' : ''
+    const mode = operation.mode === 'new-instance' ? 'new-instance' : 'in-place'
+
+    return {
+      kind: 'restore',
+      phase,
+      label:
+        typeof operation.label === 'string' && operation.label.trim()
+          ? operation.label
+          : hasPendingAction
+            ? mode === 'new-instance'
+              ? 'Restauration vers une nouvelle instance'
+              : 'Restauration en cours'
+            : phase === 'ready'
+              ? 'Restauration terminée'
+              : phase === 'failed'
+                ? 'Restauration échouée'
+                : 'Restauration en cours',
+      percent:
+        Number.isFinite(rawPercent) && rawPercent > 0
+          ? Math.max(0, Math.min(100, Math.round(rawPercent)))
+          : hasPendingAction
+            ? 8
+            : phase === 'ready'
+              ? 100
+              : 0,
+      startedAt: Number.isFinite(startedAt) ? startedAt : operationStartedAt || Date.now(),
+      updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+      sourceSizeBytes: Number.isFinite(sourceSizeBytes) ? sourceSizeBytes : 0,
+      compressedBytes: Number.isFinite(compressedBytes) ? compressedBytes : 0,
+      mode,
+      targetInstanceId: typeof operation.targetInstanceId === 'string' ? operation.targetInstanceId : '',
+      targetSubdomain: typeof operation.targetSubdomain === 'string' ? operation.targetSubdomain : '',
+      error: typeof operation.error === 'string' ? operation.error : '',
+    }
+  }
+
+  function isRestoreOperationActive(backup: InstanceBackup) {
+    const operation = restoreOperation(backup)
+    if (!operation.phase || operation.phase === 'ready' || operation.phase === 'failed') return false
+    return now - operation.updatedAt < RESTORE_OPERATION_STALE_MS
+  }
+
+  function shouldShowRestoreProgress(backup: InstanceBackup) {
+    return restoreActionMatchesBackup(backup) || isRestoreOperationActive(backup)
+  }
+
+  function visibleOperationForBackup(backup: InstanceBackup) {
+    return shouldShowRestoreProgress(backup) ? restoreOperation(backup) : backupOperation(backup)
   }
 
   const suggestedRestoreSubdomain = () => {
@@ -191,7 +286,7 @@
       now = Date.now()
     }, 1000)
     pollTimer = setInterval(() => {
-      if (action || backups.some((backup) => backup.status === 'running')) {
+      if (action || backups.some((backup) => backup.status === 'running') || backups.some(isRestoreOperationActive)) {
         void refreshBackupsSilently()
       }
     }, 3000)
@@ -312,9 +407,11 @@
     if (!confirmed) return
 
     action = `restore:${backup.id}`
+    operationStartedAt = Date.now()
     errorMessage = ''
     successMessage = ''
     try {
+      setTimeout(() => void refreshBackupsSilently(), 1200)
       await client().restoreInstanceBackup(id, backup.id)
       successMessage = 'Instance restaurée'
       await loadBackups()
@@ -323,6 +420,7 @@
       await loadBackups()
     } finally {
       action = ''
+      operationStartedAt = 0
     }
   }
 
@@ -336,9 +434,11 @@
     if (subdomain === null) return
 
     action = `restore-new:${backup.id}`
+    operationStartedAt = Date.now()
     errorMessage = ''
     successMessage = ''
     try {
+      setTimeout(() => void refreshBackupsSilently(), 1200)
       const result = await client().restoreInstanceBackupToNewInstance(id, backup.id, { subdomain: subdomain.trim() })
       successMessage = 'Nouvelle instance restaurée'
       await goto(`/instances/${result.instance.id}`)
@@ -347,6 +447,7 @@
       await loadBackups()
     } finally {
       action = ''
+      operationStartedAt = 0
     }
   }
 
@@ -469,10 +570,7 @@
           <strong>{liveOperationLabel}</strong>
           <span>Depuis {liveOperationElapsed}</span>
         </div>
-        <p>
-          La sauvegarde travaille en arrière-plan. Vous pouvez laisser cette page ouverte, elle se rafraîchit
-          automatiquement.
-        </p>
+        <p>{liveOperationText}</p>
         <div
           class="backup-live__track"
           role="progressbar"
@@ -485,7 +583,7 @@
         <div class="backup-live__stats">
           <span>Source : {liveOperationSource ? formatBytes(liveOperationSource) : 'calcul en cours'}</span>
           <span>Archive : {liveOperationCompressed ? formatBytes(liveOperationCompressed) : 'préparation'}</span>
-          <span>{runningBackups.length || (action === 'create' ? 1 : 0)} opération en cours</span>
+          <span>{liveOperationCount} opération en cours</span>
         </div>
       </div>
     </section>
@@ -504,6 +602,7 @@
         <article
           class="backup-row"
           class:backup-row--running={backup.status === 'running'}
+          class:backup-row--restore={shouldShowRestoreProgress(backup)}
           class:backup-row--failed={backup.status === 'failed'}
         >
           <div class="backup-main">
@@ -517,8 +616,8 @@
               <span>{formatBytes(backup.compressedBytes)} compressés</span>
               <span>{formatBytes(backup.sizeBytes)} source</span>
             </div>
-            {#if backup.status === 'running'}
-              {@const operation = backupOperation(backup)}
+            {#if backup.status === 'running' || shouldShowRestoreProgress(backup)}
+              {@const operation = visibleOperationForBackup(backup)}
               <div class="backup-row-progress" aria-live="polite">
                 <div class="backup-row-progress__meta">
                   <strong>{operation.label}</strong>
@@ -952,6 +1051,11 @@
   .backup-row--running {
     border-color: rgb(245 158 11 / 0.38);
     background: linear-gradient(135deg, rgb(245 158 11 / 0.08), transparent 45%), var(--app-surface);
+  }
+
+  .backup-row--restore {
+    border-color: rgb(59 130 246 / 0.4);
+    background: linear-gradient(135deg, rgb(59 130 246 / 0.08), transparent 45%), var(--app-surface);
   }
 
   .backup-main {

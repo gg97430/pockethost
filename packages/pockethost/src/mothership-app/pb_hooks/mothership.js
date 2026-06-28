@@ -574,6 +574,10 @@ const backupCpuLimitPercent = () => parseIntegerEnv("INSTANCE_BACKUP_CPU_LIMIT_P
 const backupNiceLevel = () => parseIntegerEnv("INSTANCE_BACKUP_NICE_LEVEL", DEFAULT_BACKUP_NICE_LEVEL, -20, 19);
 const backupIoniceClass = () => parseIntegerEnv("INSTANCE_BACKUP_IONICE_CLASS", DEFAULT_BACKUP_IONICE_CLASS, 0, 3);
 const backupIonicePriority = () => parseIntegerEnv("INSTANCE_BACKUP_IONICE_PRIORITY", 7, 0, 7);
+const restoreCpuLimitPercent = () => parseIntegerEnv("INSTANCE_RESTORE_CPU_LIMIT_PERCENT", backupCpuLimitPercent(), 0, 1e3);
+const restoreNiceLevel = () => parseIntegerEnv("INSTANCE_RESTORE_NICE_LEVEL", backupNiceLevel(), -20, 19);
+const restoreIoniceClass = () => parseIntegerEnv("INSTANCE_RESTORE_IONICE_CLASS", backupIoniceClass(), 0, 3);
+const restoreIonicePriority = () => parseIntegerEnv("INSTANCE_RESTORE_IONICE_PRIORITY", backupIonicePriority(), 0, 7);
 const backupResourceSettings = () => ({
 	gzipLevel: backupGzipLevel(),
 	cpuLimitPercent: backupCpuLimitPercent(),
@@ -581,8 +585,13 @@ const backupResourceSettings = () => ({
 	ioniceClass: backupIoniceClass(),
 	ionicePriority: backupIonicePriority()
 });
-const withBackupResourceLimits = (command) => {
-	const settings = backupResourceSettings();
+const restoreResourceSettings = () => ({
+	cpuLimitPercent: restoreCpuLimitPercent(),
+	niceLevel: restoreNiceLevel(),
+	ioniceClass: restoreIoniceClass(),
+	ionicePriority: restoreIonicePriority()
+});
+const withArchiveResourceLimits = (command, settings, cpuLimitEnvName) => {
 	let limited = [...command];
 	if (commandExists("nice")) limited = [
 		"nice",
@@ -600,7 +609,7 @@ const withBackupResourceLimits = (command) => {
 		limited = [...ioniceArgs, ...limited];
 	}
 	if (settings.cpuLimitPercent > 0) {
-		if (!commandExists("cpulimit")) throw new Error("INSTANCE_BACKUP_CPU_LIMIT_PERCENT requiert le paquet systeme cpulimit.");
+		if (!commandExists("cpulimit")) throw new Error(`${cpuLimitEnvName} requiert le paquet systeme cpulimit.`);
 		limited = [
 			"cpulimit",
 			"-q",
@@ -614,6 +623,8 @@ const withBackupResourceLimits = (command) => {
 	}
 	return limited;
 };
+const withBackupResourceLimits = (command) => withArchiveResourceLimits(command, backupResourceSettings(), "INSTANCE_BACKUP_CPU_LIMIT_PERCENT");
+const withRestoreResourceLimits = (command) => withArchiveResourceLimits(command, restoreResourceSettings(), "INSTANCE_RESTORE_CPU_LIMIT_PERCENT");
 const runBackupArchiveCommand = (tmpPath, root, stagingDir) => {
 	const command = withBackupResourceLimits([
 		"tar",
@@ -629,6 +640,10 @@ const runBackupArchiveCommand = (tmpPath, root, stagingDir) => {
 		"manifest.json"
 	]);
 	return runCommand(command[0], ...command.slice(1));
+};
+const runArchiveCommand = (limited, command) => {
+	const runnable = limited ? withRestoreResourceLimits(command) : command;
+	return runCommand(runnable[0], ...runnable.slice(1));
 };
 const sleepOneSecond = () => {
 	$os.cmd("sleep", "1").combinedOutput();
@@ -822,12 +837,12 @@ const createBackupRecord = (instance, authRecord, kind) => {
 	$app.save(backup);
 	return backup;
 };
+const recordObject = (value) => {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	return JSON.parse(JSON.stringify(value));
+};
 const updateBackupOperation = (backup, phase, input = {}) => {
-	let manifest = {};
-	try {
-		const current = backup.get("manifest");
-		if (current && typeof current === "object" && !Array.isArray(current)) manifest = JSON.parse(JSON.stringify(current));
-	} catch {}
+	const manifest = recordObject(backup.get("manifest"));
 	const currentOperation = manifest.operation && typeof manifest.operation === "object" && !Array.isArray(manifest.operation) ? manifest.operation : {};
 	const now = (/* @__PURE__ */ new Date()).toISOString();
 	backup.set("manifest", {
@@ -839,6 +854,31 @@ const updateBackupOperation = (backup, phase, input = {}) => {
 			percent: typeof input.percent === "number" ? Math.max(0, Math.min(99, Math.round(input.percent))) : currentOperation.percent || 0,
 			sourceSizeBytes: typeof input.sourceSizeBytes === "number" ? input.sourceSizeBytes : currentOperation.sourceSizeBytes || 0,
 			compressedBytes: typeof input.compressedBytes === "number" ? input.compressedBytes : currentOperation.compressedBytes || 0,
+			startedAt: currentOperation.startedAt || now,
+			updatedAt: now
+		}
+	});
+	$app.save(backup);
+};
+const updateRestoreOperation = (backup, phase, input = {}) => {
+	const manifest = recordObject(backup.get("manifest"));
+	const currentOperation = manifest.restoreOperation && typeof manifest.restoreOperation === "object" && !Array.isArray(manifest.restoreOperation) ? manifest.restoreOperation : {};
+	const now = (/* @__PURE__ */ new Date()).toISOString();
+	const isComplete = phase === "ready" || phase === "failed";
+	const rawPercent = typeof input.percent === "number" ? input.percent : typeof currentOperation.percent === "number" ? currentOperation.percent : 0;
+	backup.set("manifest", {
+		...manifest,
+		restoreOperation: {
+			...currentOperation,
+			phase,
+			label: input.label || currentOperation.label || phase,
+			percent: Math.max(0, Math.min(isComplete ? 100 : 99, Math.round(rawPercent))),
+			mode: input.mode || currentOperation.mode || "in-place",
+			targetInstanceId: input.targetInstanceId || currentOperation.targetInstanceId || "",
+			targetSubdomain: input.targetSubdomain || currentOperation.targetSubdomain || "",
+			sourceSizeBytes: typeof input.sourceSizeBytes === "number" ? input.sourceSizeBytes : currentOperation.sourceSizeBytes || 0,
+			compressedBytes: typeof input.compressedBytes === "number" ? input.compressedBytes : currentOperation.compressedBytes || 0,
+			error: input.error || (phase === "failed" ? currentOperation.error || "" : ""),
 			startedAt: currentOperation.startedAt || now,
 			updatedAt: now
 		}
@@ -1105,11 +1145,19 @@ const archiveSourceSizeBytes = (archivePath, filename) => {
 		return 0;
 	}
 };
-const listArchiveEntries = (archivePath, filename) => {
-	return (archiveFormatForFilename(filename) === "zip" ? runCommand("unzip", "-Z1", archivePath) : runCommand("tar", "-tzf", archivePath)).split("\n").map((entry) => entry.trim()).filter(Boolean);
+const listArchiveEntries = (archivePath, filename, limited = false) => {
+	return (archiveFormatForFilename(filename) === "zip" ? runArchiveCommand(limited, [
+		"unzip",
+		"-Z1",
+		archivePath
+	]) : runArchiveCommand(limited, [
+		"tar",
+		"-tzf",
+		archivePath
+	])).split("\n").map((entry) => entry.trim()).filter(Boolean);
 };
-const validateArchiveListing = (archivePath, filename) => {
-	const entries = listArchiveEntries(archivePath, filename);
+const validateArchiveListing = (archivePath, filename, limited = false) => {
+	const entries = listArchiveEntries(archivePath, filename, limited);
 	if (!entries.length) throw new BadRequestError("Archive vide.");
 	for (const entry of entries) if (!safeTarEntry(entry)) throw new BadRequestError("Archive invalide.");
 	if (!archiveHasRequiredRestoreData(entries)) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} ou fichier data.db manquant.`);
@@ -1146,10 +1194,22 @@ const readManifest = (extractDir, backup) => {
 };
 const extractArchive = (archivePath, filename, extractDir) => {
 	if (archiveFormatForFilename(filename) === "zip") {
-		runCommand("unzip", "-q", archivePath, "-d", extractDir);
+		runArchiveCommand(true, [
+			"unzip",
+			"-q",
+			archivePath,
+			"-d",
+			extractDir
+		]);
 		return;
 	}
-	runCommand("tar", "-xzf", archivePath, "-C", extractDir);
+	runArchiveCommand(true, [
+		"tar",
+		"-xzf",
+		archivePath,
+		"-C",
+		extractDir
+	]);
 };
 const moveDirectoryContents = (sourceDir, targetDir) => {
 	$os.mkdirAll(targetDir, DIR_MODE);
@@ -1204,10 +1264,44 @@ const restoreExtractedDirs = (instance, extractDir) => {
 		throw error;
 	}
 };
-const restoreArchive = (instance, backup, archiveInstance = instance) => {
-	const archivePath = ensureLocalArchive(archiveInstance, backup);
+const restoreArchive = (instance, backup, archiveInstance = instance, options = { mode: "in-place" }) => {
 	const filename = backup.getString("filename");
-	validateArchiveListing(archivePath, filename);
+	const target = {
+		mode: options.mode,
+		targetInstanceId: options.targetInstanceId || instance.id,
+		targetSubdomain: options.targetSubdomain || instance.getString("subdomain")
+	};
+	const compressedBytes = Number(backup.get("compressedBytes") || 0);
+	const sourceBytes = Number(backup.get("sizeBytes") || 0);
+	updateRestoreOperation(backup, "preparing", {
+		...target,
+		label: "Préparation de l'archive",
+		percent: 12,
+		sourceSizeBytes: sourceBytes,
+		compressedBytes
+	});
+	let archivePath = "";
+	try {
+		archivePath = ensureLocalArchive(archiveInstance, backup);
+		updateRestoreOperation(backup, "validating", {
+			...target,
+			label: "Validation de l'archive",
+			percent: 18,
+			sourceSizeBytes: sourceBytes,
+			compressedBytes: compressedBytes || fileSize(archivePath)
+		});
+		validateArchiveListing(archivePath, filename, true);
+	} catch (error) {
+		updateRestoreOperation(backup, "failed", {
+			...target,
+			label: "Restauration échouée",
+			percent: 100,
+			sourceSizeBytes: sourceBytes,
+			compressedBytes: compressedBytes || (archivePath ? fileSize(archivePath) : 0),
+			error: errorMessage(error)
+		});
+		throw error;
+	}
 	const extractDir = `${instanceRoot$2(instance.id)}/.restore-extract-${backup.id}`;
 	const normalizedDir = `${instanceRoot$2(instance.id)}/.restore-normalized-${backup.id}`;
 	$os.mkdirAll(instanceRoot$2(instance.id), DIR_MODE);
@@ -1215,16 +1309,62 @@ const restoreArchive = (instance, backup, archiveInstance = instance) => {
 	$os.removeAll(normalizedDir);
 	$os.mkdirAll(extractDir, PRIVATE_DIR_MODE);
 	try {
+		const resourceSettings = restoreResourceSettings();
+		updateRestoreOperation(backup, "extracting", {
+			...target,
+			label: resourceSettings.cpuLimitPercent > 0 ? `Extraction limitée à ${resourceSettings.cpuLimitPercent} % CPU` : "Extraction de l'archive",
+			percent: 32,
+			sourceSizeBytes: sourceBytes,
+			compressedBytes: compressedBytes || fileSize(archivePath)
+		});
 		extractArchive(archivePath, filename, extractDir);
+		updateRestoreOperation(backup, "normalizing", {
+			...target,
+			label: "Préparation des dossiers restaurés",
+			percent: 68,
+			sourceSizeBytes: sourceBytes,
+			compressedBytes: compressedBytes || fileSize(archivePath)
+		});
 		const contentRoot = findArchiveContentRoot(extractDir, normalizedDir);
 		ensureRestorableDirs(contentRoot);
 		const manifest = readManifest(contentRoot, backup);
+		updateRestoreOperation(backup, "replacing", {
+			...target,
+			label: "Remplacement des fichiers de l'instance",
+			percent: 78,
+			sourceSizeBytes: Number(manifest.sourceSizeBytes || sourceBytes || 0),
+			compressedBytes: compressedBytes || fileSize(archivePath)
+		});
 		restoreExtractedDirs(instance, contentRoot);
+		updateRestoreOperation(backup, "finalizing", {
+			...target,
+			label: "Finalisation de la restauration",
+			percent: 92,
+			sourceSizeBytes: Number(manifest.sourceSizeBytes || sourceBytes || 0),
+			compressedBytes: compressedBytes || fileSize(archivePath)
+		});
 		if (manifest.instance?.version) {
 			const current = findInstance$1(instance.id);
 			current.set("version", manifest.instance.version);
 			$app.save(current);
 		}
+		if (options.markReady !== false) updateRestoreOperation(backup, "ready", {
+			...target,
+			label: "Restauration terminée",
+			percent: 100,
+			sourceSizeBytes: Number(manifest.sourceSizeBytes || sourceBytes || 0),
+			compressedBytes: compressedBytes || fileSize(archivePath)
+		});
+	} catch (error) {
+		updateRestoreOperation(backup, "failed", {
+			...target,
+			label: "Restauration échouée",
+			percent: 100,
+			sourceSizeBytes: sourceBytes,
+			compressedBytes: compressedBytes || (archivePath ? fileSize(archivePath) : 0),
+			error: errorMessage(error)
+		});
+		throw error;
 	} finally {
 		try {
 			$os.removeAll(extractDir);
@@ -1236,6 +1376,14 @@ const restoreArchive = (instance, backup, archiveInstance = instance) => {
 };
 const createRestoredInstanceFromBackup = (source, authRecord, backup, e) => {
 	const { subdomain } = readRestoreNewInput(e, source);
+	updateRestoreOperation(backup, "creating", {
+		mode: "new-instance",
+		targetSubdomain: subdomain,
+		label: "Création de la nouvelle instance",
+		percent: 8,
+		sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+		compressedBytes: Number(backup.get("compressedBytes") || 0)
+	});
 	const collection = $app.findCollectionByNameOrId("instances");
 	const target = new Record(collection);
 	target.set("uid", authRecord.id);
@@ -1252,9 +1400,32 @@ const createRestoredInstanceFromBackup = (source, authRecord, backup, e) => {
 		$app.save(target);
 		target.set("autoVacuum", source.getBool("autoVacuum"));
 		$app.save(target);
-		restoreArchive(target, backup, source);
+		updateRestoreOperation(backup, "created", {
+			mode: "new-instance",
+			targetInstanceId: target.id,
+			targetSubdomain: subdomain,
+			label: "Nouvelle instance créée",
+			percent: 14,
+			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+			compressedBytes: Number(backup.get("compressedBytes") || 0)
+		});
+		restoreArchive(target, backup, source, {
+			mode: "new-instance",
+			targetInstanceId: target.id,
+			targetSubdomain: subdomain
+		});
 		return target;
 	} catch (error) {
+		updateRestoreOperation(backup, "failed", {
+			mode: "new-instance",
+			targetInstanceId: target.id || "",
+			targetSubdomain: subdomain,
+			label: "Restauration échouée",
+			percent: 100,
+			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+			compressedBytes: Number(backup.get("compressedBytes") || 0),
+			error: errorMessage(error)
+		});
 		try {
 			if (target.id) $app.delete(target);
 		} catch {}
@@ -1342,9 +1513,7 @@ const readRestoreNewInput = (e, source) => {
 	return { subdomain };
 };
 const backupManifestObject = (backup) => {
-	const value = backup.get("manifest");
-	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-	return JSON.parse(JSON.stringify(value));
+	return recordObject(backup.get("manifest"));
 };
 const refreshImportedBackupSizeMetadata = (backup) => {
 	if (backup.getString("kind") !== "import") return backup;
@@ -1670,15 +1839,68 @@ const HandleInstanceBackupRestore = (e) => {
 	assertNoRunningOperation(instance.id);
 	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
 	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
-	const power = stopForFilesystemOperation(instance);
-	let restored = false;
+	let power = { shouldRestart: false };
 	try {
+		updateRestoreOperation(backup, "stopping", {
+			mode: "in-place",
+			targetInstanceId: instance.id,
+			targetSubdomain: instance.getString("subdomain"),
+			label: instance.getBool("power") ? "Arrêt de l'instance avant restauration" : "Vérification de l'instance",
+			percent: 4,
+			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+			compressedBytes: Number(backup.get("compressedBytes") || 0)
+		});
+		power = stopForFilesystemOperation(instance);
+		updateRestoreOperation(backup, "safety-backup", {
+			mode: "in-place",
+			targetInstanceId: instance.id,
+			targetSubdomain: instance.getString("subdomain"),
+			label: "Sauvegarde de sécurité avant restauration",
+			percent: 8,
+			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+			compressedBytes: Number(backup.get("compressedBytes") || 0)
+		});
 		createBackupForInstance(findInstance$1(instance.id), authRecord, "pre-restore", false, true);
-		restoreArchive(findInstance$1(instance.id), backup);
-		restored = true;
+		restoreArchive(findInstance$1(instance.id), backup, instance, {
+			mode: "in-place",
+			targetInstanceId: instance.id,
+			targetSubdomain: instance.getString("subdomain"),
+			markReady: !power.shouldRestart
+		});
+		if (power.shouldRestart) {
+			updateRestoreOperation(backup, "restarting", {
+				mode: "in-place",
+				targetInstanceId: instance.id,
+				targetSubdomain: instance.getString("subdomain"),
+				label: "Redémarrage de l'instance",
+				percent: 96,
+				sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+				compressedBytes: Number(backup.get("compressedBytes") || 0)
+			});
+			restartIfNeeded(instance.id, power);
+			updateRestoreOperation(backup, "ready", {
+				mode: "in-place",
+				targetInstanceId: instance.id,
+				targetSubdomain: instance.getString("subdomain"),
+				label: "Restauration terminée",
+				percent: 100,
+				sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+				compressedBytes: Number(backup.get("compressedBytes") || 0)
+			});
+		}
 		log(`restored ${backup.id} into ${instance.id}`);
-	} finally {
-		if (restored) restartIfNeeded(instance.id, power);
+	} catch (error) {
+		updateRestoreOperation(backup, "failed", {
+			mode: "in-place",
+			targetInstanceId: instance.id,
+			targetSubdomain: instance.getString("subdomain"),
+			label: "Restauration échouée",
+			percent: 100,
+			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
+			compressedBytes: Number(backup.get("compressedBytes") || 0),
+			error: errorMessage(error)
+		});
+		throw error;
 	}
 	return e.json(200, { status: "ok" });
 };

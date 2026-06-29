@@ -92,6 +92,13 @@ const ensureValidServerTimezone = (timezoneName: string) => {
   }
 }
 
+const normalizeEmailAddress = (value: unknown, field = 'Email') => {
+  const email = `${value || ''}`.trim().toLowerCase()
+  if (!email) throw new BadRequestError(`${field} obligatoire.`)
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestError(`${field} invalide.`)
+  return email
+}
+
 const mergeOperatorSettingsInput = (current: OperatorSettings, input: Partial<OperatorSettings>) => {
   const backupS3 = {
     ...current.backupS3,
@@ -102,11 +109,47 @@ const mergeOperatorSettingsInput = (current: OperatorSettings, input: Partial<Op
     backupS3.secretAccessKey = current.backupS3.secretAccessKey
   }
 
+  const smtp = {
+    ...current.smtp,
+    ...(input.smtp || {}),
+  }
+
+  if (!`${smtp.password || ''}`.trim()) {
+    smtp.password = current.smtp.password
+  }
+
   return normalizeOperatorSettings({
     ...current,
     ...input,
     backupS3,
+    smtp,
   })
+}
+
+const sendOperatorSMTPTest = (settings: OperatorSettings, to: string) => {
+  if (!settings.smtp.enabled) throw new BadRequestError('SMTP est desactive.')
+  if (!settings.smtp.host) throw new BadRequestError('Hote SMTP obligatoire.')
+  if (!settings.smtp.port) throw new BadRequestError('Port SMTP obligatoire.')
+  if (!settings.smtp.senderAddress) throw new BadRequestError('Adresse expediteur obligatoire.')
+
+  const message = new MailerMessage({
+    from: {
+      address: settings.smtp.senderAddress,
+      name: settings.smtp.senderName || 'Gestion PocketBase',
+    },
+    to: [{ address: to }],
+    subject: 'Test SMTP - Gestion PocketBase',
+    text: `Ce message confirme que la configuration SMTP de Gestion PocketBase fonctionne.`,
+    html: `<p>Ce message confirme que la configuration SMTP de Gestion PocketBase fonctionne.</p>`,
+  })
+
+  $app.newMailClient().send(message)
+
+  return {
+    to,
+    host: settings.smtp.host,
+    port: settings.smtp.port,
+  }
 }
 
 export const HandleOperatorAdminOverview = (e: core.RequestEvent) => {
@@ -240,6 +283,27 @@ export const HandleOperatorAdminTestBackupS3 = (e: core.RequestEvent) => {
     test: {
       ...result,
       message: `Connexion S3/R2 valide pour ${result.bucket}.`,
+    },
+  })
+}
+
+export const HandleOperatorAdminTestSMTP = (e: core.RequestEvent) => {
+  requireOperatorAdmin(e)
+  const current = readOperatorSettings()
+  const body = readJsonBody<Partial<OperatorSettings> & { testEmail?: string }>(e)
+  const settings = mergeOperatorSettingsInput(current, body)
+  const target = normalizeEmailAddress(
+    body.testEmail || settings.supportEmail || settings.smtp.senderAddress,
+    'Email de test'
+  )
+  const savedSettings = writeOperatorSettings(settings)
+  const result = sendOperatorSMTPTest(savedSettings, target)
+
+  return e.json(200, {
+    settings: serializeOperatorSettings(savedSettings),
+    test: {
+      ...result,
+      message: `Email de test envoye a ${result.to}.`,
     },
   })
 }

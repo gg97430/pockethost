@@ -387,6 +387,14 @@ const envString = (name, fallback = "") => {
 	const osValue = typeof $os === "undefined" ? "" : $os.getenv(name);
 	return `${process.env[name] || osValue || fallback}`;
 };
+const currentPocketBaseSettings = () => {
+	try {
+		if (typeof $app === "undefined") return null;
+		return $app.settings();
+	} catch {
+		return null;
+	}
+};
 const normalizeServerTimezone = (value, fallback = DEFAULT_SERVER_TIMEZONE) => {
 	const raw = `${value || ""}`.trim();
 	if (!raw) return fallback;
@@ -399,6 +407,14 @@ const normalizeText = (value, fallback = "", max = 500) => {
 };
 const normalizeBackupS3Prefix = (value, fallback = DEFAULT_BACKUP_S3_PREFIX) => {
 	return normalizeText(value, fallback, 500).replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/") || "instances";
+};
+const normalizeSMTPAuthMethod = (value) => {
+	return `${value || ""}`.trim().toUpperCase() === "LOGIN" ? "LOGIN" : "PLAIN";
+};
+const normalizeSMTPPort = (value, fallback = 587) => {
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric)) return fallback;
+	return Math.max(1, Math.min(65535, Math.floor(numeric)));
 };
 const defaultBackupS3Settings = () => ({
 	enabled: envBoolean("INSTANCE_BACKUP_S3_ENABLED", false),
@@ -421,13 +437,51 @@ const normalizeBackupS3Settings = (value) => {
 		secretAccessKey: normalizeText(value?.secretAccessKey, defaults.secretAccessKey, 1024)
 	};
 };
+const defaultSMTPSettings = () => {
+	const pocketBaseSettings = currentPocketBaseSettings();
+	const smtp = pocketBaseSettings?.smtp;
+	const meta = pocketBaseSettings?.meta;
+	const senderAddress = envString("SMTP_SENDER_ADDRESS", meta?.senderAddress || envString("PH_SUPPORT_EMAIL"));
+	return {
+		enabled: envBoolean("SMTP_ENABLED", smtp?.enabled ?? false),
+		host: normalizeText(envString("SMTP_HOST", smtp?.host || ""), "", 255),
+		port: normalizeSMTPPort(envString("SMTP_PORT"), smtp?.port || 587),
+		username: normalizeText(envString("SMTP_USERNAME", smtp?.username || ""), "", 255),
+		password: normalizeText(envString("SMTP_PASSWORD", smtp?.password || ""), "", 1024),
+		authMethod: normalizeSMTPAuthMethod(envString("SMTP_AUTH_METHOD", smtp?.authMethod || "PLAIN")),
+		tls: envBoolean("SMTP_TLS", smtp?.tls ?? false),
+		localName: normalizeText(envString("SMTP_LOCAL_NAME", smtp?.localName || ""), "", 255),
+		senderName: normalizeText(envString("SMTP_SENDER_NAME", meta?.senderName || "Gestion PocketBase"), "", 255),
+		senderAddress: normalizeText(senderAddress, "", 255)
+	};
+};
+const normalizeSMTPSettings = (value) => {
+	const defaults = defaultSMTPSettings();
+	return {
+		enabled: !!value?.enabled,
+		host: normalizeText(value?.host, defaults.host, 255),
+		port: normalizeSMTPPort(value?.port, defaults.port),
+		username: normalizeText(value?.username, defaults.username, 255),
+		password: normalizeText(value?.password, defaults.password, 1024),
+		authMethod: normalizeSMTPAuthMethod(value?.authMethod || defaults.authMethod),
+		tls: !!(value?.tls ?? defaults.tls),
+		localName: normalizeText(value?.localName, defaults.localName, 255),
+		senderName: normalizeText(value?.senderName, defaults.senderName, 255),
+		senderAddress: normalizeText(value?.senderAddress, defaults.senderAddress, 255)
+	};
+};
 const serializeOperatorSettings = (settings) => {
 	const { secretAccessKey, ...backupS3 } = settings.backupS3;
+	const { password, ...smtp } = settings.smtp;
 	return {
 		...settings,
 		backupS3: {
 			...backupS3,
 			hasSecretAccessKey: !!secretAccessKey
+		},
+		smtp: {
+			...smtp,
+			hasPassword: !!password
 		}
 	};
 };
@@ -440,6 +494,7 @@ const defaultOperatorSettings = () => {
 		defaultSubscription: "free",
 		serverTimezone: normalizeServerTimezone(envString("PH_SERVER_TIMEZONE", DEFAULT_SERVER_TIMEZONE)),
 		backupS3: defaultBackupS3Settings(),
+		smtp: defaultSMTPSettings(),
 		defaultInstancePower: true,
 		defaultInstanceDevMode: false,
 		defaultSyncAdmin: true,
@@ -486,7 +541,29 @@ const writeOperatorSettings = (settings, app = $app) => {
 	})();
 	record.set("value", JSON.stringify(normalized));
 	app.save(record);
+	applyOperatorMailSettings(normalized, app);
 	return normalized;
+};
+const applyOperatorMailSettings = (settings, app = $app) => {
+	const normalized = normalizeOperatorSettings(settings);
+	const appSettings = app.settings();
+	appSettings.smtp = {
+		...appSettings.smtp,
+		enabled: normalized.smtp.enabled,
+		host: normalized.smtp.host,
+		port: normalized.smtp.port,
+		username: normalized.smtp.username,
+		password: normalized.smtp.password,
+		authMethod: normalized.smtp.authMethod,
+		tls: normalized.smtp.tls,
+		localName: normalized.smtp.localName
+	};
+	appSettings.meta = {
+		...appSettings.meta,
+		senderName: normalized.smtp.senderName || appSettings.meta.senderName,
+		senderAddress: normalized.smtp.senderAddress || appSettings.meta.senderAddress
+	};
+	app.save(appSettings);
 };
 const normalizeOperatorSettings = (value) => {
 	const defaults = defaultOperatorSettings();
@@ -504,6 +581,7 @@ const normalizeOperatorSettings = (value) => {
 		].includes(defaultSubscription) ? defaultSubscription : defaults.defaultSubscription,
 		serverTimezone: normalizeServerTimezone(value.serverTimezone, defaults.serverTimezone),
 		backupS3: normalizeBackupS3Settings(value.backupS3 || defaults.backupS3),
+		smtp: normalizeSMTPSettings(value.smtp || defaults.smtp),
 		defaultInstancePower: value.defaultInstancePower ?? defaults.defaultInstancePower,
 		defaultInstanceDevMode: value.defaultInstanceDevMode ?? defaults.defaultInstanceDevMode,
 		defaultSyncAdmin: value.defaultSyncAdmin ?? defaults.defaultSyncAdmin,
@@ -3995,6 +4073,11 @@ const HandleMetaUpdateAtBoot = (_e) => {
 	};
 	log(`Saving settings`);
 	$app.save(settings);
+	try {
+		applyOperatorMailSettings(readOperatorSettings());
+	} catch (error) {
+		log(`Could not apply operator mail settings`, `${error}`);
+	}
 	log(`Saved settings`);
 };
 
@@ -4262,17 +4345,51 @@ const ensureValidServerTimezone = (timezoneName) => {
 		"Local"
 	].includes(timezoneName) && loadedName === "UTC") throw new BadRequestError(`Fuseau horaire serveur invalide: ${timezoneName}. Exemple: Indian/Reunion.`);
 };
+const normalizeEmailAddress = (value, field = "Email") => {
+	const email = `${value || ""}`.trim().toLowerCase();
+	if (!email) throw new BadRequestError(`${field} obligatoire.`);
+	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestError(`${field} invalide.`);
+	return email;
+};
 const mergeOperatorSettingsInput = (current, input) => {
 	const backupS3 = {
 		...current.backupS3,
 		...input.backupS3 || {}
 	};
 	if (!`${backupS3.secretAccessKey || ""}`.trim()) backupS3.secretAccessKey = current.backupS3.secretAccessKey;
+	const smtp = {
+		...current.smtp,
+		...input.smtp || {}
+	};
+	if (!`${smtp.password || ""}`.trim()) smtp.password = current.smtp.password;
 	return normalizeOperatorSettings({
 		...current,
 		...input,
-		backupS3
+		backupS3,
+		smtp
 	});
+};
+const sendOperatorSMTPTest = (settings, to) => {
+	if (!settings.smtp.enabled) throw new BadRequestError("SMTP est desactive.");
+	if (!settings.smtp.host) throw new BadRequestError("Hote SMTP obligatoire.");
+	if (!settings.smtp.port) throw new BadRequestError("Port SMTP obligatoire.");
+	if (!settings.smtp.senderAddress) throw new BadRequestError("Adresse expediteur obligatoire.");
+	const message = new MailerMessage({
+		from: {
+			address: settings.smtp.senderAddress,
+			name: settings.smtp.senderName || "Gestion PocketBase"
+		},
+		to: [{ address: to }],
+		subject: "Test SMTP - Gestion PocketBase",
+		text: `Ce message confirme que la configuration SMTP de Gestion PocketBase fonctionne.`,
+		html: `<p>Ce message confirme que la configuration SMTP de Gestion PocketBase fonctionne.</p>`
+	});
+	$app.newMailClient().send(message);
+	return {
+		to,
+		host: settings.smtp.host,
+		port: settings.smtp.port
+	};
 };
 const HandleOperatorAdminOverview = (e) => {
 	requireOperatorAdmin(e);
@@ -4359,6 +4476,22 @@ const HandleOperatorAdminTestBackupS3 = (e) => {
 		...result,
 		message: `Connexion S3/R2 valide pour ${result.bucket}.`
 	} });
+};
+const HandleOperatorAdminTestSMTP = (e) => {
+	requireOperatorAdmin(e);
+	const current = readOperatorSettings();
+	const body = readJsonBody(e);
+	const settings = mergeOperatorSettingsInput(current, body);
+	const target = normalizeEmailAddress(body.testEmail || settings.supportEmail || settings.smtp.senderAddress, "Email de test");
+	const savedSettings = writeOperatorSettings(settings);
+	const result = sendOperatorSMTPTest(savedSettings, target);
+	return e.json(200, {
+		settings: serializeOperatorSettings(savedSettings),
+		test: {
+			...result,
+			message: `Email de test envoye a ${result.to}.`
+		}
+	});
 };
 const HandleOperatorAdminDiskCleanupPreview = (e) => {
 	requireOperatorAdmin(e);
@@ -6848,6 +6981,7 @@ exports.HandleOperatorAdminDiskCleanupPreview = HandleOperatorAdminDiskCleanupPr
 exports.HandleOperatorAdminDiskCleanupRun = HandleOperatorAdminDiskCleanupRun;
 exports.HandleOperatorAdminOverview = HandleOperatorAdminOverview;
 exports.HandleOperatorAdminTestBackupS3 = HandleOperatorAdminTestBackupS3;
+exports.HandleOperatorAdminTestSMTP = HandleOperatorAdminTestSMTP;
 exports.HandleOperatorAdminUpdateSettings = HandleOperatorAdminUpdateSettings;
 exports.HandleOperatorAdminUpdateUser = HandleOperatorAdminUpdateUser;
 exports.HandleOutpostUnsubscribe = HandleOutpostUnsubscribe;
@@ -6866,6 +7000,7 @@ exports.LIVE_VIEW_STATS_TOPIC = LIVE_VIEW_STATS_TOPIC;
 exports.OPERATOR_SETTINGS_NAME = OPERATOR_SETTINGS_NAME;
 exports.ReconcileBackupPolicyCrons = ReconcileBackupPolicyCrons;
 exports.TestBackupS3Config = TestBackupS3Config;
+exports.applyOperatorMailSettings = applyOperatorMailSettings;
 exports.broadcastLivePlatformStats = broadcastLivePlatformStats;
 exports.broadcastLiveViewStats = broadcastLiveViewStats;
 exports.defaultOperatorSettings = defaultOperatorSettings;
@@ -6886,6 +7021,7 @@ exports.mkPublicStatsPath = mkPublicStatsPath;
 exports.normalizeBackupS3Settings = normalizeBackupS3Settings;
 exports.normalizeInstanceStatus = normalizeInstanceStatus;
 exports.normalizeOperatorSettings = normalizeOperatorSettings;
+exports.normalizeSMTPSettings = normalizeSMTPSettings;
 exports.normalizeServerTimezone = normalizeServerTimezone;
 exports.readOperatorSettings = readOperatorSettings;
 exports.recountLivePlatformStats = recountLivePlatformStats;

@@ -48,6 +48,7 @@ export type OperatorSettings = {
   defaultSubscription: 'free' | 'premium' | 'founder' | 'flounder' | 'legacy'
   serverTimezone: string
   backupS3: OperatorBackupS3Settings
+  smtp: OperatorSMTPSettings
   defaultInstancePower: boolean
   defaultInstanceDevMode: boolean
   defaultSyncAdmin: boolean
@@ -66,6 +67,20 @@ export type OperatorBackupS3Settings = {
   accessKeyId: string
   secretAccessKey?: string
   hasSecretAccessKey: boolean
+}
+
+export type OperatorSMTPSettings = {
+  enabled: boolean
+  host: string
+  port: number
+  username: string
+  password?: string
+  authMethod: 'PLAIN' | 'LOGIN'
+  tls: boolean
+  localName: string
+  senderName: string
+  senderAddress: string
+  hasPassword: boolean
 }
 
 export type OperatorUser = {
@@ -816,6 +831,15 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       }
     )
 
+  const testOperatorSMTP = (data: OperatorSettings, testEmail: string) =>
+    client.send<{
+      settings: OperatorSettings
+      test: { to: string; host: string; port: number; message: string }
+    }>('/api/admin/settings/smtp/test', {
+      method: 'POST',
+      body: { ...data, testEmail },
+    })
+
   const parseError = (e: Error): string[] => {
     if (!(e instanceof ClientResponseError)) return [`${e}`]
     if (e.data.message && Object.keys(e.data.data).length === 0) return [e.data.message]
@@ -987,6 +1011,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     updateOperatorUser,
     updateOperatorSettings,
     testOperatorBackupS3,
+    testOperatorSMTP,
     resendVerificationEmail,
     updateInstance,
     deleteInstance,

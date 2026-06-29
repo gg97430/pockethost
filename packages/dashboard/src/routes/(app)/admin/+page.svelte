@@ -27,10 +27,12 @@
   let isScanningDisk = false
   let isRunningDiskCleanup = false
   let isTestingBackupS3 = false
+  let isTestingSMTP = false
   let savingUserId = ''
   let errorMessage = ''
   let successMessage = ''
   let searchQuery = ''
+  let smtpTestEmail = ''
   let overview: OperatorAdminOverview | undefined
   let settings: OperatorSettings | undefined
   let diskCleanup: OperatorDiskCleanupResult | undefined
@@ -62,6 +64,12 @@
     !!settings.backupS3.bucket.trim() &&
     !!settings.backupS3.accessKeyId.trim() &&
     (!!settings.backupS3.secretAccessKey?.trim() || settings.backupS3.hasSecretAccessKey)
+  $: smtpReady =
+    !!settings?.smtp.enabled &&
+    !!settings.smtp.host.trim() &&
+    Number(settings.smtp.port) > 0 &&
+    !!settings.smtp.senderAddress.trim() &&
+    (!!settings.smtp.password?.trim() || settings.smtp.hasPassword || !settings.smtp.username.trim())
 
   const applyOverview = (next: OperatorAdminOverview) => {
     overview = next
@@ -71,7 +79,12 @@
         ...next.settings.backupS3,
         secretAccessKey: '',
       },
+      smtp: {
+        ...next.settings.smtp,
+        password: '',
+      },
     }
+    smtpTestEmail = smtpTestEmail || next.settings.supportEmail || next.settings.smtp.senderAddress || ''
     users = next.users
     userDrafts = Object.fromEntries(users.map((user) => [user.id, toUserDraft(user)]))
     newUser = {
@@ -224,6 +237,10 @@
           ...result.settings.backupS3,
           secretAccessKey: '',
         },
+        smtp: {
+          ...result.settings.smtp,
+          password: '',
+        },
       }
       showSuccess('Parametres enregistres.')
     } catch (error) {
@@ -243,6 +260,31 @@
       showError(error)
     } finally {
       isTestingBackupS3 = false
+    }
+  }
+
+  async function testSMTP() {
+    if (!settings) return
+    isTestingSMTP = true
+    try {
+      const result = await client().testOperatorSMTP(settings, smtpTestEmail)
+      settings = {
+        ...result.settings,
+        backupS3: {
+          ...result.settings.backupS3,
+          secretAccessKey: '',
+        },
+        smtp: {
+          ...result.settings.smtp,
+          password: '',
+        },
+      }
+      smtpTestEmail = result.test.to
+      showSuccess(result.test.message || 'Email SMTP envoye.')
+    } catch (error) {
+      showError(error)
+    } finally {
+      isTestingSMTP = false
     }
   }
 </script>
@@ -457,6 +499,94 @@
             >
               <wa-icon name={isTestingBackupS3 ? 'rotate' : 'plug-circle-check'}></wa-icon>
               {isTestingBackupS3 ? 'Test...' : 'Tester S3/R2'}
+            </button>
+          </div>
+        </div>
+        <div class="admin-s3-box">
+          <div class="admin-s3-head">
+            <div>
+              <h3>SMTP des emails</h3>
+              <p>Configuration utilisee pour les emails de verification, reset mot de passe et notifications.</p>
+            </div>
+            <span class:ready={smtpReady} class="admin-s3-status">
+              {smtpReady ? 'Pret' : 'Incomplet'}
+            </span>
+          </div>
+          <label class="admin-inline-check admin-s3-toggle">
+            <input type="checkbox" bind:checked={settings.smtp.enabled} />
+            Activer SMTP
+          </label>
+          <div class="admin-form-row">
+            <label>
+              Hote SMTP
+              <input type="text" bind:value={settings.smtp.host} placeholder="smtp.mailgun.org" />
+            </label>
+            <label>
+              Port
+              <input type="number" min="1" max="65535" step="1" bind:value={settings.smtp.port} />
+            </label>
+          </div>
+          <div class="admin-form-row">
+            <label>
+              Expediteur nom
+              <input type="text" bind:value={settings.smtp.senderName} placeholder="Gestion PocketBase" />
+            </label>
+            <label>
+              Expediteur email
+              <input type="email" bind:value={settings.smtp.senderAddress} placeholder="no-reply@monappli.re" />
+            </label>
+          </div>
+          <div class="admin-form-row">
+            <label>
+              Utilisateur
+              <input type="text" bind:value={settings.smtp.username} autocomplete="off" />
+            </label>
+            <label>
+              Mot de passe SMTP
+              <input
+                type="password"
+                bind:value={settings.smtp.password}
+                autocomplete="new-password"
+                placeholder={settings.smtp.hasPassword ? 'Deja enregistre' : 'Mot de passe SMTP'}
+              />
+              <span class="admin-field-help">
+                {settings.smtp.hasPassword
+                  ? 'Laissez vide pour conserver le mot de passe existant.'
+                  : 'Requis si votre SMTP demande une authentification.'}
+              </span>
+            </label>
+          </div>
+          <div class="admin-form-row">
+            <label>
+              Methode auth
+              <select bind:value={settings.smtp.authMethod}>
+                <option value="PLAIN">PLAIN</option>
+                <option value="LOGIN">LOGIN</option>
+              </select>
+            </label>
+            <label>
+              Local name
+              <input type="text" bind:value={settings.smtp.localName} placeholder="monappli.re" />
+              <span class="admin-field-help">Optionnel. Utile pour certains relais SMTP.</span>
+            </label>
+          </div>
+          <label class="admin-inline-check admin-s3-toggle">
+            <input type="checkbox" bind:checked={settings.smtp.tls} />
+            Forcer TLS direct
+          </label>
+          <label>
+            Email de test
+            <input type="email" bind:value={smtpTestEmail} placeholder="admin@monappli.re" />
+          </label>
+          <div class="admin-s3-actions">
+            <button
+              class="admin-secondary-btn"
+              type="button"
+              onclick={testSMTP}
+              disabled={isTestingSMTP || isSavingSettings || !settings.smtp.enabled}
+            >
+              <wa-icon name={isTestingSMTP ? 'rotate' : 'paper-plane'}></wa-icon>
+              {isTestingSMTP ? 'Envoi...' : 'Tester SMTP'}
             </button>
           </div>
         </div>

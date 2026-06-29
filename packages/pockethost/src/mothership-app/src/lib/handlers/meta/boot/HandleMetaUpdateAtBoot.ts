@@ -1,4 +1,5 @@
 import { mkLog } from '$util/Logger'
+import { applyOperatorMailSettings, readOperatorSettings } from '../../operatorAdmin/operatorSettings'
 
 export const HandleMetaUpdateAtBoot = (_e: core.BootstrapEvent) => {
   const log = mkLog('HandleMetaUpdateAtBoot')
@@ -25,5 +26,10 @@ export const HandleMetaUpdateAtBoot = (_e: core.BootstrapEvent) => {
 
   log(`Saving settings`)
   $app.save(settings)
+  try {
+    applyOperatorMailSettings(readOperatorSettings())
+  } catch (error) {
+    log(`Could not apply operator mail settings`, `${error}`)
+  }
   log(`Saved settings`)
 }

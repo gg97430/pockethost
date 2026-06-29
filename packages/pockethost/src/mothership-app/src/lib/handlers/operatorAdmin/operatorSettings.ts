@@ -5,6 +5,7 @@ export type OperatorSettings = {
   defaultSubscription: 'free' | 'premium' | 'founder' | 'flounder' | 'legacy'
   serverTimezone: string
   backupS3: OperatorBackupS3Settings
+  smtp: OperatorSMTPSettings
   defaultInstancePower: boolean
   defaultInstanceDevMode: boolean
   defaultSyncAdmin: boolean
@@ -28,8 +29,26 @@ export type PublicOperatorBackupS3Settings = Omit<OperatorBackupS3Settings, 'sec
   hasSecretAccessKey: boolean
 }
 
-export type PublicOperatorSettings = Omit<OperatorSettings, 'backupS3'> & {
+export type OperatorSMTPSettings = {
+  enabled: boolean
+  host: string
+  port: number
+  username: string
+  password: string
+  authMethod: 'PLAIN' | 'LOGIN'
+  tls: boolean
+  localName: string
+  senderName: string
+  senderAddress: string
+}
+
+export type PublicOperatorSMTPSettings = Omit<OperatorSMTPSettings, 'password'> & {
+  hasPassword: boolean
+}
+
+export type PublicOperatorSettings = Omit<OperatorSettings, 'backupS3' | 'smtp'> & {
   backupS3: PublicOperatorBackupS3Settings
+  smtp: PublicOperatorSMTPSettings
 }
 
 export const OPERATOR_SETTINGS_NAME = 'operator_settings'
@@ -54,6 +73,15 @@ const envString = (name: string, fallback = '') => {
   return `${process.env[name] || osValue || fallback}`
 }
 
+const currentPocketBaseSettings = () => {
+  try {
+    if (typeof $app === 'undefined') return null
+    return $app.settings()
+  } catch {
+    return null
+  }
+}
+
 export const normalizeServerTimezone = (value: unknown, fallback = DEFAULT_SERVER_TIMEZONE) => {
   const raw = `${value || ''}`.trim()
   if (!raw) return fallback
@@ -72,6 +100,17 @@ const normalizeBackupS3Prefix = (value: unknown, fallback = DEFAULT_BACKUP_S3_PR
     .replace(/^\/+|\/+$/g, '')
     .replace(/\/{2,}/g, '/')
   return raw || DEFAULT_BACKUP_S3_PREFIX
+}
+
+const normalizeSMTPAuthMethod = (value: unknown): OperatorSMTPSettings['authMethod'] => {
+  const raw = `${value || ''}`.trim().toUpperCase()
+  return raw === 'LOGIN' ? 'LOGIN' : 'PLAIN'
+}
+
+const normalizeSMTPPort = (value: unknown, fallback = 587) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.max(1, Math.min(65535, Math.floor(numeric)))
 }
 
 const defaultBackupS3Settings = (): OperatorBackupS3Settings => ({
@@ -98,13 +137,55 @@ export const normalizeBackupS3Settings = (value?: Partial<OperatorBackupS3Settin
   }
 }
 
+const defaultSMTPSettings = (): OperatorSMTPSettings => {
+  const pocketBaseSettings = currentPocketBaseSettings()
+  const smtp = pocketBaseSettings?.smtp
+  const meta = pocketBaseSettings?.meta
+  const senderAddress = envString('SMTP_SENDER_ADDRESS', meta?.senderAddress || envString('PH_SUPPORT_EMAIL'))
+
+  return {
+    enabled: envBoolean('SMTP_ENABLED', smtp?.enabled ?? false),
+    host: normalizeText(envString('SMTP_HOST', smtp?.host || ''), '', 255),
+    port: normalizeSMTPPort(envString('SMTP_PORT'), smtp?.port || 587),
+    username: normalizeText(envString('SMTP_USERNAME', smtp?.username || ''), '', 255),
+    password: normalizeText(envString('SMTP_PASSWORD', smtp?.password || ''), '', 1024),
+    authMethod: normalizeSMTPAuthMethod(envString('SMTP_AUTH_METHOD', smtp?.authMethod || 'PLAIN')),
+    tls: envBoolean('SMTP_TLS', smtp?.tls ?? false),
+    localName: normalizeText(envString('SMTP_LOCAL_NAME', smtp?.localName || ''), '', 255),
+    senderName: normalizeText(envString('SMTP_SENDER_NAME', meta?.senderName || 'Gestion PocketBase'), '', 255),
+    senderAddress: normalizeText(senderAddress, '', 255),
+  }
+}
+
+export const normalizeSMTPSettings = (value?: Partial<OperatorSMTPSettings>): OperatorSMTPSettings => {
+  const defaults = defaultSMTPSettings()
+
+  return {
+    enabled: !!value?.enabled,
+    host: normalizeText(value?.host, defaults.host, 255),
+    port: normalizeSMTPPort(value?.port, defaults.port),
+    username: normalizeText(value?.username, defaults.username, 255),
+    password: normalizeText(value?.password, defaults.password, 1024),
+    authMethod: normalizeSMTPAuthMethod(value?.authMethod || defaults.authMethod),
+    tls: !!(value?.tls ?? defaults.tls),
+    localName: normalizeText(value?.localName, defaults.localName, 255),
+    senderName: normalizeText(value?.senderName, defaults.senderName, 255),
+    senderAddress: normalizeText(value?.senderAddress, defaults.senderAddress, 255),
+  }
+}
+
 export const serializeOperatorSettings = (settings: OperatorSettings): PublicOperatorSettings => {
   const { secretAccessKey, ...backupS3 } = settings.backupS3
+  const { password, ...smtp } = settings.smtp
   return {
     ...settings,
     backupS3: {
       ...backupS3,
       hasSecretAccessKey: !!secretAccessKey,
+    },
+    smtp: {
+      ...smtp,
+      hasPassword: !!password,
     },
   }
 }
@@ -118,6 +199,7 @@ export const defaultOperatorSettings = (): OperatorSettings => {
     defaultSubscription: 'free',
     serverTimezone: normalizeServerTimezone(envString('PH_SERVER_TIMEZONE', DEFAULT_SERVER_TIMEZONE)),
     backupS3: defaultBackupS3Settings(),
+    smtp: defaultSMTPSettings(),
     defaultInstancePower: true,
     defaultInstanceDevMode: false,
     defaultSyncAdmin: true,
@@ -146,7 +228,10 @@ export const readOperatorSettings = (app: core.App = $app): OperatorSettings => 
   const defaults = defaultOperatorSettings()
   try {
     const record = app.findFirstRecordByData('settings', 'name', OPERATOR_SETTINGS_NAME)
-    return normalizeOperatorSettings({ ...defaults, ...parseSettingsValue(record.getString('value') || record.get('value')) })
+    return normalizeOperatorSettings({
+      ...defaults,
+      ...parseSettingsValue(record.getString('value') || record.get('value')),
+    })
   } catch {
     return defaults
   }
@@ -167,7 +252,32 @@ export const writeOperatorSettings = (settings: OperatorSettings, app: core.App 
 
   record.set('value', JSON.stringify(normalized))
   app.save(record)
+  applyOperatorMailSettings(normalized, app)
   return normalized
+}
+
+export const applyOperatorMailSettings = (settings: OperatorSettings, app: core.App = $app) => {
+  const normalized = normalizeOperatorSettings(settings)
+  const appSettings = app.settings()
+
+  appSettings.smtp = {
+    ...appSettings.smtp,
+    enabled: normalized.smtp.enabled,
+    host: normalized.smtp.host,
+    port: normalized.smtp.port,
+    username: normalized.smtp.username,
+    password: normalized.smtp.password,
+    authMethod: normalized.smtp.authMethod,
+    tls: normalized.smtp.tls,
+    localName: normalized.smtp.localName,
+  }
+  appSettings.meta = {
+    ...appSettings.meta,
+    senderName: normalized.smtp.senderName || appSettings.meta.senderName,
+    senderAddress: normalized.smtp.senderAddress || appSettings.meta.senderAddress,
+  }
+
+  app.save(appSettings)
 }
 
 export const normalizeOperatorSettings = (value: Partial<OperatorSettings>): OperatorSettings => {
@@ -183,6 +293,7 @@ export const normalizeOperatorSettings = (value: Partial<OperatorSettings>): Ope
       : defaults.defaultSubscription,
     serverTimezone: normalizeServerTimezone(value.serverTimezone, defaults.serverTimezone),
     backupS3: normalizeBackupS3Settings(value.backupS3 || defaults.backupS3),
+    smtp: normalizeSMTPSettings(value.smtp || defaults.smtp),
     defaultInstancePower: value.defaultInstancePower ?? defaults.defaultInstancePower,
     defaultInstanceDevMode: value.defaultInstanceDevMode ?? defaults.defaultInstanceDevMode,
     defaultSyncAdmin: value.defaultSyncAdmin ?? defaults.defaultSyncAdmin,

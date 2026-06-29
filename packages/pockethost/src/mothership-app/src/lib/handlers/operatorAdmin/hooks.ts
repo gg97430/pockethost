@@ -44,6 +44,15 @@ routerAdd(
 )
 
 routerAdd(
+  'POST',
+  '/api/admin/settings/smtp/test',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleOperatorAdminTestSMTP(e)
+  },
+  $apis.requireAuth()
+)
+
+routerAdd(
   'GET',
   '/api/admin/disk-cleanup',
   (e) => {

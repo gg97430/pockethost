@@ -523,6 +523,33 @@ Installer aussi l'AWS CLI:
 sudo apt install -y awscli
 ```
 
+Pour configurer l'envoi d'emails, utiliser l'interface:
+
+1. Aller dans `Administration`.
+2. Ouvrir `SMTP des emails`.
+3. Renseigner hote, port, expediteur, utilisateur, mot de passe et methode d'auth.
+4. Cliquer `Tester SMTP` avec une adresse de test.
+5. Cliquer `Enregistrer`.
+
+Le test SMTP enregistre la configuration avant l'envoi. Le mot de passe n'est pas renvoye au navigateur; laisser le
+champ vide conserve le mot de passe deja enregistre.
+
+Les variables `.env` ci-dessous restent supportees comme fallback d'initialisation si aucun parametrage n'est encore
+enregistre dans l'interface:
+
+```env
+SMTP_ENABLED=true
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=...
+SMTP_PASSWORD=...
+SMTP_AUTH_METHOD=PLAIN
+SMTP_TLS=false
+SMTP_LOCAL_NAME=monappli.re
+SMTP_SENDER_NAME=Gestion PocketBase
+SMTP_SENDER_ADDRESS=no-reply@monappli.re
+```
+
 Redemarrer `mothership` seulement apres installation de l'AWS CLI ou modification du fallback `.env`. Une modification
 faite depuis l'interface est prise en compte sans redemarrage.
 

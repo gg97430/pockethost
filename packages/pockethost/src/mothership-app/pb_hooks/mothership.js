@@ -60,7 +60,13 @@ const getLiveViewStats = () => {
 	return getAppStoreJson(LIVE_VIEW_STATS_STORE_KEY);
 };
 const refreshLiveViewStats = () => {
-	const record = $app.findFirstRecordByFilter("stats", "id != \"\"");
+	const record = (() => {
+		try {
+			return $app.findFirstRecordByFilter("stats", "id != \"\"");
+		} catch {
+			return null;
+		}
+	})();
 	if (!record) return null;
 	const stats = readStatsViewRecord(record);
 	setAppStoreJson(LIVE_VIEW_STATS_STORE_KEY, stats);

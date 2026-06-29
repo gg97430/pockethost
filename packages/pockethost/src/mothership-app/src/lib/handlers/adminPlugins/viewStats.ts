@@ -68,7 +68,13 @@ export const getLiveViewStats = (): LiveViewStats | null => {
 }
 
 export const refreshLiveViewStats = (): LiveViewStats | null => {
-  const record = $app.findFirstRecordByFilter('stats', 'id != ""')
+  const record = (() => {
+    try {
+      return $app.findFirstRecordByFilter('stats', 'id != ""')
+    } catch {
+      return null
+    }
+  })()
   if (!record) return null
 
   const stats = readStatsViewRecord(record)

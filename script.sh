@@ -512,6 +512,67 @@ wait_for_mothership() {
   die "La mothership ne repond pas. Consulte: sudo -u ${INSTALL_USER} pm2 logs mothership"
 }
 
+matches_pocketbase_range() {
+  local version="${1#v}"
+  local range="${2#v}"
+  local prefix
+
+  if [[ "${range}" == *"*" ]]; then
+    prefix="${range%\*}"
+    [[ "${version}" == "${prefix}"* ]]
+    return
+  fi
+
+  if [[ "${range}" == *".x" ]]; then
+    prefix="${range%.x}."
+    [[ "${version}" == "${prefix}"* ]]
+    return
+  fi
+
+  [[ "${version}" == "${range}" ]]
+}
+
+resolve_mothership_pocketbase_binary() {
+  local root="${PH_HOME}/pocketbase"
+  local candidate version
+
+  [[ -d "${root}" ]] || return 1
+
+  while IFS= read -r candidate; do
+    version="$(basename "$(dirname "$(dirname "${candidate}")")")"
+    if matches_pocketbase_range "${version}" "${MOTHERSHIP_SEMVER}"; then
+      printf '%s %s\n' "${version}" "${candidate}"
+    fi
+  done < <(find "${root}" -mindepth 3 -maxdepth 3 -type f -name pocketbase 2>/dev/null) |
+    sort -Vr |
+    head -n 1 |
+    cut -d' ' -f2-
+}
+
+pb_upsert_superuser_cli() {
+  local bin
+  bin="$(resolve_mothership_pocketbase_binary || true)"
+  [[ -n "${bin}" ]] || die "Aucun binaire PocketBase local ne correspond a ${MOTHERSHIP_SEMVER}. Relance avec PRELOAD_POCKETBASE=1."
+
+  log "Creation/mise a jour du superuser PocketBase via CLI"
+
+  if bool_enabled "${START_PM2}"; then
+    run_as_install_user "pm2 stop mothership >/dev/null 2>&1 || true"
+  fi
+
+  if ! run_as_install_user "cd $(q "${INSTALL_DIR}") && PH_SECRET=$(q "${PH_SECRET}") $(q "${bin}") --dir $(q "${DATA_ROOT}/mothership/pb_data") --encryptionEnv PH_SECRET superuser upsert $(q "${ADMIN_EMAIL}") $(q "${ADMIN_PASSWORD}")"; then
+    if bool_enabled "${START_PM2}"; then
+      run_as_install_user "pm2 restart mothership >/dev/null 2>&1 || true"
+    fi
+    die "Impossible de creer/mettre a jour le superuser PocketBase ${ADMIN_EMAIL}"
+  fi
+
+  if bool_enabled "${START_PM2}"; then
+    run_as_install_user "pm2 restart mothership >/dev/null"
+    wait_for_mothership
+  fi
+}
+
 pb_auth_superuser() {
   local base="$1"
   local payload response token
@@ -557,8 +618,7 @@ ensure_superuser_token() {
     return
   fi
 
-  log "Creation du superuser PocketBase initial"
-  pb_create_superuser "${base}"
+  pb_upsert_superuser_cli
 
   for _ in $(seq 1 30); do
     token="$(pb_auth_superuser "${base}")"

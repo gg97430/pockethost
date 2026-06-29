@@ -13,6 +13,38 @@ L'architecture actuelle est volontairement simple:
 - le daemon d'instances ecoute sur `3000`;
 - les donnees sont sous `/home/ubuntu/.local/share/pockethost`.
 
+## 0. Installation automatique
+
+Le script `script.sh` installe un serveur Ubuntu neuf: paquets systeme, Docker, Node 24, pnpm, PM2, Litestream, firewall UFW, variables d'environnement, build du projet, demarrage PM2 et creation du premier compte superadmin.
+
+Sur le serveur:
+
+```bash
+git clone -b self-host-install-fixes https://github.com/gg97430/pockethost.git /home/ubuntu/pockethost
+cd /home/ubuntu/pockethost
+DOMAIN=monappli.re \
+SERVER_IP=141.94.92.92 \
+ADMIN_EMAIL=admin@monappli.re \
+ADMIN_PASSWORD='mot-de-passe-fort' \
+TLS_CERT_PATH=/root/tls.cert \
+TLS_KEY_PATH=/root/tls.key \
+bash script.sh
+```
+
+Sans certificat deja copie sur le serveur, tu peux fournir le certificat Cloudflare Origin en base64:
+
+```bash
+TLS_CERT_B64="$(base64 -w0 tls.cert)" \
+TLS_KEY_B64="$(base64 -w0 tls.key)" \
+DOMAIN=monappli.re \
+SERVER_IP=141.94.92.92 \
+ADMIN_EMAIL=admin@monappli.re \
+ADMIN_PASSWORD='mot-de-passe-fort' \
+bash script.sh
+```
+
+Le script n'ecrase pas un `.env` existant. Pour regenerer la configuration, ajouter `FORCE_ENV=1`.
+
 ## 1. Prerequis
 
 - VPS Ubuntu 24.04 ou 26.04.

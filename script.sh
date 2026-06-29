@@ -247,7 +247,7 @@ install_node() {
 }
 
 install_litestream() {
-  bool_enabled "${INSTALL_LITESTREAM}" || return
+  bool_enabled "${INSTALL_LITESTREAM}" || return 0
   if command -v litestream >/dev/null 2>&1; then
     log "Litestream deja installe"
     return
@@ -508,7 +508,7 @@ install_project_dependencies() {
 }
 
 build_project() {
-  bool_enabled "${RUN_BUILD}" || return
+  bool_enabled "${RUN_BUILD}" || return 0
 
   if bool_enabled "${RUN_TYPECHECK}"; then
     log "Verification TypeScript"
@@ -523,14 +523,14 @@ build_project() {
 }
 
 preload_pocketbase_binaries() {
-  bool_enabled "${PRELOAD_POCKETBASE}" || return
+  bool_enabled "${PRELOAD_POCKETBASE}" || return 0
 
   log "Telechargement des binaires PocketBase"
   run_as_install_user "cd $(q "${INSTALL_DIR}") && pnpm prod:cli pocketbase update"
 }
 
 start_pm2_stack() {
-  bool_enabled "${START_PM2}" || return
+  bool_enabled "${START_PM2}" || return 0
 
   log "Demarrage PM2"
   run_as_install_user "cd $(q "${INSTALL_DIR}") && pm2 delete firewall dashboard edge-daemon edge-ftp edge-sftp mothership pocketbase-update health-check edge-vacuum edge-purge-orphans >/dev/null 2>&1 || true"
@@ -543,7 +543,7 @@ start_pm2_stack() {
 }
 
 wait_for_mothership() {
-  bool_enabled "${START_PM2}" || return
+  bool_enabled "${START_PM2}" || return 0
   local url="http://127.0.0.1:${MOTHERSHIP_PORT}/api/health"
   log "Attente de la mothership (${url})"
 
@@ -678,8 +678,8 @@ ensure_superuser_token() {
 }
 
 ensure_dashboard_admin() {
-  bool_enabled "${BOOTSTRAP_ADMIN_USER}" || return
-  bool_enabled "${START_PM2}" || return
+  bool_enabled "${BOOTSTRAP_ADMIN_USER}" || return 0
+  bool_enabled "${START_PM2}" || return 0
 
   [[ "${DEFAULT_USER_QUOTA}" =~ ^[0-9]+$ ]] || die "DEFAULT_USER_QUOTA doit etre un entier"
 

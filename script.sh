@@ -136,6 +136,7 @@ PNPM_VERSION="${PNPM_VERSION:-11.6.0}"
 FORCE_ENV="${FORCE_ENV:-0}"
 RUN_APT_UPGRADE="${RUN_APT_UPGRADE:-0}"
 RUN_BUILD="${RUN_BUILD:-1}"
+BUILD_INSTANCE_IMAGE="${BUILD_INSTANCE_IMAGE:-1}"
 RUN_TYPECHECK="${RUN_TYPECHECK:-1}"
 PRELOAD_POCKETBASE="${PRELOAD_POCKETBASE:-1}"
 START_PM2="${START_PM2:-1}"
@@ -522,6 +523,13 @@ build_project() {
   run_as_install_user "cd $(q "${INSTALL_DIR}") && pnpm --filter @pockethost/dashboard build"
 }
 
+build_instance_image() {
+  bool_enabled "${BUILD_INSTANCE_IMAGE}" || return 0
+
+  log "Build image Docker des instances"
+  run_as_install_user "cd $(q "${INSTALL_DIR}") && pnpm --filter pockethost-instance build"
+}
+
 preload_pocketbase_binaries() {
   bool_enabled "${PRELOAD_POCKETBASE}" || return 0
 
@@ -742,7 +750,7 @@ Fichiers importants:
 Commandes utiles:
   sudo -u ${INSTALL_USER} pm2 status
   sudo -u ${INSTALL_USER} pm2 logs
-  sudo -u ${INSTALL_USER} bash -lc 'cd ${INSTALL_DIR} && git pull --ff-only && pnpm install --frozen-lockfile && pnpm --filter pockethost-mothership-app build && pnpm --filter @pockethost/dashboard build && pm2 restart all'
+  sudo -u ${INSTALL_USER} bash -lc 'cd ${INSTALL_DIR} && git pull --ff-only && pnpm install --frozen-lockfile && pnpm --filter pockethost-mothership-app build && pnpm --filter @pockethost/dashboard build && pnpm --filter pockethost-instance build && pm2 restart all'
 
 DNS requis:
   A ${APP_HOST} ${SERVER_IP}
@@ -773,6 +781,7 @@ main() {
   write_credentials_note
   install_project_dependencies
   build_project
+  build_instance_image
   preload_pocketbase_binaries
   start_pm2_stack
   wait_for_mothership

@@ -35,6 +35,15 @@ routerAdd(
 )
 
 routerAdd(
+  'POST',
+  '/api/admin/settings/backup-s3/test',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleOperatorAdminTestBackupS3(e)
+  },
+  $apis.requireAuth()
+)
+
+routerAdd(
   'GET',
   '/api/admin/disk-cleanup',
   (e) => {

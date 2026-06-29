@@ -4,6 +4,7 @@ export type OperatorSettings = {
   defaultUserQuota: number
   defaultSubscription: 'free' | 'premium' | 'founder' | 'flounder' | 'legacy'
   serverTimezone: string
+  backupS3: OperatorBackupS3Settings
   defaultInstancePower: boolean
   defaultInstanceDevMode: boolean
   defaultSyncAdmin: boolean
@@ -13,19 +14,44 @@ export type OperatorSettings = {
   notes: string
 }
 
+export type OperatorBackupS3Settings = {
+  enabled: boolean
+  endpoint: string
+  bucket: string
+  prefix: string
+  region: string
+  accessKeyId: string
+  secretAccessKey: string
+}
+
+export type PublicOperatorBackupS3Settings = Omit<OperatorBackupS3Settings, 'secretAccessKey'> & {
+  hasSecretAccessKey: boolean
+}
+
+export type PublicOperatorSettings = Omit<OperatorSettings, 'backupS3'> & {
+  backupS3: PublicOperatorBackupS3Settings
+}
+
 export const OPERATOR_SETTINGS_NAME = 'operator_settings'
 export const DEFAULT_SERVER_TIMEZONE = 'Indian/Reunion'
+export const DEFAULT_BACKUP_S3_PREFIX = 'instances'
+export const DEFAULT_BACKUP_S3_REGION = 'auto'
 
 const envBoolean = (name: string, fallback: boolean) => {
-  const raw = `${process.env[name] || ''}`.trim().toLowerCase()
+  const raw = envString(name).trim().toLowerCase()
   if (!raw) return fallback
   return ['1', 'true', 'yes', 'on'].includes(raw)
 }
 
 const envNumber = (name: string, fallback: number) => {
-  const value = Number(process.env[name] || '')
+  const value = Number(envString(name))
   if (!Number.isFinite(value) || value < 0) return fallback
   return value
+}
+
+const envString = (name: string, fallback = '') => {
+  const osValue = typeof $os === 'undefined' ? '' : $os.getenv(name)
+  return `${process.env[name] || osValue || fallback}`
 }
 
 export const normalizeServerTimezone = (value: unknown, fallback = DEFAULT_SERVER_TIMEZONE) => {
@@ -36,6 +62,53 @@ export const normalizeServerTimezone = (value: unknown, fallback = DEFAULT_SERVE
   return fallback
 }
 
+const normalizeText = (value: unknown, fallback = '', max = 500) => {
+  const raw = value === undefined || value === null ? fallback : value
+  return `${raw || ''}`.trim().slice(0, max)
+}
+
+const normalizeBackupS3Prefix = (value: unknown, fallback = DEFAULT_BACKUP_S3_PREFIX) => {
+  const raw = normalizeText(value, fallback, 500)
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/\/{2,}/g, '/')
+  return raw || DEFAULT_BACKUP_S3_PREFIX
+}
+
+const defaultBackupS3Settings = (): OperatorBackupS3Settings => ({
+  enabled: envBoolean('INSTANCE_BACKUP_S3_ENABLED', false),
+  endpoint: normalizeText(envString('INSTANCE_BACKUP_S3_ENDPOINT'), '', 500),
+  bucket: normalizeText(envString('INSTANCE_BACKUP_S3_BUCKET'), '', 255),
+  prefix: normalizeBackupS3Prefix(envString('INSTANCE_BACKUP_S3_PREFIX'), DEFAULT_BACKUP_S3_PREFIX),
+  region: normalizeText(envString('AWS_DEFAULT_REGION'), DEFAULT_BACKUP_S3_REGION, 64) || DEFAULT_BACKUP_S3_REGION,
+  accessKeyId: normalizeText(envString('AWS_ACCESS_KEY_ID'), '', 255),
+  secretAccessKey: normalizeText(envString('AWS_SECRET_ACCESS_KEY'), '', 1024),
+})
+
+export const normalizeBackupS3Settings = (value?: Partial<OperatorBackupS3Settings>): OperatorBackupS3Settings => {
+  const defaults = defaultBackupS3Settings()
+
+  return {
+    enabled: !!value?.enabled,
+    endpoint: normalizeText(value?.endpoint, defaults.endpoint, 500),
+    bucket: normalizeText(value?.bucket, defaults.bucket, 255),
+    prefix: normalizeBackupS3Prefix(value?.prefix, defaults.prefix),
+    region: normalizeText(value?.region, defaults.region, 64) || DEFAULT_BACKUP_S3_REGION,
+    accessKeyId: normalizeText(value?.accessKeyId, defaults.accessKeyId, 255),
+    secretAccessKey: normalizeText(value?.secretAccessKey, defaults.secretAccessKey, 1024),
+  }
+}
+
+export const serializeOperatorSettings = (settings: OperatorSettings): PublicOperatorSettings => {
+  const { secretAccessKey, ...backupS3 } = settings.backupS3
+  return {
+    ...settings,
+    backupS3: {
+      ...backupS3,
+      hasSecretAccessKey: !!secretAccessKey,
+    },
+  }
+}
+
 export const defaultOperatorSettings = (): OperatorSettings => {
   const autoVerifyUsers = envBoolean('PH_AUTO_VERIFY_SIGNUPS', true)
   return {
@@ -43,12 +116,13 @@ export const defaultOperatorSettings = (): OperatorSettings => {
     autoVerifyUsers,
     defaultUserQuota: envNumber('PH_SIGNUP_SUBSCRIPTION_QUANTITY', autoVerifyUsers ? 250 : 0),
     defaultSubscription: 'free',
-    serverTimezone: normalizeServerTimezone(process.env.PH_SERVER_TIMEZONE || DEFAULT_SERVER_TIMEZONE),
+    serverTimezone: normalizeServerTimezone(envString('PH_SERVER_TIMEZONE', DEFAULT_SERVER_TIMEZONE)),
+    backupS3: defaultBackupS3Settings(),
     defaultInstancePower: true,
     defaultInstanceDevMode: false,
     defaultSyncAdmin: true,
     defaultAutoVacuum: true,
-    supportEmail: process.env.PH_SUPPORT_EMAIL || '',
+    supportEmail: envString('PH_SUPPORT_EMAIL'),
     maintenanceMessage: '',
     notes: '',
   }
@@ -108,6 +182,7 @@ export const normalizeOperatorSettings = (value: Partial<OperatorSettings>): Ope
       ? (defaultSubscription as OperatorSettings['defaultSubscription'])
       : defaults.defaultSubscription,
     serverTimezone: normalizeServerTimezone(value.serverTimezone, defaults.serverTimezone),
+    backupS3: normalizeBackupS3Settings(value.backupS3 || defaults.backupS3),
     defaultInstancePower: value.defaultInstancePower ?? defaults.defaultInstancePower,
     defaultInstanceDevMode: value.defaultInstanceDevMode ?? defaults.defaultInstanceDevMode,
     defaultSyncAdmin: value.defaultSyncAdmin ?? defaults.defaultSyncAdmin,

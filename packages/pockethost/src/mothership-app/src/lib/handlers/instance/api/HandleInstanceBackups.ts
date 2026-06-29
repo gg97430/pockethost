@@ -796,20 +796,34 @@ const sha256 = (path: string) => {
   return output.split(/\s+/)[0] || ''
 }
 
-const s3Config = () => {
-  const enabled = ($os.getenv('INSTANCE_BACKUP_S3_ENABLED') || '').toLowerCase() === 'true'
-  if (!enabled) return null
+const s3Config = (settings = readOperatorSettings()) => {
+  const config = settings.backupS3
+  if (!config.enabled) return null
 
-  const endpoint = $os.getenv('INSTANCE_BACKUP_S3_ENDPOINT')
-  const bucket = $os.getenv('INSTANCE_BACKUP_S3_BUCKET')
-  const prefix = ($os.getenv('INSTANCE_BACKUP_S3_PREFIX') || 'instances').replace(/^\/+|\/+$/g, '')
-  const region = $os.getenv('AWS_DEFAULT_REGION') || 'auto'
-
-  if (!endpoint || !bucket) {
-    throw new Error('Configuration R2/S3 incomplete: endpoint et bucket requis.')
+  if (!config.endpoint || !config.bucket || !config.accessKeyId || !config.secretAccessKey) {
+    throw new Error('Configuration R2/S3 incomplete: endpoint, bucket, access key et secret key requis.')
   }
 
-  return { endpoint, bucket, prefix, region }
+  return {
+    endpoint: config.endpoint,
+    bucket: config.bucket,
+    prefix: config.prefix || 'instances',
+    region: config.region || 'auto',
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+  }
+}
+
+const runAwsS3Command = (config: NonNullable<ReturnType<typeof s3Config>>, ...args: string[]) => {
+  if (!commandExists('aws')) throw new Error("AWS CLI n'est pas installe sur ce serveur.")
+  return runCommand(
+    'env',
+    `AWS_ACCESS_KEY_ID=${config.accessKeyId}`,
+    `AWS_SECRET_ACCESS_KEY=${config.secretAccessKey}`,
+    `AWS_DEFAULT_REGION=${config.region}`,
+    'aws',
+    ...args
+  )
 }
 
 const remoteKeyFor = (instanceId: string, filename: string) => {
@@ -823,8 +837,8 @@ const uploadBackupToS3 = (instanceId: string, filename: string, localPath: strin
   if (!config) return ''
 
   const remoteKey = remoteKeyFor(instanceId, filename)
-  runCommand(
-    'aws',
+  runAwsS3Command(
+    config,
     's3',
     'cp',
     localPath,
@@ -841,8 +855,8 @@ const downloadBackupFromS3 = (remoteKey: string, localPath: string) => {
   const config = s3Config()
   if (!config) throw new Error('La sauvegarde locale est absente et R2/S3 est desactive.')
 
-  runCommand(
-    'aws',
+  runAwsS3Command(
+    config,
     's3',
     'cp',
     `s3://${config.bucket}/${remoteKey}`,
@@ -858,8 +872,8 @@ const deleteBackupFromS3 = (remoteKey: string) => {
   const config = s3Config()
   if (!config || !remoteKey) return ''
 
-  return runCommand(
-    'aws',
+  return runAwsS3Command(
+    config,
     's3',
     'rm',
     `s3://${config.bucket}/${remoteKey}`,
@@ -1700,9 +1714,33 @@ const backupPolicyCronName = (policyId: string) => `instance-backup-policy-${pol
 
 const s3BackupsAvailable = () => {
   try {
-    return !!s3Config()
+    return !!s3Config() && commandExists('aws')
   } catch {
     return false
+  }
+}
+
+export const TestBackupS3Config = (settings = readOperatorSettings()) => {
+  const config = s3Config(settings)
+  if (!config) throw new BadRequestError('S3/R2 est desactive.')
+
+  runAwsS3Command(
+    config,
+    's3api',
+    'head-bucket',
+    '--bucket',
+    config.bucket,
+    '--endpoint-url',
+    config.endpoint,
+    '--region',
+    config.region
+  )
+
+  return {
+    ok: true,
+    bucket: config.bucket,
+    endpoint: config.endpoint,
+    prefix: config.prefix,
   }
 }
 

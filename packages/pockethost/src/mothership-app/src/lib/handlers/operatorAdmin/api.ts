@@ -1,8 +1,14 @@
 import { mkLog } from '$util/Logger'
-import { ReconcileBackupPolicyCrons } from '../instance/api/HandleInstanceBackups'
+import { ReconcileBackupPolicyCrons, TestBackupS3Config } from '../instance/api/HandleInstanceBackups'
 import { requireOperatorAdmin } from './auth'
 import { scanOrphanInstanceStorage } from './diskCleanup'
-import { normalizeOperatorSettings, readOperatorSettings, writeOperatorSettings } from './operatorSettings'
+import {
+  type OperatorSettings,
+  normalizeOperatorSettings,
+  readOperatorSettings,
+  serializeOperatorSettings,
+  writeOperatorSettings,
+} from './operatorSettings'
 
 const readJsonBody = <T extends Record<string, any>>(e: core.RequestEvent): T => {
   const rawBody = readerToString(e.request.body)
@@ -86,13 +92,30 @@ const ensureValidServerTimezone = (timezoneName: string) => {
   }
 }
 
+const mergeOperatorSettingsInput = (current: OperatorSettings, input: Partial<OperatorSettings>) => {
+  const backupS3 = {
+    ...current.backupS3,
+    ...(input.backupS3 || {}),
+  }
+
+  if (!`${backupS3.secretAccessKey || ''}`.trim()) {
+    backupS3.secretAccessKey = current.backupS3.secretAccessKey
+  }
+
+  return normalizeOperatorSettings({
+    ...current,
+    ...input,
+    backupS3,
+  })
+}
+
 export const HandleOperatorAdminOverview = (e: core.RequestEvent) => {
   requireOperatorAdmin(e)
   const users = listOperatorUsers()
   const totalInstances = $app.countRecords('instances')
 
   return e.json(200, {
-    settings: readOperatorSettings(),
+    settings: serializeOperatorSettings(readOperatorSettings()),
     users,
     stats: {
       totalUsers: users.length,
@@ -197,13 +220,28 @@ export const HandleOperatorAdminUpdateUser = (e: core.RequestEvent) => {
 export const HandleOperatorAdminUpdateSettings = (e: core.RequestEvent) => {
   requireOperatorAdmin(e)
   const current = readOperatorSettings()
-  const body = readJsonBody<Partial<ReturnType<typeof readOperatorSettings>>>(e)
-  const nextSettings = normalizeOperatorSettings({ ...current, ...body })
+  const body = readJsonBody<Partial<OperatorSettings>>(e)
+  const nextSettings = mergeOperatorSettingsInput(current, body)
   ensureValidServerTimezone(nextSettings.serverTimezone)
   const settings = writeOperatorSettings(nextSettings)
   ReconcileBackupPolicyCrons()
 
-  return e.json(200, { settings })
+  return e.json(200, { settings: serializeOperatorSettings(settings) })
+}
+
+export const HandleOperatorAdminTestBackupS3 = (e: core.RequestEvent) => {
+  requireOperatorAdmin(e)
+  const current = readOperatorSettings()
+  const body = readJsonBody<Partial<OperatorSettings>>(e)
+  const settings = mergeOperatorSettingsInput(current, body)
+  const result = TestBackupS3Config(settings)
+
+  return e.json(200, {
+    test: {
+      ...result,
+      message: `Connexion S3/R2 valide pour ${result.bucket}.`,
+    },
+  })
 }
 
 export const HandleOperatorAdminDiskCleanupPreview = (e: core.RequestEvent) => {

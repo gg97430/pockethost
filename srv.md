@@ -496,7 +496,16 @@ Pour changer ce dossier, ajouter dans `.env`:
 INSTANCE_IMPORT_ROOT=/chemin/autorise/imports
 ```
 
-Pour activer un stockage distant S3/R2, ajouter les variables suivantes dans `.env`:
+Pour activer un stockage distant S3/R2 pour les sauvegardes planifiees, utiliser l'interface:
+
+1. Aller dans `Administration`.
+2. Ouvrir `Stockage S3/R2 des sauvegardes`.
+3. Renseigner endpoint, bucket, prefixe, region, access key et secret key.
+4. Cliquer `Tester S3/R2`.
+5. Cliquer `Enregistrer`.
+
+Les variables `.env` ci-dessous restent supportees comme fallback d'initialisation si aucun parametrage n'est encore
+enregistre dans l'interface:
 
 ```env
 INSTANCE_BACKUP_S3_ENABLED=true
@@ -514,7 +523,8 @@ Installer aussi l'AWS CLI:
 sudo apt install -y awscli
 ```
 
-Puis redemarrer `mothership`:
+Redemarrer `mothership` seulement apres installation de l'AWS CLI ou modification du fallback `.env`. Une modification
+faite depuis l'interface est prise en compte sans redemarrage.
 
 ```bash
 pm2 restart mothership

@@ -47,6 +47,7 @@ export type OperatorSettings = {
   defaultUserQuota: number
   defaultSubscription: 'free' | 'premium' | 'founder' | 'flounder' | 'legacy'
   serverTimezone: string
+  backupS3: OperatorBackupS3Settings
   defaultInstancePower: boolean
   defaultInstanceDevMode: boolean
   defaultSyncAdmin: boolean
@@ -54,6 +55,17 @@ export type OperatorSettings = {
   supportEmail: string
   maintenanceMessage: string
   notes: string
+}
+
+export type OperatorBackupS3Settings = {
+  enabled: boolean
+  endpoint: string
+  bucket: string
+  prefix: string
+  region: string
+  accessKeyId: string
+  secretAccessKey?: string
+  hasSecretAccessKey: boolean
 }
 
 export type OperatorUser = {
@@ -795,6 +807,15 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       body: data,
     })
 
+  const testOperatorBackupS3 = (data: OperatorSettings) =>
+    client.send<{ test: { ok: boolean; bucket: string; endpoint: string; prefix: string; message: string } }>(
+      '/api/admin/settings/backup-s3/test',
+      {
+        method: 'POST',
+        body: data,
+      }
+    )
+
   const parseError = (e: Error): string[] => {
     if (!(e instanceof ClientResponseError)) return [`${e}`]
     if (e.data.message && Object.keys(e.data.data).length === 0) return [e.data.message]
@@ -965,6 +986,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     createOperatorUser,
     updateOperatorUser,
     updateOperatorSettings,
+    testOperatorBackupS3,
     resendVerificationEmail,
     updateInstance,
     deleteInstance,

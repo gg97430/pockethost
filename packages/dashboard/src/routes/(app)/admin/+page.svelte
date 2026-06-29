@@ -26,6 +26,7 @@
   let isCreatingUser = false
   let isScanningDisk = false
   let isRunningDiskCleanup = false
+  let isTestingBackupS3 = false
   let savingUserId = ''
   let errorMessage = ''
   let successMessage = ''
@@ -55,10 +56,22 @@
     const target = `${user.email} ${user.username} ${user.suspension}`.toLowerCase()
     return target.includes(searchQuery.toLowerCase())
   })
+  $: backupS3Ready =
+    !!settings?.backupS3.enabled &&
+    !!settings.backupS3.endpoint.trim() &&
+    !!settings.backupS3.bucket.trim() &&
+    !!settings.backupS3.accessKeyId.trim() &&
+    (!!settings.backupS3.secretAccessKey?.trim() || settings.backupS3.hasSecretAccessKey)
 
   const applyOverview = (next: OperatorAdminOverview) => {
     overview = next
-    settings = { ...next.settings }
+    settings = {
+      ...next.settings,
+      backupS3: {
+        ...next.settings.backupS3,
+        secretAccessKey: '',
+      },
+    }
     users = next.users
     userDrafts = Object.fromEntries(users.map((user) => [user.id, toUserDraft(user)]))
     newUser = {
@@ -205,12 +218,31 @@
     isSavingSettings = true
     try {
       const result = await client().updateOperatorSettings(settings)
-      settings = result.settings
+      settings = {
+        ...result.settings,
+        backupS3: {
+          ...result.settings.backupS3,
+          secretAccessKey: '',
+        },
+      }
       showSuccess('Parametres enregistres.')
     } catch (error) {
       showError(error)
     } finally {
       isSavingSettings = false
+    }
+  }
+
+  async function testBackupS3() {
+    if (!settings) return
+    isTestingBackupS3 = true
+    try {
+      const result = await client().testOperatorBackupS3(settings)
+      showSuccess(result.test.message || 'Connexion S3/R2 valide.')
+    } catch (error) {
+      showError(error)
+    } finally {
+      isTestingBackupS3 = false
     }
   }
 </script>
@@ -356,6 +388,78 @@
             <option value="UTC"></option>
           </datalist>
         </label>
+        <div class="admin-s3-box">
+          <div class="admin-s3-head">
+            <div>
+              <h3>Stockage S3/R2 des sauvegardes</h3>
+              <p>Destination globale utilisee par les sauvegardes planifiees quand S3/R2 est coche.</p>
+            </div>
+            <span class:ready={backupS3Ready} class="admin-s3-status">
+              {backupS3Ready ? 'Pret' : 'Incomplet'}
+            </span>
+          </div>
+          <label class="admin-inline-check admin-s3-toggle">
+            <input type="checkbox" bind:checked={settings.backupS3.enabled} />
+            Activer S3/R2 pour les sauvegardes planifiees
+          </label>
+          <div class="admin-form-row">
+            <label>
+              Endpoint
+              <input
+                type="url"
+                bind:value={settings.backupS3.endpoint}
+                placeholder="https://<account-id>.r2.cloudflarestorage.com"
+              />
+            </label>
+            <label>
+              Bucket
+              <input type="text" bind:value={settings.backupS3.bucket} placeholder="mon-bucket" />
+            </label>
+          </div>
+          <div class="admin-form-row">
+            <label>
+              Prefixe
+              <input type="text" bind:value={settings.backupS3.prefix} placeholder="instances" />
+              <span class="admin-field-help">Chemin de base. Exemple final: prefixe/instance/archive.tar.gz.</span>
+            </label>
+            <label>
+              Region
+              <input type="text" bind:value={settings.backupS3.region} placeholder="auto" />
+              <span class="admin-field-help">Pour Cloudflare R2, gardez generalement auto.</span>
+            </label>
+          </div>
+          <div class="admin-form-row">
+            <label>
+              Access key ID
+              <input type="text" bind:value={settings.backupS3.accessKeyId} autocomplete="off" />
+            </label>
+            <label>
+              Secret access key
+              <input
+                type="password"
+                bind:value={settings.backupS3.secretAccessKey}
+                autocomplete="new-password"
+                placeholder={settings.backupS3.hasSecretAccessKey ? 'Deja enregistree' : 'Secret access key'}
+              />
+              <span class="admin-field-help">
+                {settings.backupS3.hasSecretAccessKey
+                  ? 'Laissez vide pour conserver la cle existante.'
+                  : 'Requise pour activer S3/R2.'}
+              </span>
+            </label>
+          </div>
+          <div class="admin-s3-actions">
+            <button
+              class="admin-secondary-btn"
+              type="button"
+              onclick={testBackupS3}
+              disabled={isTestingBackupS3 || isSavingSettings || !settings.backupS3.enabled}
+            >
+              <wa-icon name={isTestingBackupS3 ? 'rotate' : 'plug-circle-check'}></wa-icon>
+              {isTestingBackupS3 ? 'Test...' : 'Tester S3/R2'}
+            </button>
+          </div>
+        </div>
         <label>
           Email support
           <input type="email" bind:value={settings.supportEmail} placeholder="support@monappli.re" />
@@ -700,6 +804,13 @@
     font-weight: 750;
   }
 
+  .admin-panel h3 {
+    margin: 0;
+    color: var(--app-text-strong);
+    font-size: 0.95rem;
+    font-weight: 750;
+  }
+
   .admin-panel label {
     display: grid;
     gap: 0.35rem;
@@ -738,6 +849,59 @@
     font-size: 0.72rem;
     font-weight: 600;
     line-height: 1.35;
+  }
+
+  .admin-s3-box {
+    display: grid;
+    gap: 0.8rem;
+    padding: 0.85rem;
+    border: 1px solid var(--app-border);
+    border-radius: 0.5rem;
+    background: var(--app-surface-soft);
+  }
+
+  .admin-s3-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .admin-s3-head p {
+    margin: 0.25rem 0 0;
+    color: var(--app-text-muted);
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+
+  .admin-s3-status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.65rem;
+    padding: 0 0.65rem;
+    border: 1px solid rgb(234 179 8 / 0.35);
+    border-radius: 999px;
+    background: rgb(234 179 8 / 0.1);
+    color: #f59e0b;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .admin-s3-status.ready {
+    border-color: rgb(30 184 84 / 0.35);
+    background: rgb(30 184 84 / 0.12);
+    color: #1eb854;
+  }
+
+  .admin-s3-toggle {
+    margin: 0;
+  }
+
+  .admin-s3-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
   .admin-create,

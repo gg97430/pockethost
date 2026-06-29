@@ -12,6 +12,8 @@ export type {
   InstanceOverview,
   InstanceOverviewBackup,
   OperatorAdminOverview,
+  OperatorDiskCleanupEntry,
+  OperatorDiskCleanupResult,
   OperatorSettings,
   OperatorUser,
   UpdateInstanceBackupPolicyInput,

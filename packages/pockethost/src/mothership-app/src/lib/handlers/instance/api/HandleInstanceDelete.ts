@@ -1,4 +1,5 @@
 import { mkLog } from '$util/Logger'
+import { removeInstanceLocalStorage } from '../../operatorAdmin/diskCleanup'
 
 export const HandleInstanceDelete = (e: core.RequestEvent) => {
   const log = mkLog(`DELETE:instance`)
@@ -43,6 +44,7 @@ export const HandleInstanceDelete = (e: core.RequestEvent) => {
   }
 
   $app.delete(record)
+  const cleanup = removeInstanceLocalStorage(id)
 
-  return e.json(200, { status: 'ok' })
+  return e.json(200, { status: 'ok', cleanup })
 }

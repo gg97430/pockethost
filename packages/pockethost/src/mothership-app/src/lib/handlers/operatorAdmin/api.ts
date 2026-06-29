@@ -1,6 +1,7 @@
 import { mkLog } from '$util/Logger'
 import { ReconcileBackupPolicyCrons } from '../instance/api/HandleInstanceBackups'
 import { requireOperatorAdmin } from './auth'
+import { scanOrphanInstanceStorage } from './diskCleanup'
 import { normalizeOperatorSettings, readOperatorSettings, writeOperatorSettings } from './operatorSettings'
 
 const readJsonBody = <T extends Record<string, any>>(e: core.RequestEvent): T => {
@@ -203,4 +204,14 @@ export const HandleOperatorAdminUpdateSettings = (e: core.RequestEvent) => {
   ReconcileBackupPolicyCrons()
 
   return e.json(200, { settings })
+}
+
+export const HandleOperatorAdminDiskCleanupPreview = (e: core.RequestEvent) => {
+  requireOperatorAdmin(e)
+  return e.json(200, { cleanup: scanOrphanInstanceStorage(false) })
+}
+
+export const HandleOperatorAdminDiskCleanupRun = (e: core.RequestEvent) => {
+  requireOperatorAdmin(e)
+  return e.json(200, { cleanup: scanOrphanInstanceStorage(true) })
 }

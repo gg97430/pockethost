@@ -553,7 +553,7 @@ const BACKUP_POLICY_CRON_MACROS = [
 	"@weekdays",
 	"@weekends"
 ];
-const dataRoot$2 = () => {
+const dataRoot$3 = () => {
 	const envRoot = $os.getenv("DATA_ROOT");
 	if (envRoot) return envRoot;
 	const appDataDir = `${$app.dataDir()}`;
@@ -561,15 +561,15 @@ const dataRoot$2 = () => {
 	if (inferred !== appDataDir) return inferred;
 	throw new Error("Impossible de trouver le dossier de donnees des instances.");
 };
-const backupRoot = () => $os.getenv("INSTANCE_BACKUP_ROOT") || `${dataRoot$2()}/backups/instances`;
-const importRoot = () => $os.getenv("INSTANCE_IMPORT_ROOT") || `${dataRoot$2()}/imports`;
-const chunkUploadRoot = () => `${importRoot()}/.chunked`;
+const backupRoot$1 = () => $os.getenv("INSTANCE_BACKUP_ROOT") || `${dataRoot$3()}/backups/instances`;
+const importRoot$1 = () => $os.getenv("INSTANCE_IMPORT_ROOT") || `${dataRoot$3()}/imports`;
+const chunkUploadRoot = () => `${importRoot$1()}/.chunked`;
 const chunkSessionDir = (instanceId, uploadId) => `${chunkUploadRoot()}/${instanceId}/${uploadId}`;
 const chunkPartsDir = (instanceId, uploadId) => `${chunkSessionDir(instanceId, uploadId)}/parts`;
 const chunkMetaPath = (instanceId, uploadId) => `${chunkSessionDir(instanceId, uploadId)}/metadata.json`;
-const assembledImportDir = (instanceId) => `${importRoot()}/assembled/${instanceId}`;
+const assembledImportDir = (instanceId) => `${importRoot$1()}/assembled/${instanceId}`;
 const chunkPartFilename = (index) => `${String(index).padStart(8, "0")}.part`;
-const assertSafeInstanceId$2 = (id) => {
+const assertSafeInstanceId$3 = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
 const assertSafeBackupId = (id) => {
@@ -581,10 +581,10 @@ const assertSafeUploadId = (id) => {
 const assertSafeBackupFilename = (filename) => {
 	if (!filename.match(/^[a-zA-Z0-9._-]+\.(tar\.gz|tgz|zip)$/)) throw new BadRequestError("Nom de sauvegarde invalide.");
 };
-const instanceRoot$2 = (id) => `${dataRoot$2()}/instances/${id}`;
-const backupDir = (instanceId) => `${backupRoot()}/${instanceId}`;
+const instanceRoot$3 = (id) => `${dataRoot$3()}/instances/${id}`;
+const backupDir = (instanceId) => `${backupRoot$1()}/${instanceId}`;
 const backupPath = (instanceId, filename) => `${backupDir(instanceId)}/${filename}`;
-const pathExists$1 = (path) => {
+const pathExists$2 = (path) => {
 	try {
 		$os.stat(path);
 		return true;
@@ -599,7 +599,7 @@ const fileSize = (path) => {
 		return 0;
 	}
 };
-const runCommand = (name, ...args) => toString($os.cmd(name, ...args).combinedOutput()).trim();
+const runCommand$1 = (name, ...args) => toString($os.cmd(name, ...args).combinedOutput()).trim();
 const parseIntegerEnv = (name, fallback, min, max) => {
 	const raw = `${$os.getenv(name) || ""}`.trim();
 	if (!raw) return fallback;
@@ -609,7 +609,7 @@ const parseIntegerEnv = (name, fallback, min, max) => {
 };
 const commandExists = (name) => {
 	if (!name.match(/^[a-z0-9_-]+$/i)) return false;
-	return runCommand("sh", "-c", `command -v ${name} >/dev/null 2>&1; echo $?`) === "0";
+	return runCommand$1("sh", "-c", `command -v ${name} >/dev/null 2>&1; echo $?`) === "0";
 };
 const backupGzipLevel = () => parseIntegerEnv("INSTANCE_BACKUP_GZIP_LEVEL", DEFAULT_BACKUP_GZIP_LEVEL, 1, 9);
 const backupCpuLimitPercent = () => parseIntegerEnv("INSTANCE_BACKUP_CPU_LIMIT_PERCENT", 0, 0, 1e3);
@@ -681,11 +681,11 @@ const runBackupArchiveCommand = (tmpPath, root, stagingDir) => {
 		stagingDir,
 		"manifest.json"
 	]);
-	return runCommand(command[0], ...command.slice(1));
+	return runCommand$1(command[0], ...command.slice(1));
 };
 const runArchiveCommand = (limited, command) => {
 	const runnable = limited ? withRestoreResourceLimits(command) : command;
-	return runCommand(runnable[0], ...runnable.slice(1));
+	return runCommand$1(runnable[0], ...runnable.slice(1));
 };
 const sleepOneSecond = () => {
 	$os.cmd("sleep", "1").combinedOutput();
@@ -733,13 +733,13 @@ const backupPolicyCapabilities = () => ({
 	s3Enabled: s3BackupsAvailable(),
 	serverTimezone: appliedBackupPolicyServerTimezone()
 });
-const realpath = (path) => runCommand("realpath", path);
+const realpath = (path) => runCommand$1("realpath", path);
 const parentDir = (path) => {
 	const parts = path.replace(/\/+$/g, "").split("/");
 	parts.pop();
 	return parts.join("/") || "/";
 };
-const basename = (path) => path.replace(/\/+$/g, "").split("/").pop() || "";
+const basename$1 = (path) => path.replace(/\/+$/g, "").split("/").pop() || "";
 const sqliteLiteral = (value) => `'${value.replace(/'/g, "''")}'`;
 const parsePositiveInteger = (value, field) => {
 	const numeric = Number(value);
@@ -811,7 +811,7 @@ const createImportBackupFilename = (instance, sourceFilename) => {
 	return `${timestampForFilename()}-${slugForFilename(instance.getString("subdomain"))}-import-${instance.id}.${extension}`;
 };
 const findInstance$1 = (id) => {
-	assertSafeInstanceId$2(id);
+	assertSafeInstanceId$3(id);
 	const instance = $app.findRecordById("instances", id);
 	if (!instance) throw new BadRequestError(`Instance ${id} introuvable.`);
 	return instance;
@@ -826,8 +826,8 @@ const assertInstanceAccess$1 = (instance, authRecord) => {
 const assertServerImportAllowed = (authRecord, requestedPath) => {
 	if (!authRecord.getBool("superAdmin")) throw new BadRequestError("L'import depuis un chemin serveur est reserve au superadmin.");
 	if (!requestedPath.trim()) throw new BadRequestError("Chemin serveur manquant.");
-	$os.mkdirAll(importRoot(), DIR_MODE);
-	const root = realpath(importRoot());
+	$os.mkdirAll(importRoot$1(), DIR_MODE);
+	const root = realpath(importRoot$1());
 	const source = realpath(requestedPath.trim());
 	if (source !== root && !source.startsWith(`${root}/`)) throw new BadRequestError(`Archive hors du dossier autorise (${root}).`);
 	return source;
@@ -1011,10 +1011,10 @@ const updateRestoreOperation = (backup, phase, input = {}) => {
 	$app.save(backup);
 };
 const sourceSizeBytes = (root) => {
-	return runCommand("du", "-sb", ...BACKUP_DIRS.map((dir) => `${root}/${dir}`)).split("\n").map((line) => Number(line.trim().split(/\s+/)[0] || 0)).filter((value) => Number.isFinite(value)).reduce((sum, value) => sum + value, 0);
+	return runCommand$1("du", "-sb", ...BACKUP_DIRS.map((dir) => `${root}/${dir}`)).split("\n").map((line) => Number(line.trim().split(/\s+/)[0] || 0)).filter((value) => Number.isFinite(value)).reduce((sum, value) => sum + value, 0);
 };
 const sha256 = (path) => {
-	return runCommand("sha256sum", path).split(/\s+/)[0] || "";
+	return runCommand$1("sha256sum", path).split(/\s+/)[0] || "";
 };
 const s3Config = () => {
 	if (!(($os.getenv("INSTANCE_BACKUP_S3_ENABLED") || "").toLowerCase() === "true")) return null;
@@ -1039,26 +1039,26 @@ const uploadBackupToS3 = (instanceId, filename, localPath) => {
 	const config = s3Config();
 	if (!config) return "";
 	const remoteKey = remoteKeyFor(instanceId, filename);
-	runCommand("aws", "s3", "cp", localPath, `s3://${config.bucket}/${remoteKey}`, "--endpoint-url", config.endpoint, "--region", config.region);
+	runCommand$1("aws", "s3", "cp", localPath, `s3://${config.bucket}/${remoteKey}`, "--endpoint-url", config.endpoint, "--region", config.region);
 	return remoteKey;
 };
 const downloadBackupFromS3 = (remoteKey, localPath) => {
 	const config = s3Config();
 	if (!config) throw new Error("La sauvegarde locale est absente et R2/S3 est desactive.");
-	runCommand("aws", "s3", "cp", `s3://${config.bucket}/${remoteKey}`, localPath, "--endpoint-url", config.endpoint, "--region", config.region);
+	runCommand$1("aws", "s3", "cp", `s3://${config.bucket}/${remoteKey}`, localPath, "--endpoint-url", config.endpoint, "--region", config.region);
 };
 const deleteBackupFromS3 = (remoteKey) => {
 	const config = s3Config();
 	if (!config || !remoteKey) return "";
-	return runCommand("aws", "s3", "rm", `s3://${config.bucket}/${remoteKey}`, "--endpoint-url", config.endpoint, "--region", config.region);
+	return runCommand$1("aws", "s3", "rm", `s3://${config.bucket}/${remoteKey}`, "--endpoint-url", config.endpoint, "--region", config.region);
 };
 const ensureInstanceDirs = (root) => {
 	$os.mkdirAll(root, DIR_MODE);
 	for (const dir of BACKUP_DIRS) $os.mkdirAll(`${root}/${dir}`, DIR_MODE);
 };
 const createArchive = (instance, backup, kind) => {
-	assertSafeInstanceId$2(instance.id);
-	const root = instanceRoot$2(instance.id);
+	assertSafeInstanceId$3(instance.id);
+	const root = instanceRoot$3(instance.id);
 	const dir = backupDir(instance.id);
 	const filename = createBackupFilename(instance, kind);
 	const finalPath = backupPath(instance.id, filename);
@@ -1246,7 +1246,7 @@ const archiveIncludedDirs = (entries) => {
 	return included;
 };
 const zipListedSizeBytes = (archivePath) => {
-	const output = runCommand("unzip", "-l", archivePath);
+	const output = runCommand$1("unzip", "-l", archivePath);
 	let total = 0;
 	for (const line of output.split("\n")) {
 		const summary = line.match(/^\s*(\d+)\s+\d+\s+files?\s*$/i);
@@ -1259,7 +1259,7 @@ const zipListedSizeBytes = (archivePath) => {
 	return total;
 };
 const tarListedSizeBytes = (archivePath) => {
-	const output = runCommand("tar", "--numeric-owner", "-tvzf", archivePath);
+	const output = runCommand$1("tar", "--numeric-owner", "-tvzf", archivePath);
 	let total = 0;
 	for (const line of output.split("\n")) {
 		const parts = line.trim().split(/\s+/);
@@ -1301,7 +1301,7 @@ const ensureLocalArchive = (instance, backup) => {
 	const filename = backup.getString("filename");
 	assertSafeBackupFilename(filename);
 	const localPath = backupPath(instance.id, filename);
-	if (pathExists$1(localPath)) return localPath;
+	if (pathExists$2(localPath)) return localPath;
 	const remoteKey = backup.getString("remoteKey");
 	if (!remoteKey) throw new BadRequestError("Archive locale introuvable.");
 	$os.mkdirAll(backupDir(instance.id), DIR_MODE);
@@ -1313,12 +1313,12 @@ const ensureLocalArchive = (instance, backup) => {
 };
 const readManifest = (extractDir, backup) => {
 	const manifestPath = `${extractDir}/manifest.json`;
-	if (!pathExists$1(manifestPath)) return {
+	if (!pathExists$2(manifestPath)) return {
 		format: BACKUP_FORMAT,
 		imported: true,
 		originalFilename: backup?.getString("filename") || "",
 		createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-		included: BACKUP_DIRS.filter((dir) => pathExists$1(`${extractDir}/${dir}`)),
+		included: BACKUP_DIRS.filter((dir) => pathExists$2(`${extractDir}/${dir}`)),
 		sourceSizeBytes: 0
 	};
 	const raw = toString($os.readFile(manifestPath));
@@ -1347,16 +1347,16 @@ const extractArchive = (archivePath, filename, extractDir) => {
 };
 const moveDirectoryContents = (sourceDir, targetDir) => {
 	$os.mkdirAll(targetDir, DIR_MODE);
-	runCommand("find", sourceDir, "-mindepth", "1", "-maxdepth", "1", "-exec", "mv", "{}", targetDir, ";");
+	runCommand$1("find", sourceDir, "-mindepth", "1", "-maxdepth", "1", "-exec", "mv", "{}", targetDir, ";");
 };
 const findLoosePbDataRoot = (extractDir) => {
-	const found = runCommand("find", extractDir, "-type", "f", "-name", "data.db", "-print", "-quit");
+	const found = runCommand$1("find", extractDir, "-type", "f", "-name", "data.db", "-print", "-quit");
 	if (!found) return "";
 	return parentDir(found.split("\n")[0]);
 };
 const findArchiveContentRoot = (extractDir, normalizedDir) => {
-	if (pathExists$1(`${extractDir}/${REQUIRED_RESTORE_DIR}`)) return extractDir;
-	const found = runCommand("find", extractDir, "-type", "d", "-name", REQUIRED_RESTORE_DIR, "-print", "-quit");
+	if (pathExists$2(`${extractDir}/${REQUIRED_RESTORE_DIR}`)) return extractDir;
+	const found = runCommand$1("find", extractDir, "-type", "d", "-name", REQUIRED_RESTORE_DIR, "-print", "-quit");
 	if (found) return parentDir(found.split("\n")[0]);
 	const loosePbDataRoot = findLoosePbDataRoot(extractDir);
 	if (!loosePbDataRoot) throw new BadRequestError(`Archive invalide: dossier ${REQUIRED_RESTORE_DIR} ou fichier data.db manquant.`);
@@ -1365,7 +1365,7 @@ const findArchiveContentRoot = (extractDir, normalizedDir) => {
 	return normalizedDir;
 };
 const ensureRestorableDirs = (sourceRoot) => {
-	if (!pathExists$1(`${sourceRoot}/${REQUIRED_RESTORE_DIR}`)) throw new BadRequestError(`Archive incomplete: ${REQUIRED_RESTORE_DIR} manquant.`);
+	if (!pathExists$2(`${sourceRoot}/${REQUIRED_RESTORE_DIR}`)) throw new BadRequestError(`Archive incomplete: ${REQUIRED_RESTORE_DIR} manquant.`);
 	for (const dir of BACKUP_DIRS) $os.mkdirAll(`${sourceRoot}/${dir}`, DIR_MODE);
 };
 const isExternalImportedBackup = (backup, manifest) => {
@@ -1373,7 +1373,7 @@ const isExternalImportedBackup = (backup, manifest) => {
 };
 const preserveTargetAuxiliaryDbForExternalImport = (instance, sourceRoot, backup, manifest) => {
 	if (!isExternalImportedBackup(backup, manifest)) return;
-	const targetPbData = `${instanceRoot$2(instance.id)}/${REQUIRED_RESTORE_DIR}`;
+	const targetPbData = `${instanceRoot$3(instance.id)}/${REQUIRED_RESTORE_DIR}`;
 	const restoredPbData = `${sourceRoot}/${REQUIRED_RESTORE_DIR}`;
 	$os.mkdirAll(restoredPbData, DIR_MODE);
 	for (const filename of AUXILIARY_DB_FILES) {
@@ -1382,21 +1382,21 @@ const preserveTargetAuxiliaryDbForExternalImport = (instance, sourceRoot, backup
 			$os.remove(restoredPath);
 		} catch {}
 		const currentPath = `${targetPbData}/${filename}`;
-		if (pathExists$1(currentPath)) runCommand("cp", "-p", currentPath, restoredPath);
+		if (pathExists$2(currentPath)) runCommand$1("cp", "-p", currentPath, restoredPath);
 	}
 };
 const preserveTargetSettingsForExternalImport = (instance, sourceRoot, backup, manifest) => {
 	if (!isExternalImportedBackup(backup, manifest)) return;
-	const targetDataDb = `${instanceRoot$2(instance.id)}/${REQUIRED_RESTORE_DIR}/data.db`;
+	const targetDataDb = `${instanceRoot$3(instance.id)}/${REQUIRED_RESTORE_DIR}/data.db`;
 	const restoredDataDb = `${sourceRoot}/${REQUIRED_RESTORE_DIR}/data.db`;
-	if (!pathExists$1(restoredDataDb)) return;
+	if (!pathExists$2(restoredDataDb)) return;
 	const settingsId = sqliteLiteral(SETTINGS_PARAM_ID);
 	const deleteExternalSettings = `DELETE FROM _params WHERE id = ${settingsId};`;
-	if (!pathExists$1(targetDataDb)) {
-		runCommand("sqlite3", restoredDataDb, deleteExternalSettings);
+	if (!pathExists$2(targetDataDb)) {
+		runCommand$1("sqlite3", restoredDataDb, deleteExternalSettings);
 		return;
 	}
-	runCommand("sqlite3", restoredDataDb, [
+	runCommand$1("sqlite3", restoredDataDb, [
 		`ATTACH DATABASE ${sqliteLiteral(targetDataDb)} AS target_runtime;`,
 		deleteExternalSettings,
 		`INSERT INTO _params (id, value, created, updated) SELECT id, value, created, updated FROM target_runtime._params WHERE id = ${settingsId};`,
@@ -1404,16 +1404,16 @@ const preserveTargetSettingsForExternalImport = (instance, sourceRoot, backup, m
 	].join(" "));
 };
 const restoreExtractedDirs = (instance, extractDir) => {
-	const root = instanceRoot$2(instance.id);
+	const root = instanceRoot$3(instance.id);
 	const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`;
 	$os.mkdirAll(root, DIR_MODE);
 	$os.mkdirAll(rollbackDir, PRIVATE_DIR_MODE);
 	let movedOldDirs = false;
 	try {
-		for (const dir of BACKUP_DIRS) if (!pathExists$1(`${extractDir}/${dir}`)) throw new BadRequestError(`Archive incomplete: ${dir} manquant.`);
+		for (const dir of BACKUP_DIRS) if (!pathExists$2(`${extractDir}/${dir}`)) throw new BadRequestError(`Archive incomplete: ${dir} manquant.`);
 		for (const dir of BACKUP_DIRS) {
 			const current = `${root}/${dir}`;
-			if (pathExists$1(current)) $os.rename(current, `${rollbackDir}/${dir}`);
+			if (pathExists$2(current)) $os.rename(current, `${rollbackDir}/${dir}`);
 		}
 		movedOldDirs = true;
 		for (const dir of BACKUP_DIRS) $os.rename(`${extractDir}/${dir}`, `${root}/${dir}`);
@@ -1424,7 +1424,7 @@ const restoreExtractedDirs = (instance, extractDir) => {
 				$os.removeAll(`${root}/${dir}`);
 			} catch {}
 			try {
-				if (pathExists$1(`${rollbackDir}/${dir}`)) $os.rename(`${rollbackDir}/${dir}`, `${root}/${dir}`);
+				if (pathExists$2(`${rollbackDir}/${dir}`)) $os.rename(`${rollbackDir}/${dir}`, `${root}/${dir}`);
 			} catch {}
 		}
 		try {
@@ -1471,9 +1471,9 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 		});
 		throw error;
 	}
-	const extractDir = `${instanceRoot$2(instance.id)}/.restore-extract-${backup.id}`;
-	const normalizedDir = `${instanceRoot$2(instance.id)}/.restore-normalized-${backup.id}`;
-	$os.mkdirAll(instanceRoot$2(instance.id), DIR_MODE);
+	const extractDir = `${instanceRoot$3(instance.id)}/.restore-extract-${backup.id}`;
+	const normalizedDir = `${instanceRoot$3(instance.id)}/.restore-normalized-${backup.id}`;
+	$os.mkdirAll(instanceRoot$3(instance.id), DIR_MODE);
 	$os.removeAll(extractDir);
 	$os.removeAll(normalizedDir);
 	$os.mkdirAll(extractDir, PRIVATE_DIR_MODE);
@@ -1601,14 +1601,14 @@ const createRestoredInstanceFromBackup = (source, authRecord, backup, e) => {
 			if (target.id) $app.delete(target);
 		} catch {}
 		try {
-			if (target.id) $os.removeAll(instanceRoot$2(target.id));
+			if (target.id) $os.removeAll(instanceRoot$3(target.id));
 		} catch {}
 		throw new ApiError(500, "Impossible de restaurer vers une nouvelle instance.", { error });
 	}
 };
 const importBackupFromServerPath = (instance, authRecord, serverPath) => {
 	const source = assertServerImportAllowed(authRecord, serverPath);
-	const filename = createImportBackupFilename(instance, basename(source));
+	const filename = createImportBackupFilename(instance, basename$1(source));
 	const dir = backupDir(instance.id);
 	const finalPath = backupPath(instance.id, filename);
 	const tmpPath = `${finalPath}.tmp`;
@@ -1616,7 +1616,7 @@ const importBackupFromServerPath = (instance, authRecord, serverPath) => {
 	$os.mkdirAll(dir, DIR_MODE);
 	$os.removeAll(tmpPath);
 	try {
-		runCommand("cp", source, tmpPath);
+		runCommand$1("cp", source, tmpPath);
 		validateArchiveListing(tmpPath, filename);
 		$os.rename(tmpPath, finalPath);
 	} catch (error) {
@@ -1696,9 +1696,9 @@ const s3BackupsAvailable = () => {
 		return false;
 	}
 };
-const litestreamRoot = () => $os.getenv("LITESTREAM_ROOT") || `${dataRoot$2()}/litestream`;
+const litestreamRoot = () => $os.getenv("LITESTREAM_ROOT") || `${dataRoot$3()}/litestream`;
 const litestreamConfigPath = () => `${litestreamRoot()}/litestream.yml`;
-const litestreamDbPath = (instanceId) => `${instanceRoot$2(instanceId)}/pb_data/data.db`;
+const litestreamDbPath = (instanceId) => `${instanceRoot$3(instanceId)}/pb_data/data.db`;
 const durationSeconds = (value) => {
 	const match = `${value || ""}`.trim().match(/^(\d+)(s|m|h)$/i);
 	if (!match) return 0;
@@ -1796,7 +1796,7 @@ const litestreamPolicyCollection = () => $app.findCollectionByNameOrId("instance
 const litestreamPm2Status = () => {
 	if (!commandExists("pm2")) return "";
 	try {
-		const output = runCommand("pm2", "jlist");
+		const output = runCommand$1("pm2", "jlist");
 		const processes = JSON.parse(output || "[]");
 		if (!Array.isArray(processes)) return "";
 		const process = processes.find((entry) => entry && entry.name === LITESTREAM_SERVICE_NAME);
@@ -1949,7 +1949,7 @@ const applyLitestreamPolicyInput = (policy, instance, input) => {
 		if (missingS3.length) throw new BadRequestError(`Parametres R2/S3 incomplets pour cette instance : ${missingS3.join(", ")}.`);
 		if (!capabilities.litestreamInstalled) throw new BadRequestError("Litestream n'est pas installe sur ce serveur.");
 		if (!capabilities.pm2Installed) throw new BadRequestError("PM2 n'est pas installe sur ce serveur.");
-		if (!pathExists$1(litestreamDbPath(instance.id))) throw new BadRequestError("data.db est introuvable. Demarrez l'instance une fois avant d'activer Litestream.");
+		if (!pathExists$2(litestreamDbPath(instance.id))) throw new BadRequestError("data.db est introuvable. Demarrez l'instance une fois avant d'activer Litestream.");
 	}
 	policy.set("user", instance.getString("uid"));
 	policy.set("instance", instance.id);
@@ -1985,7 +1985,7 @@ const buildLitestreamConfig = (policies) => {
 	for (const policy of policies) try {
 		const instance = findInstance$1(policy.getString("instance"));
 		const dbPath = litestreamDbPath(instance.id);
-		if (!pathExists$1(dbPath)) {
+		if (!pathExists$2(dbPath)) {
 			updateLitestreamPolicyState(policy, "failed", { lastError: "data.db introuvable pour cette instance." });
 			continue;
 		}
@@ -2041,11 +2041,11 @@ const buildLitestreamConfig = (policies) => {
 const stopLitestreamService = () => {
 	if (!commandExists("pm2")) return;
 	try {
-		runCommand("sh", "-c", `pm2 delete ${LITESTREAM_SERVICE_NAME} >/dev/null 2>&1 || true; pm2 save >/dev/null 2>&1 || true`);
+		runCommand$1("sh", "-c", `pm2 delete ${LITESTREAM_SERVICE_NAME} >/dev/null 2>&1 || true; pm2 save >/dev/null 2>&1 || true`);
 	} catch {}
 };
 const startOrRestartLitestreamService = (configPath) => {
-	runCommand("sh", "-c", `set -e
+	runCommand$1("sh", "-c", `set -e
 if pm2 jlist | grep -q '"name":"${LITESTREAM_SERVICE_NAME}"'; then
   pm2 delete ${LITESTREAM_SERVICE_NAME} >/dev/null 2>&1 || true
 fi
@@ -2253,7 +2253,7 @@ const localBackupExists = (backup) => {
 	if (!filename) return false;
 	try {
 		assertSafeBackupFilename(filename);
-		return pathExists$1(backupPath(backup.getString("instance"), filename));
+		return pathExists$2(backupPath(backup.getString("instance"), filename));
 	} catch {
 		return false;
 	}
@@ -2372,7 +2372,7 @@ const refreshImportedBackupSizeMetadata = (backup) => {
 	try {
 		assertSafeBackupFilename(filename);
 		const localPath = backupPath(backup.getString("instance"), filename);
-		if (!pathExists$1(localPath)) return backup;
+		if (!pathExists$2(localPath)) return backup;
 		const compressedBytes = fileSize(localPath);
 		const sourceBytes = archiveSourceSizeBytes(localPath, filename) || compressedBytes;
 		backup.set("sizeBytes", sourceBytes);
@@ -2472,7 +2472,7 @@ const startChunkSession = (instance, authRecord, e) => {
 	};
 };
 const readChunkSession = (instanceId, uploadId) => {
-	assertSafeInstanceId$2(instanceId);
+	assertSafeInstanceId$3(instanceId);
 	assertSafeUploadId(uploadId);
 	try {
 		const raw = toString($os.readFile(chunkMetaPath(instanceId, uploadId)));
@@ -2496,7 +2496,7 @@ const expectedChunkBytes = (session, index) => {
 };
 const uploadedChunkCount = (instanceId, uploadId, totalChunks) => {
 	let count = 0;
-	for (let index = 0; index < totalChunks; index++) if (pathExists$1(`${chunkPartsDir(instanceId, uploadId)}/${chunkPartFilename(index)}`)) count++;
+	for (let index = 0; index < totalChunks; index++) if (pathExists$2(`${chunkPartsDir(instanceId, uploadId)}/${chunkPartFilename(index)}`)) count++;
 	return count;
 };
 const storeChunk = (instance, authRecord, uploadId, e) => {
@@ -2538,7 +2538,7 @@ const assertAllChunksPresent = (instanceId, uploadId, session) => {
 	let totalBytes = 0;
 	for (let index = 0; index < session.totalChunks; index++) {
 		const partPath = `${chunkPartsDir(instanceId, uploadId)}/${chunkPartFilename(index)}`;
-		if (!pathExists$1(partPath)) throw new BadRequestError(`Morceau ${index + 1}/${session.totalChunks} manquant.`);
+		if (!pathExists$2(partPath)) throw new BadRequestError(`Morceau ${index + 1}/${session.totalChunks} manquant.`);
 		const partBytes = fileSize(partPath);
 		if (partBytes !== expectedChunkBytes(session, index)) throw new BadRequestError(`Morceau ${index + 1}/${session.totalChunks} invalide.`);
 		totalBytes += partBytes;
@@ -2556,7 +2556,7 @@ const assembleChunkSessionArchive = (instance, uploadId, session) => {
 	$os.removeAll(tmpPath);
 	$os.removeAll(finalPath);
 	try {
-		runCommand("sh", "-c", "set -e; : > \"$3\"; i=0; while [ \"$i\" -lt \"$2\" ]; do part=$(printf \"%s/%08d.part\" \"$1\" \"$i\"); cat \"$part\" >> \"$3\"; i=$((i + 1)); done", "sh", chunkPartsDir(instance.id, uploadId), `${session.totalChunks}`, tmpPath);
+		runCommand$1("sh", "-c", "set -e; : > \"$3\"; i=0; while [ \"$i\" -lt \"$2\" ]; do part=$(printf \"%s/%08d.part\" \"$1\" \"$i\"); cat \"$part\" >> \"$3\"; i=$((i + 1)); done", "sh", chunkPartsDir(instance.id, uploadId), `${session.totalChunks}`, tmpPath);
 		if (fileSize(tmpPath) !== session.size) throw new BadRequestError("Archive assemblee invalide.");
 		$os.rename(tmpPath, finalPath);
 		return finalPath;
@@ -2844,6 +2844,150 @@ const HandleInstanceBackupRestoreNew = (e) => {
 };
 
 //#endregion
+//#region src/lib/handlers/operatorAdmin/diskCleanup.ts
+const SAFE_INSTANCE_ID = /^[a-z0-9]+$/;
+const dataRoot$2 = () => {
+	const envRoot = $os.getenv("DATA_ROOT");
+	if (envRoot) return envRoot;
+	const appDataDir = `${$app.dataDir()}`;
+	const inferred = appDataDir.replace(/\/mothership\/pb_data\/?$/, "");
+	if (inferred !== appDataDir) return inferred;
+	throw new Error("Impossible de trouver le dossier de donnees des instances.");
+};
+const instanceRoot$2 = (id) => `${dataRoot$2()}/instances/${id}`;
+const backupRoot = () => $os.getenv("INSTANCE_BACKUP_ROOT") || `${dataRoot$2()}/backups/instances`;
+const importRoot = () => $os.getenv("INSTANCE_IMPORT_ROOT") || `${dataRoot$2()}/imports`;
+const pathExists$1 = (path) => {
+	try {
+		$os.stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const runCommand = (name, ...args) => toString($os.cmd(name, ...args).combinedOutput()).trim();
+const basename = (path) => path.replace(/\/+$/g, "").split("/").pop() || "";
+const assertSafeInstanceId$2 = (id) => {
+	if (!SAFE_INSTANCE_ID.test(id)) throw new BadRequestError("Identifiant d'instance invalide.");
+};
+const directorySizeBytes = (path) => {
+	if (!pathExists$1(path)) return 0;
+	try {
+		const output = runCommand("du", "-sb", path);
+		const value = Number(output.split(/\s+/)[0] || 0);
+		return Number.isFinite(value) ? Math.max(0, value) : 0;
+	} catch {
+		return 0;
+	}
+};
+const listChildDirs = (root) => {
+	if (!pathExists$1(root)) return [];
+	try {
+		return runCommand("find", root, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print").split("\n").map((line) => line.trim()).filter(Boolean);
+	} catch {
+		return [];
+	}
+};
+const dockerContainerNames = () => {
+	try {
+		return new Set(runCommand("docker", "ps", "-a", "--format", "{{.Names}}").split("\n").map((line) => line.trim()).filter(Boolean));
+	} catch {
+		return /* @__PURE__ */ new Set();
+	}
+};
+const listInstanceRecordIds = () => {
+	const ids = /* @__PURE__ */ new Set();
+	let offset = 0;
+	const pageSize = 500;
+	for (;;) {
+		const records = $app.findRecordsByFilter("instances", "id != \"\"", "", pageSize, offset);
+		for (const record of records) ids.add(record.id);
+		if (records.length < pageSize) break;
+		offset += pageSize;
+	}
+	return ids;
+};
+const removeDirectory = (path) => {
+	if (!pathExists$1(path)) return false;
+	$os.removeAll(path);
+	return true;
+};
+const scanRoot = (root, kind, recordIds, containers, remove, requirePbData = false) => {
+	const entries = [];
+	for (const path of listChildDirs(root)) {
+		const id = basename(path);
+		if (!SAFE_INSTANCE_ID.test(id)) continue;
+		if (requirePbData && !pathExists$1(`${path}/pb_data`)) continue;
+		const hasRecord = recordIds.has(id);
+		const hasContainer = containers.has(id);
+		if (hasRecord || hasContainer) continue;
+		const entry = {
+			id,
+			kind,
+			path,
+			sizeBytes: directorySizeBytes(path),
+			hasRecord,
+			hasContainer,
+			removed: false,
+			error: ""
+		};
+		if (remove) try {
+			removeDirectory(path);
+			entry.removed = true;
+		} catch (error) {
+			entry.error = error instanceof Error ? error.message : `${error}`;
+		}
+		entries.push(entry);
+	}
+	return entries;
+};
+const scanOrphanInstanceStorage = (remove = false) => {
+	const recordIds = listInstanceRecordIds();
+	const containers = dockerContainerNames();
+	const entries = [
+		...scanRoot(`${dataRoot$2()}/instances`, "instance-data", recordIds, containers, remove, true),
+		...scanRoot(backupRoot(), "backup-data", recordIds, containers, remove),
+		...scanRoot(`${importRoot()}/assembled`, "import-data", recordIds, containers, remove),
+		...scanRoot(`${importRoot()}/.chunked`, "import-data", recordIds, containers, remove)
+	];
+	return {
+		scannedAt: (/* @__PURE__ */ new Date()).toISOString(),
+		dataRoot: dataRoot$2(),
+		orphanCount: entries.length,
+		totalBytes: entries.reduce((total, entry) => total + entry.sizeBytes, 0),
+		removedCount: entries.filter((entry) => entry.removed).length,
+		freedBytes: entries.filter((entry) => entry.removed).reduce((total, entry) => total + entry.sizeBytes, 0),
+		entries
+	};
+};
+const removeInstanceLocalStorage = (id) => {
+	assertSafeInstanceId$2(id);
+	const targets = [
+		instanceRoot$2(id),
+		`${backupRoot()}/${id}`,
+		`${importRoot()}/assembled/${id}`,
+		`${importRoot()}/.chunked/${id}`
+	];
+	let removedCount = 0;
+	let freedBytes = 0;
+	const errors = [];
+	for (const target of targets) try {
+		const bytes = directorySizeBytes(target);
+		if (removeDirectory(target)) {
+			removedCount++;
+			freedBytes += bytes;
+		}
+	} catch (error) {
+		errors.push(error instanceof Error ? error.message : `${error}`);
+	}
+	return {
+		removedCount,
+		freedBytes,
+		errors
+	};
+};
+
+//#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceDelete.ts
 const HandleInstanceDelete = (e) => {
 	const log = mkLog(`DELETE:instance`);
@@ -2862,7 +3006,11 @@ const HandleInstanceDelete = (e) => {
 	if (record.get("uid") !== authRecord.id) throw new BadRequestError(`Not authorized`);
 	if (record.getString("status").toLowerCase() !== "idle") throw new BadRequestError(`L'instance doit d'abord être arrêtée.`);
 	$app.delete(record);
-	return e.json(200, { status: "ok" });
+	const cleanup = removeInstanceLocalStorage(id);
+	return e.json(200, {
+		status: "ok",
+		cleanup
+	});
 };
 
 //#endregion
@@ -4083,6 +4231,14 @@ const HandleOperatorAdminUpdateSettings = (e) => {
 	const settings = writeOperatorSettings(nextSettings);
 	ReconcileBackupPolicyCrons();
 	return e.json(200, { settings });
+};
+const HandleOperatorAdminDiskCleanupPreview = (e) => {
+	requireOperatorAdmin(e);
+	return e.json(200, { cleanup: scanOrphanInstanceStorage(false) });
+};
+const HandleOperatorAdminDiskCleanupRun = (e) => {
+	requireOperatorAdmin(e);
+	return e.json(200, { cleanup: scanOrphanInstanceStorage(true) });
 };
 
 //#endregion
@@ -6558,6 +6714,8 @@ exports.HandleMigrateInstanceVersions = HandleMigrateInstanceVersions;
 exports.HandleMirrorData = HandleMirrorData;
 exports.HandleMirrorSync = HandleMirrorSync;
 exports.HandleOperatorAdminCreateUser = HandleOperatorAdminCreateUser;
+exports.HandleOperatorAdminDiskCleanupPreview = HandleOperatorAdminDiskCleanupPreview;
+exports.HandleOperatorAdminDiskCleanupRun = HandleOperatorAdminDiskCleanupRun;
 exports.HandleOperatorAdminOverview = HandleOperatorAdminOverview;
 exports.HandleOperatorAdminUpdateSettings = HandleOperatorAdminUpdateSettings;
 exports.HandleOperatorAdminUpdateUser = HandleOperatorAdminUpdateUser;

@@ -84,6 +84,27 @@ export type OperatorAdminOverview = {
   }
 }
 
+export type OperatorDiskCleanupEntry = {
+  id: string
+  kind: 'instance-data' | 'backup-data' | 'import-data'
+  path: string
+  sizeBytes: number
+  hasRecord: boolean
+  hasContainer: boolean
+  removed: boolean
+  error: string
+}
+
+export type OperatorDiskCleanupResult = {
+  scannedAt: string
+  dataRoot: string
+  orphanCount: number
+  totalBytes: number
+  removedCount: number
+  freedBytes: number
+  entries: OperatorDiskCleanupEntry[]
+}
+
 export type InstanceBackup = {
   id: string
   user: string
@@ -728,6 +749,12 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     )
 
   const getOperatorAdminOverview = () => client.send<OperatorAdminOverview>('/api/admin/overview', {})
+  const previewOperatorDiskCleanup = () =>
+    client.send<{ cleanup: OperatorDiskCleanupResult }>('/api/admin/disk-cleanup', {})
+  const runOperatorDiskCleanup = () =>
+    client.send<{ cleanup: OperatorDiskCleanupResult }>('/api/admin/disk-cleanup', {
+      method: 'POST',
+    })
 
   const createOperatorUser = (data: {
     email: string
@@ -931,6 +958,8 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     user,
     getAllInstancesById,
     getOperatorAdminOverview,
+    previewOperatorDiskCleanup,
+    runOperatorDiskCleanup,
     createOperatorUser,
     updateOperatorUser,
     updateOperatorSettings,

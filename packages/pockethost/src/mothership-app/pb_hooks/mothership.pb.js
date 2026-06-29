@@ -242,6 +242,12 @@ routerAdd("PATCH", "/api/admin/users/{id}", (e) => {
 routerAdd("PUT", "/api/admin/settings", (e) => {
 	return require(`${__hooks}/mothership`).HandleOperatorAdminUpdateSettings(e);
 }, $apis.requireAuth());
+routerAdd("GET", "/api/admin/disk-cleanup", (e) => {
+	return require(`${__hooks}/mothership`).HandleOperatorAdminDiskCleanupPreview(e);
+}, $apis.requireAuth());
+routerAdd("POST", "/api/admin/disk-cleanup", (e) => {
+	return require(`${__hooks}/mothership`).HandleOperatorAdminDiskCleanupRun(e);
+}, $apis.requireAuth());
 
 //#endregion
 //#region src/lib/handlers/outpost/hooks.ts

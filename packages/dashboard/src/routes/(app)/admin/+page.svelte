@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { client, type OperatorAdminOverview, type OperatorSettings, type OperatorUser } from '$src/pocketbase-client'
+  import {
+    client,
+    type OperatorAdminOverview,
+    type OperatorDiskCleanupResult,
+    type OperatorSettings,
+    type OperatorUser,
+  } from '$src/pocketbase-client'
   import { userStore } from '$util/stores'
 
   type UserDraft = {
@@ -18,12 +24,15 @@
   let isLoading = false
   let isSavingSettings = false
   let isCreatingUser = false
+  let isScanningDisk = false
+  let isRunningDiskCleanup = false
   let savingUserId = ''
   let errorMessage = ''
   let successMessage = ''
   let searchQuery = ''
   let overview: OperatorAdminOverview | undefined
   let settings: OperatorSettings | undefined
+  let diskCleanup: OperatorDiskCleanupResult | undefined
   let users: OperatorUser[] = []
   let userDrafts: Record<string, UserDraft> = {}
   let newUser: UserDraft = {
@@ -81,6 +90,14 @@
     errorMessage = ''
   }
 
+  const formatBytes = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 o'
+    if (bytes < 1024) return `${bytes} o`
+    if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} Ko`
+    if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} Mo`
+    return `${(bytes / 1024 ** 3).toFixed(2)} Go`
+  }
+
   async function loadAdmin() {
     isLoading = true
     errorMessage = ''
@@ -90,6 +107,38 @@
       showError(error)
     } finally {
       isLoading = false
+    }
+  }
+
+  async function previewDiskCleanup() {
+    isScanningDisk = true
+    try {
+      const result = await client().previewOperatorDiskCleanup()
+      diskCleanup = result.cleanup
+      showSuccess(
+        result.cleanup.orphanCount
+          ? `${result.cleanup.orphanCount} element(s) orphelin(s) detecte(s).`
+          : 'Aucun dossier orphelin detecte.'
+      )
+    } catch (error) {
+      showError(error)
+    } finally {
+      isScanningDisk = false
+    }
+  }
+
+  async function runDiskCleanup() {
+    isRunningDiskCleanup = true
+    try {
+      const result = await client().runOperatorDiskCleanup()
+      diskCleanup = result.cleanup
+      showSuccess(
+        `${result.cleanup.removedCount} element(s) supprime(s), ${formatBytes(result.cleanup.freedBytes)} liberes.`
+      )
+    } catch (error) {
+      showError(error)
+    } finally {
+      isRunningDiskCleanup = false
     }
   }
 
@@ -292,8 +341,15 @@
         </div>
         <label>
           Fuseau horaire serveur
-          <input type="text" bind:value={settings.serverTimezone} list="admin-timezone-options" placeholder="Indian/Reunion" />
-          <span class="admin-field-help">Utilise par les sauvegardes automatiques et les taches planifiees serveur.</span>
+          <input
+            type="text"
+            bind:value={settings.serverTimezone}
+            list="admin-timezone-options"
+            placeholder="Indian/Reunion"
+          />
+          <span class="admin-field-help"
+            >Utilise par les sauvegardes automatiques et les taches planifiees serveur.</span
+          >
           <datalist id="admin-timezone-options">
             <option value="Indian/Reunion"></option>
             <option value="Europe/Paris"></option>
@@ -317,6 +373,68 @@
           {isSavingSettings ? 'Enregistrement...' : 'Enregistrer'}
         </button>
       </form>
+    </section>
+
+    <section class="admin-panel admin-disk-cleanup">
+      <div class="admin-disk-head">
+        <div>
+          <h2>Nettoyage disque</h2>
+          <p>Supprime les dossiers locaux qui n'ont plus de record d'instance ni de conteneur Docker.</p>
+        </div>
+        <div class="admin-disk-actions">
+          <button
+            class="admin-secondary-btn"
+            type="button"
+            onclick={previewDiskCleanup}
+            disabled={isScanningDisk || isRunningDiskCleanup}
+          >
+            <wa-icon name="magnifying-glass-chart"></wa-icon>
+            {isScanningDisk ? 'Analyse...' : 'Analyser'}
+          </button>
+          <button
+            class="admin-danger-btn"
+            type="button"
+            onclick={runDiskCleanup}
+            disabled={isScanningDisk || isRunningDiskCleanup || !diskCleanup?.orphanCount}
+          >
+            <wa-icon name="trash"></wa-icon>
+            {isRunningDiskCleanup ? 'Nettoyage...' : 'Nettoyer'}
+          </button>
+        </div>
+      </div>
+
+      {#if diskCleanup}
+        <div class="admin-disk-summary">
+          <div>
+            <span>Orphelins</span>
+            <strong>{diskCleanup.orphanCount}</strong>
+          </div>
+          <div>
+            <span>Espace detectable</span>
+            <strong>{formatBytes(diskCleanup.totalBytes)}</strong>
+          </div>
+          <div>
+            <span>Supprimes</span>
+            <strong>{diskCleanup.removedCount}</strong>
+          </div>
+          <div>
+            <span>Libere</span>
+            <strong>{formatBytes(diskCleanup.freedBytes)}</strong>
+          </div>
+        </div>
+
+        {#if diskCleanup.entries.length}
+          <div class="admin-disk-list">
+            {#each diskCleanup.entries as entry}
+              <div class:error={entry.error} class:removed={entry.removed}>
+                <span>{entry.kind}</span>
+                <strong>{entry.id}</strong>
+                <small>{formatBytes(entry.sizeBytes)} · {entry.removed ? 'supprime' : entry.error || 'pret'}</small>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      {/if}
     </section>
 
     <section class="admin-panel admin-users">
@@ -472,6 +590,7 @@
 
   .admin-icon-btn,
   .admin-primary-btn,
+  .admin-danger-btn,
   .admin-secondary-btn {
     display: inline-flex;
     align-items: center;
@@ -509,6 +628,14 @@
     background: var(--app-surface-soft);
     border-color: var(--app-border);
     color: var(--app-text-strong);
+  }
+
+  .admin-danger-btn {
+    min-height: 2rem;
+    padding: 0 0.75rem;
+    background: rgb(220 38 38 / 0.12);
+    border-color: rgb(220 38 38 / 0.35);
+    color: #ef4444;
   }
 
   button:disabled {
@@ -659,6 +786,98 @@
     margin-bottom: 2rem;
   }
 
+  .admin-disk-cleanup {
+    margin-bottom: 1rem;
+  }
+
+  .admin-disk-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .admin-disk-head p {
+    margin: 0.35rem 0 0;
+    color: var(--app-text-muted);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .admin-disk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .admin-disk-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+
+  .admin-disk-summary div,
+  .admin-disk-list > div {
+    border: 1px solid var(--app-border);
+    border-radius: 0.5rem;
+    background: var(--app-surface-soft);
+  }
+
+  .admin-disk-summary div {
+    padding: 0.8rem;
+  }
+
+  .admin-disk-summary span,
+  .admin-disk-list span {
+    display: block;
+    color: var(--app-text-muted);
+    font-size: 0.68rem;
+    font-weight: 750;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .admin-disk-summary strong {
+    display: block;
+    margin-top: 0.35rem;
+    color: var(--app-text-strong);
+    font-size: 1.2rem;
+  }
+
+  .admin-disk-list {
+    display: grid;
+    gap: 0.55rem;
+    margin-top: 0.85rem;
+  }
+
+  .admin-disk-list > div {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.75rem;
+  }
+
+  .admin-disk-list strong {
+    color: var(--app-text-strong);
+    font-size: 0.95rem;
+  }
+
+  .admin-disk-list small {
+    color: var(--app-text-muted);
+    font-size: 0.78rem;
+  }
+
+  .admin-disk-list > div.removed {
+    border-color: rgb(30 184 84 / 0.4);
+    background: rgb(30 184 84 / 0.08);
+  }
+
+  .admin-disk-list > div.error {
+    border-color: rgb(220 38 38 / 0.4);
+    background: rgb(220 38 38 / 0.08);
+  }
+
   .admin-users-toolbar {
     display: flex;
     flex-wrap: wrap;
@@ -760,6 +979,10 @@
 
     .admin-form-row {
       grid-template-columns: 1fr 0.7fr;
+    }
+
+    .admin-disk-summary {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
   }
 </style>

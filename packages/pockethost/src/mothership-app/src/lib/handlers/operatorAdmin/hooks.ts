@@ -33,3 +33,21 @@ routerAdd(
   },
   $apis.requireAuth()
 )
+
+routerAdd(
+  'GET',
+  '/api/admin/disk-cleanup',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleOperatorAdminDiskCleanupPreview(e)
+  },
+  $apis.requireAuth()
+)
+
+routerAdd(
+  'POST',
+  '/api/admin/disk-cleanup',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleOperatorAdminDiskCleanupRun(e)
+  },
+  $apis.requireAuth()
+)

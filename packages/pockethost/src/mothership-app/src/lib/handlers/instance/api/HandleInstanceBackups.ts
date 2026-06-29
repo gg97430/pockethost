@@ -109,11 +109,14 @@ type BackupStorageOptions = {
 type ImportedArchive = {
   filename: string
   localPath: string
+  originalFilename: string
+  sourceModifiedAt: string
 }
 type ChunkSession = {
   instanceId: string
   userId: string
   filename: string
+  sourceModifiedAt: string
   size: number
   chunkSize: number
   totalChunks: number
@@ -182,6 +185,14 @@ const fileSize = (path: string) => {
     return Number($os.stat(path).size())
   } catch {
     return 0
+  }
+}
+
+const fileModifiedAt = (path: string) => {
+  try {
+    return `${$os.stat(path).modTime().format('2006-01-02T15:04:05Z07:00')}`
+  } catch {
+    return ''
   }
 }
 
@@ -431,6 +442,30 @@ const createImportBackupFilename = (instance: core.Record, sourceFilename: strin
   return `${timestampForFilename()}-${slugForFilename(instance.getString('subdomain'))}-import-${instance.id}.${extension}`
 }
 
+const normalizedOriginalArchiveName = (value: string) => {
+  const filename = basename(`${value || 'archive.zip'}`.trim() || 'archive.zip').replace(/[\r\n\t]/g, ' ')
+  return filename.slice(0, 240) || 'archive.zip'
+}
+
+const isoFromEpochMillis = (value: unknown) => {
+  const raw = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : 0
+  if (!Number.isFinite(raw) || raw <= 0) return ''
+  try {
+    return new Date(raw).toISOString()
+  } catch {
+    return ''
+  }
+}
+
+const timestampFromBackupFilename = (filename: string) => {
+  const match = filename.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/)
+  if (!match) return 0
+
+  const [, year, month, day, hour, minute, second] = match
+  const value = Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`)
+  return Number.isFinite(value) ? value : 0
+}
+
 const findInstance = (id: string) => {
   assertSafeInstanceId(id)
   const instance = $app.findRecordById('instances', id)
@@ -494,8 +529,20 @@ export const serializeInstanceBackup = (backup: core.Record) => ({
 
 const sortBackupsNewestFirst = (backups: core.Record[]) => {
   return backups.sort((a, b) => {
-    const aValue = a.getString('updated') || a.getString('created') || a.getString('filename') || a.id
-    const bValue = b.getString('updated') || b.getString('created') || b.getString('filename') || b.id
+    const aTimestamp =
+      timestampFromBackupFilename(a.getString('filename')) ||
+      Date.parse(a.getString('created') || '') ||
+      Date.parse(a.getString('updated') || '') ||
+      0
+    const bTimestamp =
+      timestampFromBackupFilename(b.getString('filename')) ||
+      Date.parse(b.getString('created') || '') ||
+      Date.parse(b.getString('updated') || '') ||
+      0
+    if (aTimestamp !== bTimestamp) return bTimestamp - aTimestamp
+
+    const aValue = a.getString('filename') || a.id
+    const bValue = b.getString('filename') || b.id
     return bValue.localeCompare(aValue)
   })
 }
@@ -1536,10 +1583,13 @@ const createRestoredInstanceFromBackup = (
 const importBackupFromServerPath = (
   instance: core.Record,
   authRecord: core.Record,
-  serverPath: string
+  serverPath: string,
+  options: { originalFilename?: string; sourceModifiedAt?: string } = {}
 ): ImportedArchive => {
   const source = assertServerImportAllowed(authRecord, serverPath)
-  const filename = createImportBackupFilename(instance, basename(source))
+  const originalFilename = normalizedOriginalArchiveName(options.originalFilename || basename(source))
+  const sourceModifiedAt = options.sourceModifiedAt || fileModifiedAt(source)
+  const filename = createImportBackupFilename(instance, originalFilename)
   const dir = backupDir(instance.id)
   const finalPath = backupPath(instance.id, filename)
   const tmpPath = `${finalPath}.tmp`
@@ -1559,12 +1609,16 @@ const importBackupFromServerPath = (
     throw error
   }
 
-  return { filename, localPath: finalPath }
+  return { filename, localPath: finalPath, originalFilename, sourceModifiedAt }
 }
 
-const importBackupFromUpload = (instance: core.Record, uploaded: filesystem.File): ImportedArchive => {
-  const originalName = uploaded.originalName || uploaded.name || 'archive.zip'
-  const filename = createImportBackupFilename(instance, originalName)
+const importBackupFromUpload = (
+  instance: core.Record,
+  uploaded: filesystem.File,
+  sourceModifiedAt = ''
+): ImportedArchive => {
+  const originalFilename = normalizedOriginalArchiveName(uploaded.originalName || uploaded.name || 'archive.zip')
+  const filename = createImportBackupFilename(instance, originalFilename)
   const dir = backupDir(instance.id)
   const finalPath = backupPath(instance.id, filename)
   const tmpName = `${filename}.tmp`
@@ -1588,7 +1642,15 @@ const importBackupFromUpload = (instance: core.Record, uploaded: filesystem.File
     fs.close()
   }
 
-  return { filename, localPath: finalPath }
+  return { filename, localPath: finalPath, originalFilename, sourceModifiedAt }
+}
+
+const readArchiveLastModifiedInput = (e: core.RequestEvent) => {
+  try {
+    return isoFromEpochMillis(e.request.formValue('archiveLastModified'))
+  } catch {
+    return ''
+  }
 }
 
 const readServerPathInput = (e: core.RequestEvent) => {
@@ -2616,6 +2678,9 @@ const createImportedBackupFromImporter = (
       manifest: {
         format: BACKUP_FORMAT,
         imported: true,
+        originalFilename: imported.originalFilename,
+        sourceModifiedAt: imported.sourceModifiedAt,
+        importedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
         included: archiveIncludedDirs(entries),
         sourceSizeBytes: sourceBytes,
@@ -2641,14 +2706,19 @@ const createImportedBackup = (instance: core.Record, authRecord: core.Record, e:
     return serverPath
       ? importBackupFromServerPath(instance, authRecord, serverPath)
       : uploaded
-        ? importBackupFromUpload(instance, uploaded)
+        ? importBackupFromUpload(instance, uploaded, readArchiveLastModifiedInput(e))
         : null
   })
 }
 
-const createImportedBackupFromServerArchive = (instance: core.Record, authRecord: core.Record, serverPath: string) => {
+const createImportedBackupFromServerArchive = (
+  instance: core.Record,
+  authRecord: core.Record,
+  serverPath: string,
+  options: { originalFilename?: string; sourceModifiedAt?: string } = {}
+) => {
   return createImportedBackupFromImporter(instance, authRecord, () =>
-    importBackupFromServerPath(instance, authRecord, serverPath)
+    importBackupFromServerPath(instance, authRecord, serverPath, options)
   )
 }
 
@@ -2657,12 +2727,14 @@ const readChunkStartInput = (e: core.RequestEvent) => {
     filename: '',
     size: 0,
     chunkSize: 0,
+    lastModified: 0,
   })
   e.bindBody(data)
   return JSON.parse(JSON.stringify(data)) as {
     filename?: string
     size?: number | string
     chunkSize?: number | string
+    lastModified?: number | string
   }
 }
 
@@ -2691,6 +2763,7 @@ const startChunkSession = (instance: core.Record, authRecord: core.Record, e: co
     instanceId: instance.id,
     userId: authRecord.id,
     filename,
+    sourceModifiedAt: isoFromEpochMillis(input.lastModified),
     size,
     chunkSize,
     totalChunks,
@@ -2716,6 +2789,7 @@ const readChunkSession = (instanceId: string, uploadId: string) => {
     parsePositiveInteger(session.size, 'Taille du fichier')
     parsePositiveInteger(session.chunkSize, 'Taille de morceau')
     parsePositiveInteger(session.totalChunks, 'Nombre de morceaux')
+    session.sourceModifiedAt = `${session.sourceModifiedAt || ''}`
     return session
   } catch {
     throw new BadRequestError("Session d'upload introuvable ou invalide.")
@@ -2853,7 +2927,10 @@ const completeChunkSession = (instance: core.Record, authRecord: core.Record, up
   let assembledPath = ''
   try {
     assembledPath = assembleChunkSessionArchive(instance, uploadId, session)
-    return createImportedBackupFromServerArchive(instance, authRecord, assembledPath)
+    return createImportedBackupFromServerArchive(instance, authRecord, assembledPath, {
+      originalFilename: session.filename,
+      sourceModifiedAt: session.sourceModifiedAt,
+    })
   } finally {
     if (assembledPath) {
       try {

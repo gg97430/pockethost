@@ -480,6 +480,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
           filename: file.name,
           size: file.size,
           chunkSize: BACKUP_UPLOAD_CHUNK_SIZE_BYTES,
+          lastModified: file.lastModified || 0,
         },
       }
     )
@@ -599,6 +600,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
 
     const body = new FormData()
     body.set('archive', input.file)
+    body.set('archiveLastModified', `${input.file.lastModified || ''}`)
 
     return await new Promise<{ backup: InstanceBackup }>((resolve, reject) => {
       const xhr = new XMLHttpRequest()

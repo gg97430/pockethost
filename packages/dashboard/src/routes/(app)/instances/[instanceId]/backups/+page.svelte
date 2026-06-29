@@ -213,12 +213,25 @@
     return `${seconds} s`
   }
 
-  const formatDate = (value: string) => {
+  const isValidDate = (date: Date) => Number.isFinite(date.getTime())
+
+  const formatDate = (value: string | Date) => {
     if (!value) return '-'
+    const date = value instanceof Date ? value : new Date(value)
+    if (!isValidDate(date)) return '-'
     return new Intl.DateTimeFormat('fr-FR', {
       dateStyle: 'medium',
       timeStyle: 'short',
-    }).format(new Date(value))
+    }).format(date)
+  }
+
+  function dateFromBackupFilename(filename: string) {
+    const match = filename.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/)
+    if (!match) return null
+
+    const [, year, month, day, hour, minute, second] = match
+    const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`)
+    return isValidDate(date) ? date : null
   }
 
   function statusLabel(status: InstanceBackup['status']) {
@@ -366,6 +379,34 @@
   function manifestObject(manifest: unknown) {
     if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return {}
     return manifest as Record<string, unknown>
+  }
+
+  function backupFileDate(backup: InstanceBackup) {
+    const fromFilename = dateFromBackupFilename(backup.filename || '')
+    if (fromFilename) return fromFilename
+
+    const manifest = manifestObject(backup.manifest)
+    const createdAt = typeof manifest.createdAt === 'string' ? new Date(manifest.createdAt) : null
+    if (createdAt && isValidDate(createdAt)) return createdAt
+
+    const created = backup.created ? new Date(backup.created) : null
+    return created && isValidDate(created) ? created : null
+  }
+
+  function originalBackupFilename(backup: InstanceBackup) {
+    const manifest = manifestObject(backup.manifest)
+    const original = typeof manifest.originalFilename === 'string' ? manifest.originalFilename.trim() : ''
+    if (!original || original === backup.filename) return ''
+    return original
+  }
+
+  function originalBackupSourceDate(backup: InstanceBackup) {
+    const manifest = manifestObject(backup.manifest)
+    const value = typeof manifest.sourceModifiedAt === 'string' ? manifest.sourceModifiedAt : ''
+    if (!value) return null
+
+    const date = new Date(value)
+    return isValidDate(date) ? date : null
   }
 
   function backupOperation(backup: InstanceBackup): BackupOperation {
@@ -1459,6 +1500,9 @@
     {:else}
       <div class="backup-list">
         {#each backups as backup (backup.id)}
+          {@const fileDate = backupFileDate(backup)}
+          {@const originalName = originalBackupFilename(backup)}
+          {@const sourceDate = originalBackupSourceDate(backup)}
           <article
             class="backup-row"
             class:backup-row--running={backup.status === 'running'}
@@ -1477,11 +1521,22 @@
               {/if}
             </div>
             <div class="backup-meta">
-              <span>{formatDate(backup.created)}</span>
+              <span>Fichier : {fileDate ? formatDate(fileDate) : '-'}</span>
               <span>{kindLabel(backup.kind)}</span>
               <span>{formatBytes(backup.compressedBytes)} compressés</span>
               <span>{formatBytes(backup.sizeBytes)} source</span>
             </div>
+            {#if originalName}
+              <p class="backup-source-file">
+                <wa-icon name="file-zipper"></wa-icon>
+                <span>
+                  Nom importé : <strong>{originalName}</strong>
+                  {#if sourceDate}
+                    <small>fichier du {formatDate(sourceDate)}</small>
+                  {/if}
+                </span>
+              </p>
+            {/if}
             {#if backup.status === 'running' || shouldShowRestoreProgress(backup)}
               {@const operation = visibleOperationForBackup(backup)}
               <div class="backup-row-progress" aria-live="polite">
@@ -2459,6 +2514,45 @@
     color: var(--app-text-muted);
     font-size: 0.78rem;
     font-weight: 600;
+  }
+
+  .backup-source-file {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.55rem;
+    border: 1px solid var(--app-border);
+    border-radius: 0.45rem;
+    background: var(--app-surface-soft);
+    padding: 0.38rem 0.55rem;
+    color: var(--app-text-muted);
+    font-size: 0.76rem;
+    font-weight: 650;
+    line-height: 1.3;
+  }
+
+  .backup-source-file wa-icon {
+    flex-shrink: 0;
+    color: #60a5fa;
+  }
+
+  .backup-source-file span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .backup-source-file strong {
+    color: var(--app-text-strong);
+    font-weight: 850;
+  }
+
+  .backup-source-file small {
+    display: inline-block;
+    margin-left: 0.45rem;
+    color: var(--app-text-faint);
+    font-size: 0.72rem;
+    font-weight: 700;
   }
 
   .backup-row-progress {

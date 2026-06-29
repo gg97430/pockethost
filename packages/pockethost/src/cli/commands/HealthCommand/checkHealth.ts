@@ -279,7 +279,8 @@ export const checkHealth = async () => {
 
   const discordUrl = DISCORD_HEALTH_CHANNEL_URL()
   if (!discordUrl) {
-    throw new Error('DISCORD_HEALTH_CHANNEL_URL not set')
+    info('DISCORD_HEALTH_CHANNEL_URL not set; skipping Discord health notification')
+    return
   }
 
   const limiter = new Bottleneck({ maxConcurrent: 1 })

@@ -74,6 +74,46 @@ read_dotenv_value() {
   printf '%s' "${value}"
 }
 
+dotenv_quote() {
+  local value="$1"
+  value="${value//$'\r'/}"
+  value="${value//$'\n'/}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "${value}"
+}
+
+write_dotenv_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local line tmp
+
+  line="${key}=$(dotenv_quote "${value}")"
+  tmp="$(mktemp)"
+
+  if [[ -f "${file}" ]]; then
+    awk -v key="${key}" -v line="${line}" '
+      BEGIN { done = 0 }
+      $0 ~ "^" key "=" {
+        if (!done) {
+          print line
+          done = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!done) print line
+      }
+    ' "${file}" >"${tmp}"
+  else
+    printf '%s\n' "${line}" >"${tmp}"
+  fi
+
+  mv "${tmp}" "${file}"
+}
+
 random_hex() {
   openssl rand -hex "$1"
 }
@@ -422,6 +462,11 @@ MOTHERSHIP_CLOUDFLARE_ZONE_ID=${MOTHERSHIP_CLOUDFLARE_ZONE_ID:-}
 MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID=${MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID:-}
 EOF
   fi
+
+  write_dotenv_value "${env_file}" PH_SECRET "${PH_SECRET}"
+  write_dotenv_value "${env_file}" MOTHERSHIP_ADMIN_USERNAME "${ADMIN_EMAIL}"
+  write_dotenv_value "${env_file}" MOTHERSHIP_ADMIN_PASSWORD "${ADMIN_PASSWORD}"
+  write_dotenv_value "${env_file}" TEST_EMAIL "${ADMIN_EMAIL}"
 
   log "Ecriture de ${dashboard_env}"
   cat >"${dashboard_env}" <<EOF

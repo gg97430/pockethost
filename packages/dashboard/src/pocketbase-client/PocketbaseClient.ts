@@ -36,7 +36,7 @@ export type PocketbaseClientConfig = {
   url: string
 }
 export type PocketbaseClient = ReturnType<typeof createPocketbaseClient>
-const BACKUP_CHUNKED_UPLOAD_THRESHOLD_BYTES = 64 * 1024 * 1024
+const BACKUP_CHUNKED_UPLOAD_THRESHOLD_BYTES = 500 * 1024 * 1024
 const BACKUP_UPLOAD_CHUNK_SIZE_BYTES = 32 * 1024 * 1024
 const BACKUP_UPLOAD_CONCURRENCY = 3
 const BACKUP_UPLOAD_CHUNK_RETRIES = 2
@@ -569,7 +569,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     if (!browser) throw new Error('Import disponible uniquement dans le navigateur.')
     if (!input.file) throw new Error('Archive manquante.')
 
-    if (input.file.size >= BACKUP_CHUNKED_UPLOAD_THRESHOLD_BYTES) {
+    if (input.file.size > BACKUP_CHUNKED_UPLOAD_THRESHOLD_BYTES) {
       return importInstanceBackupChunked(id, {
         file: input.file,
         onProgress: input.onProgress,

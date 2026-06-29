@@ -5,6 +5,7 @@ const BACKUP_FORMAT = 'gestion-pocketbase-instance-backup-v1'
 const BACKUP_DIRS = ['pb_data', 'pb_public', 'pb_migrations', 'pb_hooks']
 const REQUIRED_RESTORE_DIR = 'pb_data'
 const AUXILIARY_DB_FILES = ['auxiliary.db', 'auxiliary.db-shm', 'auxiliary.db-wal']
+const SETTINGS_PARAM_ID = 'settings'
 const MAX_STOP_WAIT_SECONDS = 120
 const DIR_MODE = 0o755 as any
 const PRIVATE_DIR_MODE = 0o700 as any
@@ -339,6 +340,7 @@ const parentDir = (path: string) => {
 }
 
 const basename = (path: string) => path.replace(/\/+$/g, '').split('/').pop() || ''
+const sqliteLiteral = (value: string) => `'${value.replace(/'/g, "''")}'`
 
 const parsePositiveInteger = (value: unknown, field: string) => {
   const numeric = Number(value)
@@ -1247,6 +1249,36 @@ const preserveTargetAuxiliaryDbForExternalImport = (
   }
 }
 
+const preserveTargetSettingsForExternalImport = (
+  instance: core.Record,
+  sourceRoot: string,
+  backup: core.Record,
+  manifest: Record<string, any>
+) => {
+  if (!isExternalImportedBackup(backup, manifest)) return
+
+  const targetDataDb = `${instanceRoot(instance.id)}/${REQUIRED_RESTORE_DIR}/data.db`
+  const restoredDataDb = `${sourceRoot}/${REQUIRED_RESTORE_DIR}/data.db`
+  if (!pathExists(restoredDataDb)) return
+
+  const settingsId = sqliteLiteral(SETTINGS_PARAM_ID)
+  const deleteExternalSettings = `DELETE FROM _params WHERE id = ${settingsId};`
+  if (!pathExists(targetDataDb)) {
+    runCommand('sqlite3', restoredDataDb, deleteExternalSettings)
+    return
+  }
+
+  const targetDb = sqliteLiteral(targetDataDb)
+  const sql = [
+    `ATTACH DATABASE ${targetDb} AS target_runtime;`,
+    deleteExternalSettings,
+    `INSERT INTO _params (id, value, created, updated) SELECT id, value, created, updated FROM target_runtime._params WHERE id = ${settingsId};`,
+    'DETACH DATABASE target_runtime;',
+  ].join(' ')
+
+  runCommand('sqlite3', restoredDataDb, sql)
+}
+
 const restoreExtractedDirs = (instance: core.Record, extractDir: string) => {
   const root = instanceRoot(instance.id)
   const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`
@@ -1374,6 +1406,7 @@ const restoreArchive = (
     ensureRestorableDirs(contentRoot)
     const manifest = readManifest(contentRoot, backup)
     preserveTargetAuxiliaryDbForExternalImport(instance, contentRoot, backup, manifest)
+    preserveTargetSettingsForExternalImport(instance, contentRoot, backup, manifest)
 
     updateRestoreOperation(backup, 'replacing', {
       ...target,

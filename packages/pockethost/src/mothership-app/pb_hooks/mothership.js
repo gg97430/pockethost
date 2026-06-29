@@ -518,6 +518,7 @@ const AUXILIARY_DB_FILES = [
 	"auxiliary.db-shm",
 	"auxiliary.db-wal"
 ];
+const SETTINGS_PARAM_ID = "settings";
 const MAX_STOP_WAIT_SECONDS = 120;
 const DIR_MODE = 493;
 const PRIVATE_DIR_MODE = 448;
@@ -739,6 +740,7 @@ const parentDir = (path) => {
 	return parts.join("/") || "/";
 };
 const basename = (path) => path.replace(/\/+$/g, "").split("/").pop() || "";
+const sqliteLiteral = (value) => `'${value.replace(/'/g, "''")}'`;
 const parsePositiveInteger = (value, field) => {
 	const numeric = Number(value);
 	if (!Number.isFinite(numeric) || numeric <= 0) throw new BadRequestError(`${field} invalide.`);
@@ -1383,6 +1385,24 @@ const preserveTargetAuxiliaryDbForExternalImport = (instance, sourceRoot, backup
 		if (pathExists$1(currentPath)) runCommand("cp", "-p", currentPath, restoredPath);
 	}
 };
+const preserveTargetSettingsForExternalImport = (instance, sourceRoot, backup, manifest) => {
+	if (!isExternalImportedBackup(backup, manifest)) return;
+	const targetDataDb = `${instanceRoot$2(instance.id)}/${REQUIRED_RESTORE_DIR}/data.db`;
+	const restoredDataDb = `${sourceRoot}/${REQUIRED_RESTORE_DIR}/data.db`;
+	if (!pathExists$1(restoredDataDb)) return;
+	const settingsId = sqliteLiteral(SETTINGS_PARAM_ID);
+	const deleteExternalSettings = `DELETE FROM _params WHERE id = ${settingsId};`;
+	if (!pathExists$1(targetDataDb)) {
+		runCommand("sqlite3", restoredDataDb, deleteExternalSettings);
+		return;
+	}
+	runCommand("sqlite3", restoredDataDb, [
+		`ATTACH DATABASE ${sqliteLiteral(targetDataDb)} AS target_runtime;`,
+		deleteExternalSettings,
+		`INSERT INTO _params (id, value, created, updated) SELECT id, value, created, updated FROM target_runtime._params WHERE id = ${settingsId};`,
+		"DETACH DATABASE target_runtime;"
+	].join(" "));
+};
 const restoreExtractedDirs = (instance, extractDir) => {
 	const root = instanceRoot$2(instance.id);
 	const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`;
@@ -1478,6 +1498,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 		ensureRestorableDirs(contentRoot);
 		const manifest = readManifest(contentRoot, backup);
 		preserveTargetAuxiliaryDbForExternalImport(instance, contentRoot, backup, manifest);
+		preserveTargetSettingsForExternalImport(instance, contentRoot, backup, manifest);
 		updateRestoreOperation(backup, "replacing", {
 			...target,
 			label: "Remplacement des fichiers de l'instance",

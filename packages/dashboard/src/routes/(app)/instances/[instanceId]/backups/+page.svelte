@@ -76,7 +76,7 @@
     serviceName: '',
     configPath: '',
   }
-  let backupSettingsTab: 'schedule' | 'litestream' = 'schedule'
+  let backupPageTab: 'archive' | 'schedule' | 'litestream' = 'archive'
   let backupPolicyCustomCron = false
   let isPolicyLoading = true
   let isLitestreamLoading = true
@@ -662,6 +662,7 @@
     )
     if (!confirmed) return
 
+    backupPageTab = 'archive'
     action = 'policy-run'
     policyAction = 'run'
     operationStartedAt = Date.now()
@@ -847,18 +848,70 @@
   </svelte:fragment>
 
   <svelte:fragment slot="cta">
-    <div class="backup-cta">
-      <button type="button" class="backup-import-zip-cta" disabled={isBusy} onclick={() => fileInput?.click()}>
-        <wa-icon name="file-zipper"></wa-icon>
-        Importer ZIP à restaurer
-      </button>
-      <button type="button" class="backup-create-btn" disabled={isBusy} onclick={createBackup}>
-        <wa-icon name={action === 'create' ? 'rotate' : 'floppy-disk'}></wa-icon>
-        {action === 'create' ? 'Sauvegarde...' : 'Créer une sauvegarde'}
-      </button>
-    </div>
+    {#if backupPageTab === 'archive'}
+      <div class="backup-cta">
+        <button type="button" class="backup-import-zip-cta" disabled={isBusy} onclick={() => fileInput?.click()}>
+          <wa-icon name="file-zipper"></wa-icon>
+          Importer ZIP à restaurer
+        </button>
+        <button type="button" class="backup-create-btn" disabled={isBusy} onclick={createBackup}>
+          <wa-icon name={action === 'create' ? 'rotate' : 'floppy-disk'}></wa-icon>
+          {action === 'create' ? 'Sauvegarde...' : 'Créer une sauvegarde'}
+        </button>
+      </div>
+    {/if}
   </svelte:fragment>
 
+  <div class="backup-page-tabs">
+    <div class="backup-page-tabs__nav" role="tablist" aria-label="Gestion des sauvegardes">
+      <button
+        type="button"
+        role="tab"
+        id="backup-tab-archive-tab"
+        aria-selected={backupPageTab === 'archive'}
+        aria-controls="backup-tab-archive"
+        class:active={backupPageTab === 'archive'}
+        onclick={() => (backupPageTab = 'archive')}
+      >
+        <wa-icon name="box-archive"></wa-icon>
+        <span>Sauvegarde / restauration</span>
+        <small>{backups.length} archive{backups.length > 1 ? 's' : ''}</small>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        id="backup-tab-schedule-tab"
+        aria-selected={backupPageTab === 'schedule'}
+        aria-controls="backup-tab-schedule"
+        class:active={backupPageTab === 'schedule'}
+        onclick={() => (backupPageTab = 'schedule')}
+      >
+        <wa-icon name="clock"></wa-icon>
+        <span>Planification</span>
+        <small>{policyStatusText}</small>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        id="backup-tab-litestream-tab"
+        aria-selected={backupPageTab === 'litestream'}
+        aria-controls="backup-tab-litestream"
+        class:active={backupPageTab === 'litestream'}
+        onclick={() => (backupPageTab = 'litestream')}
+      >
+        <wa-icon name="database"></wa-icon>
+        <span>Litestream</span>
+        <small>{litestreamStatusText}</small>
+      </button>
+    </div>
+
+    {#if backupPageTab === 'archive'}
+      <div
+        id="backup-tab-archive"
+        class="backup-tab-panel"
+        role="tabpanel"
+        aria-labelledby="backup-tab-archive-tab"
+      >
   <section class="backup-import">
     <div class="backup-import-copy">
       <strong>Importer une sauvegarde ZIP à restaurer</strong>
@@ -925,44 +978,16 @@
       </button>
     </div>
   </section>
+      </div>
+    {/if}
 
-  <div class="backup-settings-tabs">
-    <div class="backup-settings-tabs__nav" role="tablist" aria-label="Configuration des sauvegardes">
-      <button
-        type="button"
-        role="tab"
-        id="backup-settings-schedule-tab"
-        aria-selected={backupSettingsTab === 'schedule'}
-        aria-controls="backup-settings-schedule"
-        class:active={backupSettingsTab === 'schedule'}
-        onclick={() => (backupSettingsTab = 'schedule')}
+    {#if backupPageTab === 'schedule'}
+      <div
+        id="backup-tab-schedule"
+        class="backup-tab-panel backup-policy"
+        role="tabpanel"
+        aria-labelledby="backup-tab-schedule-tab"
       >
-        <wa-icon name="box-archive"></wa-icon>
-        <span>Planification</span>
-        <small>{policyStatusText}</small>
-      </button>
-      <button
-        type="button"
-        role="tab"
-        id="backup-settings-litestream-tab"
-        aria-selected={backupSettingsTab === 'litestream'}
-        aria-controls="backup-settings-litestream"
-        class:active={backupSettingsTab === 'litestream'}
-        onclick={() => (backupSettingsTab = 'litestream')}
-      >
-        <wa-icon name="database"></wa-icon>
-        <span>Litestream</span>
-        <small>{litestreamStatusText}</small>
-      </button>
-    </div>
-
-    {#if backupSettingsTab === 'schedule'}
-  <div
-    id="backup-settings-schedule"
-    class="backup-policy"
-    role="tabpanel"
-    aria-labelledby="backup-settings-schedule-tab"
-  >
     <div class="backup-policy__header">
       <div>
         <strong>Planification automatique</strong>
@@ -1173,15 +1198,16 @@
         </div>
       </div>
     {/if}
-  </div>
+      </div>
+    {/if}
 
-    {:else}
-  <div
-    id="backup-settings-litestream"
-    class="backup-policy backup-policy--litestream"
-    role="tabpanel"
-    aria-labelledby="backup-settings-litestream-tab"
-  >
+    {#if backupPageTab === 'litestream'}
+      <div
+        id="backup-tab-litestream"
+        class="backup-tab-panel backup-policy backup-policy--litestream"
+        role="tabpanel"
+        aria-labelledby="backup-tab-litestream-tab"
+      >
     <div class="backup-policy__header">
       <div>
         <strong>Litestream à la demande</strong>
@@ -1393,8 +1419,9 @@
     {/if}
   </div>
 
-  {#if liveOperationVisible}
-    <section class="backup-live" aria-live="polite">
+  {#if backupPageTab === 'archive'}
+    {#if liveOperationVisible}
+      <section class="backup-live" aria-live="polite">
       <div class="backup-live__icon">
         <wa-icon name="rotate"></wa-icon>
       </div>
@@ -1419,25 +1446,25 @@
           <span>{liveOperationCount} opération en cours</span>
         </div>
       </div>
-    </section>
-  {/if}
+      </section>
+    {/if}
 
-  {#if isLoading}
-    <div class="backup-empty">Chargement des sauvegardes...</div>
-  {:else if backups.length === 0}
-    <div class="backup-empty">
-      <wa-icon name="box-archive"></wa-icon>
-      <span>Aucune sauvegarde pour cette instance.</span>
-    </div>
-  {:else}
-    <div class="backup-list">
-      {#each backups as backup (backup.id)}
-        <article
-          class="backup-row"
-          class:backup-row--running={backup.status === 'running'}
-          class:backup-row--restore={shouldShowRestoreProgress(backup)}
-          class:backup-row--failed={backup.status === 'failed'}
-        >
+    {#if isLoading}
+      <div class="backup-empty">Chargement des sauvegardes...</div>
+    {:else if backups.length === 0}
+      <div class="backup-empty">
+        <wa-icon name="box-archive"></wa-icon>
+        <span>Aucune sauvegarde pour cette instance.</span>
+      </div>
+    {:else}
+      <div class="backup-list">
+        {#each backups as backup (backup.id)}
+          <article
+            class="backup-row"
+            class:backup-row--running={backup.status === 'running'}
+            class:backup-row--restore={shouldShowRestoreProgress(backup)}
+            class:backup-row--failed={backup.status === 'failed'}
+          >
           <div class="backup-main">
             <div class="backup-title-row">
               <span class="backup-title">{backup.filename || backup.id}</span>
@@ -1532,9 +1559,10 @@
               <span>Supprimer</span>
             </button>
           </div>
-        </article>
-      {/each}
-    </div>
+          </article>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </FeatureTab>
 
@@ -1731,15 +1759,15 @@
     transition: width 160ms ease;
   }
 
-  .backup-settings-tabs {
+  .backup-page-tabs {
     display: grid;
     gap: 0.75rem;
     margin-bottom: 1rem;
   }
 
-  .backup-settings-tabs__nav {
+  .backup-page-tabs__nav {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.5rem;
     border: 1px solid var(--app-border);
     border-radius: 0.65rem;
@@ -1748,7 +1776,7 @@
     box-shadow: var(--app-shadow-sm);
   }
 
-  .backup-settings-tabs__nav button {
+  .backup-page-tabs__nav button {
     display: grid;
     min-width: 0;
     min-height: 3.35rem;
@@ -1767,25 +1795,25 @@
     cursor: pointer;
   }
 
-  .backup-settings-tabs__nav button:hover {
+  .backup-page-tabs__nav button:hover {
     border-color: rgb(30 184 84 / 0.28);
     background: rgb(30 184 84 / 0.07);
     color: var(--app-text);
   }
 
-  .backup-settings-tabs__nav button.active {
+  .backup-page-tabs__nav button.active {
     border-color: rgb(30 184 84 / 0.38);
     background: linear-gradient(135deg, rgb(30 184 84 / 0.14), rgb(59 130 246 / 0.07));
     color: var(--app-text-strong);
   }
 
-  .backup-settings-tabs__nav wa-icon {
+  .backup-page-tabs__nav wa-icon {
     grid-area: icon;
     color: #1eb854;
     font-size: 1.1rem;
   }
 
-  .backup-settings-tabs__nav span {
+  .backup-page-tabs__nav span {
     grid-area: label;
     overflow: hidden;
     color: currentColor;
@@ -1796,7 +1824,7 @@
     white-space: nowrap;
   }
 
-  .backup-settings-tabs__nav small {
+  .backup-page-tabs__nav small {
     grid-area: meta;
     overflow: hidden;
     color: var(--app-text-muted);
@@ -1807,7 +1835,12 @@
     white-space: nowrap;
   }
 
-  .backup-settings-tabs .backup-policy {
+  .backup-tab-panel {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .backup-page-tabs .backup-policy {
     margin-bottom: 0;
   }
 
@@ -2583,6 +2616,10 @@
   }
 
   @media (max-width: 720px) {
+    .backup-page-tabs__nav {
+      grid-template-columns: 1fr;
+    }
+
     .backup-import-grid {
       grid-template-columns: 1fr;
     }

@@ -1492,7 +1492,8 @@ const createRestoredInstanceFromBackup = (
   try {
     $app.save(target)
 
-    // The create hook defaults autoVacuum. Save once more so the target preserves the source option.
+    // The create hook applies operator defaults. Save once more so restore keeps its explicit runtime options.
+    target.set('dev', false)
     target.set('autoVacuum', source.getBool('autoVacuum'))
     $app.save(target)
 

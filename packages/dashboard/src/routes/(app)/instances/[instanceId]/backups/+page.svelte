@@ -76,6 +76,7 @@
     serviceName: '',
     configPath: '',
   }
+  let backupSettingsTab: 'schedule' | 'litestream' = 'schedule'
   let backupPolicyCustomCron = false
   let isPolicyLoading = true
   let isLitestreamLoading = true
@@ -925,7 +926,43 @@
     </div>
   </section>
 
-  <section class="backup-policy">
+  <div class="backup-settings-tabs">
+    <div class="backup-settings-tabs__nav" role="tablist" aria-label="Configuration des sauvegardes">
+      <button
+        type="button"
+        role="tab"
+        id="backup-settings-schedule-tab"
+        aria-selected={backupSettingsTab === 'schedule'}
+        aria-controls="backup-settings-schedule"
+        class:active={backupSettingsTab === 'schedule'}
+        onclick={() => (backupSettingsTab = 'schedule')}
+      >
+        <wa-icon name="box-archive"></wa-icon>
+        <span>Planification</span>
+        <small>{policyStatusText}</small>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        id="backup-settings-litestream-tab"
+        aria-selected={backupSettingsTab === 'litestream'}
+        aria-controls="backup-settings-litestream"
+        class:active={backupSettingsTab === 'litestream'}
+        onclick={() => (backupSettingsTab = 'litestream')}
+      >
+        <wa-icon name="database"></wa-icon>
+        <span>Litestream</span>
+        <small>{litestreamStatusText}</small>
+      </button>
+    </div>
+
+    {#if backupSettingsTab === 'schedule'}
+  <div
+    id="backup-settings-schedule"
+    class="backup-policy"
+    role="tabpanel"
+    aria-labelledby="backup-settings-schedule-tab"
+  >
     <div class="backup-policy__header">
       <div>
         <strong>Planification automatique</strong>
@@ -1136,9 +1173,15 @@
         </div>
       </div>
     {/if}
-  </section>
+  </div>
 
-  <section class="backup-policy backup-policy--litestream">
+    {:else}
+  <div
+    id="backup-settings-litestream"
+    class="backup-policy backup-policy--litestream"
+    role="tabpanel"
+    aria-labelledby="backup-settings-litestream-tab"
+  >
     <div class="backup-policy__header">
       <div>
         <strong>Litestream à la demande</strong>
@@ -1346,7 +1389,9 @@
         </div>
       </div>
     {/if}
-  </section>
+  </div>
+    {/if}
+  </div>
 
   {#if liveOperationVisible}
     <section class="backup-live" aria-live="polite">
@@ -1684,6 +1729,86 @@
     background: linear-gradient(90deg, #0ea5e9, #22c55e);
     box-shadow: 0 0 18px rgb(14 165 233 / 0.35);
     transition: width 160ms ease;
+  }
+
+  .backup-settings-tabs {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .backup-settings-tabs__nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    border: 1px solid var(--app-border);
+    border-radius: 0.65rem;
+    background: var(--app-surface);
+    padding: 0.45rem;
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .backup-settings-tabs__nav button {
+    display: grid;
+    min-width: 0;
+    min-height: 3.35rem;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'icon label'
+      'icon meta';
+    gap: 0.12rem 0.65rem;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    background: transparent;
+    padding: 0.65rem 0.75rem;
+    color: var(--app-text-muted);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .backup-settings-tabs__nav button:hover {
+    border-color: rgb(30 184 84 / 0.28);
+    background: rgb(30 184 84 / 0.07);
+    color: var(--app-text);
+  }
+
+  .backup-settings-tabs__nav button.active {
+    border-color: rgb(30 184 84 / 0.38);
+    background: linear-gradient(135deg, rgb(30 184 84 / 0.14), rgb(59 130 246 / 0.07));
+    color: var(--app-text-strong);
+  }
+
+  .backup-settings-tabs__nav wa-icon {
+    grid-area: icon;
+    color: #1eb854;
+    font-size: 1.1rem;
+  }
+
+  .backup-settings-tabs__nav span {
+    grid-area: label;
+    overflow: hidden;
+    color: currentColor;
+    font-size: 0.85rem;
+    font-weight: 950;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .backup-settings-tabs__nav small {
+    grid-area: meta;
+    overflow: hidden;
+    color: var(--app-text-muted);
+    font-size: 0.72rem;
+    font-weight: 780;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .backup-settings-tabs .backup-policy {
+    margin-bottom: 0;
   }
 
   .backup-policy {

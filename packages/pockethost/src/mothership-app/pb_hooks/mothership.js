@@ -397,7 +397,7 @@ const defaultOperatorSettings = () => {
 		defaultSubscription: "free",
 		serverTimezone: normalizeServerTimezone(process.env.PH_SERVER_TIMEZONE || "Indian/Reunion"),
 		defaultInstancePower: true,
-		defaultInstanceDevMode: true,
+		defaultInstanceDevMode: false,
 		defaultSyncAdmin: true,
 		defaultAutoVacuum: true,
 		supportEmail: process.env.PH_SUPPORT_EMAIL || "",
@@ -1569,6 +1569,7 @@ const createRestoredInstanceFromBackup = (source, authRecord, backup, e) => {
 	target.set("webhooks", source.get("webhooks"));
 	try {
 		$app.save(target);
+		target.set("dev", false);
 		target.set("autoVacuum", source.getBool("autoVacuum"));
 		$app.save(target);
 		updateRestoreOperation(backup, "created", {
@@ -3107,6 +3108,7 @@ const HandleInstanceDuplicate = (e) => {
 	target.set("webhooks", source.get("webhooks"));
 	try {
 		$app.save(target);
+		target.set("dev", source.getBool("dev"));
 		target.set("autoVacuum", source.getBool("autoVacuum"));
 		$app.save(target);
 		copyInstanceFiles(source.id, target.id);

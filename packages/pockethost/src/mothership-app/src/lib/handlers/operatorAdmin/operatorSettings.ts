@@ -45,7 +45,7 @@ export const defaultOperatorSettings = (): OperatorSettings => {
     defaultSubscription: 'free',
     serverTimezone: normalizeServerTimezone(process.env.PH_SERVER_TIMEZONE || DEFAULT_SERVER_TIMEZONE),
     defaultInstancePower: true,
-    defaultInstanceDevMode: true,
+    defaultInstanceDevMode: false,
     defaultSyncAdmin: true,
     defaultAutoVacuum: true,
     supportEmail: process.env.PH_SUPPORT_EMAIL || '',

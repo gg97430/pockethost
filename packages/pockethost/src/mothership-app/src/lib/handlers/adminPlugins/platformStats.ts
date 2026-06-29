@@ -30,16 +30,24 @@ const emptyStatusCounts = (): Record<string, number> => {
   return counts
 }
 
+const safeCountRecords = (collection: string, ...exprs: dbx.Expression[]): number => {
+  try {
+    return $app.countRecords(collection, ...exprs)
+  } catch {
+    return 0
+  }
+}
+
 const countInstanceStatus = (key: string): number => {
-  return $app.countRecords('instances', $dbx.exp(`status = {:status}`, { status: key }))
+  return safeCountRecords('instances', $dbx.exp(`status = {:status}`, { status: key }))
 }
 
 const countVerifiedUsers = (): number => {
-  return $app.countRecords('verified_users')
+  return safeCountRecords('verified_users')
 }
 
 const countUnverifiedUsers = (): number => {
-  return $app.countRecords('unverified_users')
+  return safeCountRecords('unverified_users')
 }
 
 export const getLivePlatformStats = (): LivePlatformStats | null => {
@@ -56,7 +64,7 @@ export const recountLivePlatformStats = (): LivePlatformStats => {
 
   const stats: LivePlatformStats = {
     statusCounts,
-    totalUsers: $app.countRecords('users'),
+    totalUsers: safeCountRecords('users'),
     verifiedUsers: countVerifiedUsers(),
     unverifiedUsers: countUnverifiedUsers(),
     updatedAt: new Date().toISOString(),

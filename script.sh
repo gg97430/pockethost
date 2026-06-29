@@ -97,6 +97,7 @@ FORCE_ENV="${FORCE_ENV:-0}"
 RUN_APT_UPGRADE="${RUN_APT_UPGRADE:-0}"
 RUN_BUILD="${RUN_BUILD:-1}"
 RUN_TYPECHECK="${RUN_TYPECHECK:-1}"
+PRELOAD_POCKETBASE="${PRELOAD_POCKETBASE:-1}"
 START_PM2="${START_PM2:-1}"
 RUN_PM2_STARTUP="${RUN_PM2_STARTUP:-1}"
 ENABLE_UFW="${ENABLE_UFW:-1}"
@@ -476,6 +477,13 @@ build_project() {
   run_as_install_user "cd $(q "${INSTALL_DIR}") && pnpm --filter @pockethost/dashboard build"
 }
 
+preload_pocketbase_binaries() {
+  bool_enabled "${PRELOAD_POCKETBASE}" || return
+
+  log "Telechargement des binaires PocketBase"
+  run_as_install_user "cd $(q "${INSTALL_DIR}") && pnpm prod:cli pocketbase update"
+}
+
 start_pm2_stack() {
   bool_enabled "${START_PM2}" || return
 
@@ -661,6 +669,7 @@ main() {
   write_credentials_note
   install_project_dependencies
   build_project
+  preload_pocketbase_binaries
   start_pm2_stack
   wait_for_mothership
   ensure_dashboard_admin

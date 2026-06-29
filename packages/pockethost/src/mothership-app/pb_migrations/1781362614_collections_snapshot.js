@@ -1985,6 +1985,13 @@ migrate(
       },
     ]
 
+    try {
+      const users = app.findCollectionByNameOrId('users')
+      if (users && users.id !== 'systemprofiles0') {
+        app.delete(users)
+      }
+    } catch {}
+
     return app.importCollections(snapshot, false)
   },
   (app) => {

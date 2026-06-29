@@ -120,14 +120,21 @@ const emptyStatusCounts = () => {
 	for (const key of INSTANCE_STATUS_KEYS) counts[key] = 0;
 	return counts;
 };
+const safeCountRecords = (collection, ...exprs) => {
+	try {
+		return $app.countRecords(collection, ...exprs);
+	} catch {
+		return 0;
+	}
+};
 const countInstanceStatus = (key) => {
-	return $app.countRecords("instances", $dbx.exp(`status = {:status}`, { status: key }));
+	return safeCountRecords("instances", $dbx.exp(`status = {:status}`, { status: key }));
 };
 const countVerifiedUsers = () => {
-	return $app.countRecords("verified_users");
+	return safeCountRecords("verified_users");
 };
 const countUnverifiedUsers = () => {
-	return $app.countRecords("unverified_users");
+	return safeCountRecords("unverified_users");
 };
 const getLivePlatformStats = () => {
 	const stats = getAppStoreJson(LIVE_PLATFORM_STORE_KEY);
@@ -139,7 +146,7 @@ const recountLivePlatformStats = () => {
 	for (const key of INSTANCE_STATUS_KEYS) statusCounts[key] = countInstanceStatus(key);
 	const stats = {
 		statusCounts,
-		totalUsers: $app.countRecords("users"),
+		totalUsers: safeCountRecords("users"),
 		verifiedUsers: countVerifiedUsers(),
 		unverifiedUsers: countUnverifiedUsers(),
 		updatedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -3465,7 +3472,13 @@ const HandleInstancesMetrics = (e) => {
 //#endregion
 //#region src/lib/handlers/instance/bootstrap/resetInstancesIdle.ts
 const resetInstancesIdle = (app) => {
-	const records = app.findRecordsByFilter(`instances`, `status != 'idle'`).filter((r) => !!r);
+	const records = (() => {
+		try {
+			return app.findRecordsByFilter(`instances`, `status != 'idle'`).filter((r) => !!r);
+		} catch {
+			return [];
+		}
+	})();
 	let reset = 0;
 	for (const record of records) {
 		record.set(`status`, `idle`);
@@ -6869,17 +6882,21 @@ const BeforeUpdate_ssh_keys = (e) => {
 //#endregion
 //#region src/lib/handlers/stats/lib/refreshPublicStats.ts
 const mkPublicStatsPath = () => `${$app.dataDir()}/stats.json`;
+const countTableRows = (tableName) => {
+	try {
+		const result = new DynamicModel({ total: 0 });
+		$app.db().newQuery(`SELECT COUNT(*) as total FROM ${tableName}`).one(result);
+		return Number(result.total || 0);
+	} catch {
+		return 0;
+	}
+};
 const refreshPublicStats = () => {
 	const log = mkLog("refreshPublicStats");
-	const db = $app.db();
-	const users = new DynamicModel({ total: 0 });
-	db.newQuery("SELECT COUNT(*) as total FROM users").one(users);
-	const instances = new DynamicModel({ total: 0 });
-	db.newQuery("SELECT COUNT(*) as total FROM instances").one(instances);
 	const stats = {
 		updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-		developers: users.total,
-		instances: instances.total
+		developers: countTableRows("users"),
+		instances: countTableRows("instances")
 	};
 	$os.writeFile(mkPublicStatsPath(), JSON.stringify(stats), 420);
 	log(`Wrote stats.json`, stats);

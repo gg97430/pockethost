@@ -686,7 +686,7 @@ Dashboard:
 
 Compte initial:
   email: ${ADMIN_EMAIL}
-  password: ${ADMIN_PASSWORD}
+  password: voir ${CREDENTIALS_FILE:-${PH_HOME}/install-credentials.txt}
 
 Fichiers importants:
   projet: ${INSTALL_DIR}
@@ -700,10 +700,9 @@ Commandes utiles:
   sudo -u ${INSTALL_USER} bash -lc 'cd ${INSTALL_DIR} && git pull --ff-only && pnpm install --frozen-lockfile && pnpm --filter pockethost-mothership-app build && pnpm --filter @pockethost/dashboard build && pm2 restart all'
 
 DNS requis:
-  A app ${SERVER_IP}
-  A * ${SERVER_IP}
-  A ${DOMAIN} ${SERVER_IP}
-  A ftp ${SERVER_IP}
+  A ${APP_HOST} ${SERVER_IP}
+  A *.${DOMAIN} ${SERVER_IP}
+  A ftp.${DOMAIN} ${SERVER_IP}
 EOF
 }
 

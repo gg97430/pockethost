@@ -590,7 +590,22 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
         const total = event.lengthComputable ? event.total : input.file?.size || 0
         const loaded = event.loaded
         const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0
-        input.onProgress({ loaded, total, percent })
+        input.onProgress({
+          loaded,
+          total,
+          percent,
+          phase: percent >= 100 ? 'processing' : 'uploading',
+        })
+      }
+
+      xhr.upload.onload = () => {
+        if (!input.onProgress) return
+        input.onProgress({
+          loaded: input.file?.size || 0,
+          total: input.file?.size || 0,
+          percent: 100,
+          phase: 'processing',
+        })
       }
 
       xhr.onload = () => {

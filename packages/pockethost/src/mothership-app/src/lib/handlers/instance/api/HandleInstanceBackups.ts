@@ -4,6 +4,7 @@ import { DEFAULT_SERVER_TIMEZONE, readOperatorSettings } from '../../operatorAdm
 const BACKUP_FORMAT = 'gestion-pocketbase-instance-backup-v1'
 const BACKUP_DIRS = ['pb_data', 'pb_public', 'pb_migrations', 'pb_hooks']
 const REQUIRED_RESTORE_DIR = 'pb_data'
+const AUXILIARY_DB_FILES = ['auxiliary.db', 'auxiliary.db-shm', 'auxiliary.db-wal']
 const MAX_STOP_WAIT_SECONDS = 120
 const DIR_MODE = 0o755 as any
 const PRIVATE_DIR_MODE = 0o700 as any
@@ -642,6 +643,14 @@ const createBackupRecord = (instance: core.Record, authRecord: core.Record, kind
 }
 
 const recordObject = (value: unknown) => {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, any>) : {}
+    } catch {
+      return {}
+    }
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return JSON.parse(JSON.stringify(value)) as Record<string, any>
 }
@@ -1209,6 +1218,35 @@ const ensureRestorableDirs = (sourceRoot: string) => {
   }
 }
 
+const isExternalImportedBackup = (backup: core.Record, manifest: Record<string, any>) => {
+  return backup.getString('kind') === 'import' || manifest.imported === true
+}
+
+const preserveTargetAuxiliaryDbForExternalImport = (
+  instance: core.Record,
+  sourceRoot: string,
+  backup: core.Record,
+  manifest: Record<string, any>
+) => {
+  if (!isExternalImportedBackup(backup, manifest)) return
+
+  const targetPbData = `${instanceRoot(instance.id)}/${REQUIRED_RESTORE_DIR}`
+  const restoredPbData = `${sourceRoot}/${REQUIRED_RESTORE_DIR}`
+  $os.mkdirAll(restoredPbData, DIR_MODE)
+
+  for (const filename of AUXILIARY_DB_FILES) {
+    const restoredPath = `${restoredPbData}/${filename}`
+    try {
+      $os.remove(restoredPath)
+    } catch {}
+
+    const currentPath = `${targetPbData}/${filename}`
+    if (pathExists(currentPath)) {
+      runCommand('cp', '-p', currentPath, restoredPath)
+    }
+  }
+}
+
 const restoreExtractedDirs = (instance: core.Record, extractDir: string) => {
   const root = instanceRoot(instance.id)
   const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`
@@ -1335,6 +1373,7 @@ const restoreArchive = (
     const contentRoot = findArchiveContentRoot(extractDir, normalizedDir)
     ensureRestorableDirs(contentRoot)
     const manifest = readManifest(contentRoot, backup)
+    preserveTargetAuxiliaryDbForExternalImport(instance, contentRoot, backup, manifest)
 
     updateRestoreOperation(backup, 'replacing', {
       ...target,
@@ -1622,7 +1661,9 @@ const normalizeLitestreamText = (value: unknown, fallback: string, max: number) 
 }
 
 const normalizeLitestreamPrefix = (value: unknown) => {
-  return normalizeLitestreamText(value, '', 500).replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/')
+  return normalizeLitestreamText(value, '', 500)
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/\/{2,}/g, '/')
 }
 
 const litestreamDefaultS3Values = () => {
@@ -1667,7 +1708,9 @@ const litestreamS3ConfigFor = (policy: core.Record, instanceId: string) => {
     endpoint: normalizeLitestreamText(policy.getString('s3Endpoint'), '', 500),
     bucket,
     prefix,
-    region: normalizeLitestreamText(policy.getString('s3Region'), DEFAULT_LITESTREAM_S3_REGION, 64) || DEFAULT_LITESTREAM_S3_REGION,
+    region:
+      normalizeLitestreamText(policy.getString('s3Region'), DEFAULT_LITESTREAM_S3_REGION, 64) ||
+      DEFAULT_LITESTREAM_S3_REGION,
     accessKeyId: normalizeLitestreamText(policy.getString('s3AccessKeyId'), '', 255),
     secretAccessKey: normalizeLitestreamText(policy.getString('s3SecretAccessKey'), '', 1024),
     forcePathStyle: policy.getBool('s3ForcePathStyle'),
@@ -1984,7 +2027,9 @@ const buildLitestreamConfig = (policies: core.Record[]) => {
       validPolicies.push(policy)
 
       dbLines.push(`  - path: ${yamlValue(dbPath)}`)
-      dbLines.push(`    monitor-interval: ${policy.getString('monitorInterval') || DEFAULT_LITESTREAM_MONITOR_INTERVAL}`)
+      dbLines.push(
+        `    monitor-interval: ${policy.getString('monitorInterval') || DEFAULT_LITESTREAM_MONITOR_INTERVAL}`
+      )
       dbLines.push(
         `    checkpoint-interval: ${policy.getString('checkpointInterval') || DEFAULT_LITESTREAM_CHECKPOINT_INTERVAL}`
       )

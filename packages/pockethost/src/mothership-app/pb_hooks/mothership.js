@@ -513,6 +513,11 @@ const BACKUP_DIRS = [
 	"pb_hooks"
 ];
 const REQUIRED_RESTORE_DIR = "pb_data";
+const AUXILIARY_DB_FILES = [
+	"auxiliary.db",
+	"auxiliary.db-shm",
+	"auxiliary.db-wal"
+];
 const MAX_STOP_WAIT_SECONDS = 120;
 const DIR_MODE = 493;
 const PRIVATE_DIR_MODE = 448;
@@ -950,6 +955,12 @@ const createBackupRecord = (instance, authRecord, kind) => {
 	return backup;
 };
 const recordObject = (value) => {
+	if (typeof value === "string") try {
+		const parsed = JSON.parse(value);
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+	} catch {
+		return {};
+	}
 	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 	return JSON.parse(JSON.stringify(value));
 };
@@ -1355,6 +1366,23 @@ const ensureRestorableDirs = (sourceRoot) => {
 	if (!pathExists$1(`${sourceRoot}/${REQUIRED_RESTORE_DIR}`)) throw new BadRequestError(`Archive incomplete: ${REQUIRED_RESTORE_DIR} manquant.`);
 	for (const dir of BACKUP_DIRS) $os.mkdirAll(`${sourceRoot}/${dir}`, DIR_MODE);
 };
+const isExternalImportedBackup = (backup, manifest) => {
+	return backup.getString("kind") === "import" || manifest.imported === true;
+};
+const preserveTargetAuxiliaryDbForExternalImport = (instance, sourceRoot, backup, manifest) => {
+	if (!isExternalImportedBackup(backup, manifest)) return;
+	const targetPbData = `${instanceRoot$2(instance.id)}/${REQUIRED_RESTORE_DIR}`;
+	const restoredPbData = `${sourceRoot}/${REQUIRED_RESTORE_DIR}`;
+	$os.mkdirAll(restoredPbData, DIR_MODE);
+	for (const filename of AUXILIARY_DB_FILES) {
+		const restoredPath = `${restoredPbData}/${filename}`;
+		try {
+			$os.remove(restoredPath);
+		} catch {}
+		const currentPath = `${targetPbData}/${filename}`;
+		if (pathExists$1(currentPath)) runCommand("cp", "-p", currentPath, restoredPath);
+	}
+};
 const restoreExtractedDirs = (instance, extractDir) => {
 	const root = instanceRoot$2(instance.id);
 	const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`;
@@ -1449,6 +1477,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 		const contentRoot = findArchiveContentRoot(extractDir, normalizedDir);
 		ensureRestorableDirs(contentRoot);
 		const manifest = readManifest(contentRoot, backup);
+		preserveTargetAuxiliaryDbForExternalImport(instance, contentRoot, backup, manifest);
 		updateRestoreOperation(backup, "replacing", {
 			...target,
 			label: "Remplacement des fichiers de l'instance",

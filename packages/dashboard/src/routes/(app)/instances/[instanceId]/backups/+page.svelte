@@ -31,6 +31,10 @@
     targetSubdomain?: string
     error?: string
   }
+  type TerminalRestoreOperation = {
+    backup: InstanceBackup
+    operation: BackupOperation
+  }
 
   const RESTORE_OPERATION_STALE_MS = 36 * 60 * 60 * 1000
   const defaultPolicyDraft = (): UpdateInstanceBackupPolicyInput => ({
@@ -142,6 +146,8 @@
       : 'La sauvegarde travaille en arrière-plan. Vous pouvez laisser cette page ouverte, elle se rafraîchit automatiquement.'
   $: liveOperationCount =
     liveOperationKind === 'restore' ? (hasActiveRestore || isRestoreAction ? 1 : 0) : runningBackups.length || 1
+  $: terminalRestoreAction = isRestoreAction ? terminalRestoreOperationForAction() : null
+  $: if (terminalRestoreAction) clearTerminalRestoreAction(terminalRestoreAction)
   $: policyStatusText = backupPolicy ? policyStatusLabel(backupPolicy.lastStatus) : 'Non configurée'
   $: backupPolicyNaturalResult = parseNaturalCron(backupPolicyNaturalSchedule, {
     timezoneLabel: backupPolicyServerTimezone,
@@ -451,6 +457,11 @@
     return action === `restore:${backup.id}` || action === `restore-new:${backup.id}`
   }
 
+  function restoreActionBackupId(value = action) {
+    const match = value.match(/^restore(?:-new)?:([a-z0-9]+)$/)
+    return match?.[1] || ''
+  }
+
   function restoreOperation(backup: InstanceBackup): BackupOperation {
     const manifest = manifestObject(backup.manifest)
     const rawOperation = manifest.restoreOperation
@@ -520,6 +531,42 @@
   function completedRestoreOperation(backup: InstanceBackup) {
     const operation = restoreOperation(backup)
     return operation.phase === 'ready' ? operation : null
+  }
+
+  function terminalRestoreOperationForBackupId(backupId: string): TerminalRestoreOperation | null {
+    if (!backupId) return null
+    const backup = backups.find((item) => item.id === backupId)
+    if (!backup) return null
+
+    const operation = restoreOperation(backup)
+    if (operation.phase !== 'ready' && operation.phase !== 'failed') return null
+    if (operationStartedAt && Math.max(operation.startedAt, operation.updatedAt) < operationStartedAt - 1000) return null
+    return { backup, operation }
+  }
+
+  function terminalRestoreOperationForAction() {
+    return terminalRestoreOperationForBackupId(restoreActionBackupId())
+  }
+
+  function clearTerminalRestoreAction(terminal: TerminalRestoreOperation) {
+    const currentAction = action
+    if (!currentAction.startsWith('restore:') && !currentAction.startsWith('restore-new:')) return
+
+    action = ''
+    operationStartedAt = 0
+
+    if (terminal.operation.phase === 'ready') {
+      errorMessage = ''
+      successMessage = terminal.operation.mode === 'new-instance' ? 'Nouvelle instance restaurée' : 'Instance restaurée'
+
+      if (currentAction.startsWith('restore-new:') && terminal.operation.targetInstanceId) {
+        void goto(`/instances/${terminal.operation.targetInstanceId}`)
+      }
+      return
+    }
+
+    successMessage = ''
+    errorMessage = terminal.operation.error || 'Restauration échouée'
   }
 
   function restoreTagLabel(backup: InstanceBackup) {
@@ -824,8 +871,17 @@
       successMessage = 'Instance restaurée'
       await loadBackups()
     } catch (error) {
-      errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
       await loadBackups()
+      const terminal = terminalRestoreOperationForBackupId(backup.id)
+      if (terminal?.operation.phase === 'ready') {
+        errorMessage = ''
+        successMessage = 'Instance restaurée'
+      } else if (terminal?.operation.phase === 'failed') {
+        successMessage = ''
+        errorMessage = terminal.operation.error || 'Restauration échouée'
+      } else {
+        errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      }
     } finally {
       action = ''
       operationStartedAt = 0
@@ -851,8 +907,18 @@
       successMessage = 'Nouvelle instance restaurée'
       await goto(`/instances/${result.instance.id}`)
     } catch (error) {
-      errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
       await loadBackups()
+      const terminal = terminalRestoreOperationForBackupId(backup.id)
+      if (terminal?.operation.phase === 'ready') {
+        errorMessage = ''
+        successMessage = 'Nouvelle instance restaurée'
+        if (terminal.operation.targetInstanceId) await goto(`/instances/${terminal.operation.targetInstanceId}`)
+      } else if (terminal?.operation.phase === 'failed') {
+        successMessage = ''
+        errorMessage = terminal.operation.error || 'Restauration échouée'
+      } else {
+        errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
+      }
     } finally {
       action = ''
       operationStartedAt = 0

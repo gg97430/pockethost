@@ -37,6 +37,7 @@
   }
 
   const RESTORE_OPERATION_STALE_MS = 36 * 60 * 60 * 1000
+  const RESTORE_ACTION_RESYNC_DELAY_MS = 12 * 1000
   const defaultPolicyDraft = (): UpdateInstanceBackupPolicyInput => ({
     enabled: false,
     cron: '0 2 * * *',
@@ -301,7 +302,10 @@
   }
 
   function normalizedLitestreamPrefix(prefix: string) {
-    return `${prefix || ''}`.trim().replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/')
+    return `${prefix || ''}`
+      .trim()
+      .replace(/^\/+|\/+$/g, '')
+      .replace(/\/{2,}/g, '/')
   }
 
   function litestreamHasSecret(draft: UpdateInstanceLitestreamPolicyInput) {
@@ -310,10 +314,7 @@
 
   function litestreamS3DraftValid(draft: UpdateInstanceLitestreamPolicyInput) {
     return (
-      !!draft.s3Endpoint.trim() &&
-      !!draft.s3Bucket.trim() &&
-      !!draft.s3AccessKeyId.trim() &&
-      litestreamHasSecret(draft)
+      !!draft.s3Endpoint.trim() && !!draft.s3Bucket.trim() && !!draft.s3AccessKeyId.trim() && litestreamHasSecret(draft)
     )
   }
 
@@ -462,13 +463,17 @@
     return match?.[1] || ''
   }
 
-  function restoreOperation(backup: InstanceBackup): BackupOperation {
+  function restoreOperationPayload(backup: InstanceBackup) {
     const manifest = manifestObject(backup.manifest)
     const rawOperation = manifest.restoreOperation
-    const operation =
-      rawOperation && typeof rawOperation === 'object' && !Array.isArray(rawOperation)
-        ? (rawOperation as Record<string, unknown>)
-        : {}
+    return rawOperation && typeof rawOperation === 'object' && !Array.isArray(rawOperation)
+      ? (rawOperation as Record<string, unknown>)
+      : {}
+  }
+
+  function restoreOperation(backup: InstanceBackup): BackupOperation {
+    const manifest = manifestObject(backup.manifest)
+    const operation = restoreOperationPayload(backup)
 
     const hasPendingAction = restoreActionMatchesBackup(backup)
     const startedAt = Date.parse(`${operation.startedAt || ''}`)
@@ -515,9 +520,13 @@
   }
 
   function isRestoreOperationActive(backup: InstanceBackup) {
-    const operation = restoreOperation(backup)
-    if (!operation.phase || operation.phase === 'ready' || operation.phase === 'failed') return false
-    return now - operation.updatedAt < RESTORE_OPERATION_STALE_MS
+    const operation = restoreOperationPayload(backup)
+    const phase = typeof operation.phase === 'string' ? operation.phase : ''
+    if (!phase || phase === 'ready' || phase === 'failed') return false
+
+    const updatedAt = Date.parse(`${operation.updatedAt || backup.updated || backup.created || ''}`)
+    if (!Number.isFinite(updatedAt)) return false
+    return now - updatedAt < RESTORE_OPERATION_STALE_MS
   }
 
   function shouldShowRestoreProgress(backup: InstanceBackup) {
@@ -540,7 +549,8 @@
 
     const operation = restoreOperation(backup)
     if (operation.phase !== 'ready' && operation.phase !== 'failed') return null
-    if (operationStartedAt && Math.max(operation.startedAt, operation.updatedAt) < operationStartedAt - 1000) return null
+    if (operationStartedAt && Math.max(operation.startedAt, operation.updatedAt) < operationStartedAt - 1000)
+      return null
     return { backup, operation }
   }
 
@@ -567,6 +577,32 @@
 
     successMessage = ''
     errorMessage = terminal.operation.error || 'Restauration échouée'
+  }
+
+  function resyncPendingRestoreAction() {
+    if (!isRestoreAction || !operationStartedAt) return
+
+    const terminal = terminalRestoreOperationForAction()
+    if (terminal) {
+      clearTerminalRestoreAction(terminal)
+      return
+    }
+
+    if (Date.now() - operationStartedAt < RESTORE_ACTION_RESYNC_DELAY_MS) return
+
+    const backup = backups.find((item) => item.id === restoreActionBackupId())
+    if (!backup || backup.status === 'running' || isRestoreOperationActive(backup)) return
+
+    const phase = restoreOperationPayload(backup).phase
+    if (phase && phase !== 'ready' && phase !== 'failed') return
+
+    const currentAction = action
+    action = ''
+    operationStartedAt = 0
+    errorMessage = ''
+    successMessage = currentAction.startsWith('restore-new:')
+      ? 'Restauration terminée, nouvelle instance à vérifier dans le dashboard'
+      : 'Instance restaurée'
   }
 
   function restoreTagLabel(backup: InstanceBackup) {
@@ -601,6 +637,7 @@
     }
     try {
       backups = (await client().listInstanceBackups(id)).backups
+      resyncPendingRestoreAction()
     } catch (error) {
       if (!silent) {
         errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
@@ -1013,78 +1050,76 @@
     </div>
 
     {#if backupPageTab === 'archive'}
-      <div
-        id="backup-tab-archive"
-        class="backup-tab-panel"
-        role="tabpanel"
-        aria-labelledby="backup-tab-archive-tab"
-      >
-  <section class="backup-import">
-    <div class="backup-import-copy">
-      <strong>Importer une sauvegarde ZIP à restaurer</strong>
-      <span>
-        Réservé superadmin. Étape 1 : importez le ZIP. Étape 2 : cliquez <strong>Restaurer</strong> sur la ligne créée.
-        Le ZIP peut contenir <code>pb_data</code>, ou directement les fichiers SQLite comme <code>data.db</code>.
-      </span>
-    </div>
+      <div id="backup-tab-archive" class="backup-tab-panel" role="tabpanel" aria-labelledby="backup-tab-archive-tab">
+        <section class="backup-import">
+          <div class="backup-import-copy">
+            <strong>Importer une sauvegarde ZIP à restaurer</strong>
+            <span>
+              Réservé superadmin. Étape 1 : importez le ZIP. Étape 2 : cliquez <strong>Restaurer</strong> sur la ligne
+              créée. Le ZIP peut contenir <code>pb_data</code>, ou directement les fichiers SQLite comme
+              <code>data.db</code>.
+            </span>
+          </div>
 
-    <div class="backup-import-grid">
-      <label class="backup-file">
-        <input
-          bind:this={fileInput}
-          type="file"
-          accept=".zip,.tgz,.tar.gz,application/zip,application/gzip"
-          disabled={isBusy}
-          onchange={(event) => {
-            archiveFile = event.currentTarget.files?.[0] || null
-          }}
-        />
-        <span>{selectedArchiveLabel}</span>
-      </label>
-      <button type="button" class="backup-import-btn" disabled={isBusy || !archiveFile} onclick={importArchive}>
-        <wa-icon name={action === 'import:file' ? 'rotate' : 'upload'}></wa-icon>
-        {action === 'import:file' ? 'Import...' : '2. Importer le ZIP'}
-      </button>
-    </div>
+          <div class="backup-import-grid">
+            <label class="backup-file">
+              <input
+                bind:this={fileInput}
+                type="file"
+                accept=".zip,.tgz,.tar.gz,application/zip,application/gzip"
+                disabled={isBusy}
+                onchange={(event) => {
+                  archiveFile = event.currentTarget.files?.[0] || null
+                }}
+              />
+              <span>{selectedArchiveLabel}</span>
+            </label>
+            <button type="button" class="backup-import-btn" disabled={isBusy || !archiveFile} onclick={importArchive}>
+              <wa-icon name={action === 'import:file' ? 'rotate' : 'upload'}></wa-icon>
+              {action === 'import:file' ? 'Import...' : '2. Importer le ZIP'}
+            </button>
+          </div>
 
-    {#if uploadProgress}
-      <div class="backup-upload-progress" aria-live="polite">
-        <div class="backup-upload-progress__row">
-          <strong>{uploadPhaseLabel}</strong>
-          <span
-            >{uploadProgress.percent}% - {uploadProgressLabel}{uploadChunksLabel ? ` - ${uploadChunksLabel}` : ''}</span
-          >
-        </div>
-        <div
-          class="backup-upload-progress__track"
-          role="progressbar"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow={uploadProgress.percent}
-        >
-          <span style={`width: ${uploadProgress.percent}%`}></span>
-        </div>
-      </div>
-    {/if}
+          {#if uploadProgress}
+            <div class="backup-upload-progress" aria-live="polite">
+              <div class="backup-upload-progress__row">
+                <strong>{uploadPhaseLabel}</strong>
+                <span
+                  >{uploadProgress.percent}% - {uploadProgressLabel}{uploadChunksLabel
+                    ? ` - ${uploadChunksLabel}`
+                    : ''}</span
+                >
+              </div>
+              <div
+                class="backup-upload-progress__track"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={uploadProgress.percent}
+              >
+                <span style={`width: ${uploadProgress.percent}%`}></span>
+              </div>
+            </div>
+          {/if}
 
-    <div class="backup-import-grid">
-      <input
-        class="backup-server-path"
-        bind:value={serverPath}
-        disabled={isBusy}
-        placeholder="Chemin serveur, ex. /home/ubuntu/.local/share/pockethost/data/imports/backup.zip"
-      />
-      <button
-        type="button"
-        class="backup-import-btn backup-import-btn--server"
-        disabled={isBusy || !serverPath.trim()}
-        onclick={importServerArchive}
-      >
-        <wa-icon name={action === 'import:server' ? 'rotate' : 'server'}></wa-icon>
-        {action === 'import:server' ? 'Import...' : 'Importer ZIP serveur'}
-      </button>
-    </div>
-  </section>
+          <div class="backup-import-grid">
+            <input
+              class="backup-server-path"
+              bind:value={serverPath}
+              disabled={isBusy}
+              placeholder="Chemin serveur, ex. /home/ubuntu/.local/share/pockethost/data/imports/backup.zip"
+            />
+            <button
+              type="button"
+              class="backup-import-btn backup-import-btn--server"
+              disabled={isBusy || !serverPath.trim()}
+              onclick={importServerArchive}
+            >
+              <wa-icon name={action === 'import:server' ? 'rotate' : 'server'}></wa-icon>
+              {action === 'import:server' ? 'Import...' : 'Importer ZIP serveur'}
+            </button>
+          </div>
+        </section>
       </div>
     {/if}
 
@@ -1095,216 +1130,216 @@
         role="tabpanel"
         aria-labelledby="backup-tab-schedule-tab"
       >
-    <div class="backup-policy__header">
-      <div>
-        <strong>Planification automatique</strong>
-        <span>Créer et purger les sauvegardes selon une politique par instance.</span>
-      </div>
-      <span class="backup-policy-status {policyStatusClass(backupPolicy?.lastStatus)}">{policyStatusText}</span>
-    </div>
+        <div class="backup-policy__header">
+          <div>
+            <strong>Planification automatique</strong>
+            <span>Créer et purger les sauvegardes selon une politique par instance.</span>
+          </div>
+          <span class="backup-policy-status {policyStatusClass(backupPolicy?.lastStatus)}">{policyStatusText}</span>
+        </div>
 
-    {#if policyErrorMessage}
-      <p class="backup-policy-error">{policyErrorMessage}</p>
-    {/if}
+        {#if policyErrorMessage}
+          <p class="backup-policy-error">{policyErrorMessage}</p>
+        {/if}
 
-    {#if isPolicyLoading}
-      <div class="backup-policy-loading">Chargement de la planification...</div>
-    {:else}
-      <div class="backup-policy-grid">
-        <label class="backup-policy-toggle">
-          <input type="checkbox" bind:checked={backupPolicyDraft.enabled} disabled={!!policyAction} />
-          <span>
-            <strong>Activer</strong>
-            <small>{backupPolicyDraft.enabled ? 'Planification active' : 'Planification inactive'}</small>
-          </span>
-        </label>
+        {#if isPolicyLoading}
+          <div class="backup-policy-loading">Chargement de la planification...</div>
+        {:else}
+          <div class="backup-policy-grid">
+            <label class="backup-policy-toggle">
+              <input type="checkbox" bind:checked={backupPolicyDraft.enabled} disabled={!!policyAction} />
+              <span>
+                <strong>Activer</strong>
+                <small>{backupPolicyDraft.enabled ? 'Planification active' : 'Planification inactive'}</small>
+              </span>
+            </label>
 
-        <div class="backup-policy-field backup-policy-field--wide">
-          <label for="backup-policy-cron">Fréquence</label>
-          <div class="backup-cron-wizard">
-            <div class="backup-cron-wizard__main">
-              <input
-                id="backup-policy-natural-schedule"
-                class="backup-policy-input"
-                bind:value={backupPolicyNaturalSchedule}
-                disabled={!!policyAction}
-                placeholder="Ex. tous les jours à 2h"
-                aria-label="Planification en langage naturel"
+            <div class="backup-policy-field backup-policy-field--wide">
+              <label for="backup-policy-cron">Fréquence</label>
+              <div class="backup-cron-wizard">
+                <div class="backup-cron-wizard__main">
+                  <input
+                    id="backup-policy-natural-schedule"
+                    class="backup-policy-input"
+                    bind:value={backupPolicyNaturalSchedule}
+                    disabled={!!policyAction}
+                    placeholder="Ex. tous les jours à 2h"
+                    aria-label="Planification en langage naturel"
+                  />
+                  <button
+                    type="button"
+                    class="backup-policy-secondary"
+                    disabled={!!policyAction || !backupPolicyNaturalResult.ok}
+                    onclick={applyNaturalBackupSchedule}
+                  >
+                    <wa-icon name="wand-magic-sparkles"></wa-icon>
+                    Convertir
+                  </button>
+                </div>
+                <div class="backup-cron-wizard__examples">
+                  {#each NATURAL_CRON_EXAMPLES as example}
+                    <button
+                      type="button"
+                      class="backup-cron-chip"
+                      disabled={!!policyAction}
+                      onclick={() => useNaturalBackupScheduleExample(example)}
+                    >
+                      {example}
+                    </button>
+                  {/each}
+                </div>
+                <div class="backup-cron-timezone">
+                  Fuseau serveur : <strong>{backupPolicyServerTimezone}</strong>
+                </div>
+                {#if backupPolicyNaturalResult.ok}
+                  <div class="backup-cron-result backup-cron-result--ok">
+                    <strong>{backupPolicyNaturalResult.cron}</strong>
+                    <span>{backupPolicyNaturalResult.localDescription}</span>
+                    <span>{backupPolicyNaturalResult.serverDescription}</span>
+                  </div>
+                {:else}
+                  <div class="backup-cron-result backup-cron-result--error">
+                    {backupPolicyNaturalResult.message}
+                  </div>
+                {/if}
+              </div>
+              <CronSchedulePicker
+                id="backup-policy-cron"
+                bind:value={backupPolicyDraft.cron}
+                bind:customMode={backupPolicyCustomCron}
+                timezoneLabel={backupPolicyServerTimezone}
               />
+              {#if backupPolicyCustomCron}
+                <input
+                  class="backup-policy-input"
+                  bind:value={backupPolicyDraft.cron}
+                  placeholder="0 2 * * *"
+                  aria-label="Expression cron personnalisée"
+                />
+              {/if}
+              {#if backupPolicyDraft.cron && !validateCronExpression(backupPolicyDraft.cron)}
+                <span class="backup-policy-help backup-policy-help--error">Expression cron invalide.</span>
+              {:else}
+                <span class="backup-policy-help">
+                  Heure serveur ({backupPolicyServerTimezone}). Exemple : <code>0 2 * * *</code> tous les jours à 02:00.
+                </span>
+              {/if}
+            </div>
+
+            <div class="backup-policy-field">
+              <span class="backup-policy-field-label">Destinations</span>
+              <label class="backup-policy-check">
+                <input type="checkbox" bind:checked={backupPolicyDraft.localEnabled} disabled={!!policyAction} />
+                <span>Interne serveur</span>
+              </label>
+              <label class="backup-policy-check">
+                <input
+                  type="checkbox"
+                  bind:checked={backupPolicyDraft.remoteEnabled}
+                  disabled={!!policyAction || !backupPolicyS3Enabled}
+                />
+                <span>S3/R2 {backupPolicyS3Enabled ? '' : 'non configuré'}</span>
+              </label>
+              <span class="backup-policy-help">Actif : {policyDestinationText || 'aucune destination'}</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="backup-policy-active">Instance active</label>
+              <select
+                id="backup-policy-active"
+                class="backup-policy-input"
+                bind:value={backupPolicyDraft.activeBehavior}
+                disabled={!!policyAction}
+              >
+                <option value="stop-restart">Arrêter puis redémarrer</option>
+                <option value="skip-active">Ignorer si active</option>
+              </select>
+              <span class="backup-policy-help">Le mode fiable arrête l'instance avant la copie.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <span class="backup-policy-field-label">Rétention interne</span>
+              <div class="backup-policy-retention">
+                <input
+                  class="backup-policy-input"
+                  type="number"
+                  min="0"
+                  max="3650"
+                  bind:value={backupPolicyDraft.localRetentionCount}
+                  disabled={!!policyAction || !backupPolicyDraft.localEnabled}
+                  aria-label="Nombre de sauvegardes internes à garder"
+                />
+                <span>sauvegardes</span>
+                <input
+                  class="backup-policy-input"
+                  type="number"
+                  min="0"
+                  max="3650"
+                  bind:value={backupPolicyDraft.localRetentionDays}
+                  disabled={!!policyAction || !backupPolicyDraft.localEnabled}
+                  aria-label="Nombre de jours de sauvegardes internes à garder"
+                />
+                <span>jours</span>
+              </div>
+              <span class="backup-policy-help">0 = illimité. Les sauvegardes manuelles ne sont pas purgées.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <span class="backup-policy-field-label">Rétention S3/R2</span>
+              <div class="backup-policy-retention">
+                <input
+                  class="backup-policy-input"
+                  type="number"
+                  min="0"
+                  max="3650"
+                  bind:value={backupPolicyDraft.remoteRetentionCount}
+                  disabled={!!policyAction || !backupPolicyDraft.remoteEnabled}
+                  aria-label="Nombre de sauvegardes S3 à garder"
+                />
+                <span>sauvegardes</span>
+                <input
+                  class="backup-policy-input"
+                  type="number"
+                  min="0"
+                  max="3650"
+                  bind:value={backupPolicyDraft.remoteRetentionDays}
+                  disabled={!!policyAction || !backupPolicyDraft.remoteEnabled}
+                  aria-label="Nombre de jours de sauvegardes S3 à garder"
+                />
+                <span>jours</span>
+              </div>
+              <span class="backup-policy-help">La purge S3 ne touche que les sauvegardes automatiques.</span>
+            </div>
+          </div>
+
+          <div class="backup-policy-footer">
+            <div class="backup-policy-last">
+              <span>Dernière exécution : {backupPolicy?.lastRunAt ? formatDate(backupPolicy.lastRunAt) : '-'}</span>
+              <span>Dernier succès : {backupPolicy?.lastSuccessAt ? formatDate(backupPolicy.lastSuccessAt) : '-'}</span>
+              {#if backupPolicy?.lastDurationSeconds}
+                <span>Durée : {formatDuration(backupPolicy.lastDurationSeconds * 1000)}</span>
+              {/if}
+              {#if backupPolicy?.lastError}
+                <span class="backup-policy-last-error">{backupPolicy.lastError}</span>
+              {/if}
+            </div>
+            <div class="backup-policy-actions">
               <button
                 type="button"
                 class="backup-policy-secondary"
-                disabled={!!policyAction || !backupPolicyNaturalResult.ok}
-                onclick={applyNaturalBackupSchedule}
+                disabled={isBusy || !!policyAction}
+                onclick={runBackupPolicyNow}
               >
-                <wa-icon name="wand-magic-sparkles"></wa-icon>
-                Convertir
+                <wa-icon name={policyAction === 'run' ? 'rotate' : 'play'}></wa-icon>
+                {policyAction === 'run' ? 'Exécution...' : 'Lancer maintenant'}
+              </button>
+              <button type="button" class="backup-policy-primary" disabled={!policyCanSave} onclick={saveBackupPolicy}>
+                <wa-icon name={policyAction === 'save' ? 'rotate' : 'floppy-disk'}></wa-icon>
+                {policyAction === 'save' ? 'Enregistrement...' : 'Enregistrer'}
               </button>
             </div>
-            <div class="backup-cron-wizard__examples">
-              {#each NATURAL_CRON_EXAMPLES as example}
-                <button
-                  type="button"
-                  class="backup-cron-chip"
-                  disabled={!!policyAction}
-                  onclick={() => useNaturalBackupScheduleExample(example)}
-                >
-                  {example}
-                </button>
-              {/each}
-            </div>
-            <div class="backup-cron-timezone">
-              Fuseau serveur : <strong>{backupPolicyServerTimezone}</strong>
-            </div>
-            {#if backupPolicyNaturalResult.ok}
-              <div class="backup-cron-result backup-cron-result--ok">
-                <strong>{backupPolicyNaturalResult.cron}</strong>
-                <span>{backupPolicyNaturalResult.localDescription}</span>
-                <span>{backupPolicyNaturalResult.serverDescription}</span>
-              </div>
-            {:else}
-              <div class="backup-cron-result backup-cron-result--error">
-                {backupPolicyNaturalResult.message}
-              </div>
-            {/if}
           </div>
-          <CronSchedulePicker
-            id="backup-policy-cron"
-            bind:value={backupPolicyDraft.cron}
-            bind:customMode={backupPolicyCustomCron}
-            timezoneLabel={backupPolicyServerTimezone}
-          />
-          {#if backupPolicyCustomCron}
-            <input
-              class="backup-policy-input"
-              bind:value={backupPolicyDraft.cron}
-              placeholder="0 2 * * *"
-              aria-label="Expression cron personnalisée"
-            />
-          {/if}
-          {#if backupPolicyDraft.cron && !validateCronExpression(backupPolicyDraft.cron)}
-            <span class="backup-policy-help backup-policy-help--error">Expression cron invalide.</span>
-          {:else}
-            <span class="backup-policy-help">
-              Heure serveur ({backupPolicyServerTimezone}). Exemple : <code>0 2 * * *</code> tous les jours à 02:00.
-            </span>
-          {/if}
-        </div>
-
-        <div class="backup-policy-field">
-          <span class="backup-policy-field-label">Destinations</span>
-          <label class="backup-policy-check">
-            <input type="checkbox" bind:checked={backupPolicyDraft.localEnabled} disabled={!!policyAction} />
-            <span>Interne serveur</span>
-          </label>
-          <label class="backup-policy-check">
-            <input
-              type="checkbox"
-              bind:checked={backupPolicyDraft.remoteEnabled}
-              disabled={!!policyAction || !backupPolicyS3Enabled}
-            />
-            <span>S3/R2 {backupPolicyS3Enabled ? '' : 'non configuré'}</span>
-          </label>
-          <span class="backup-policy-help">Actif : {policyDestinationText || 'aucune destination'}</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="backup-policy-active">Instance active</label>
-          <select
-            id="backup-policy-active"
-            class="backup-policy-input"
-            bind:value={backupPolicyDraft.activeBehavior}
-            disabled={!!policyAction}
-          >
-            <option value="stop-restart">Arrêter puis redémarrer</option>
-            <option value="skip-active">Ignorer si active</option>
-          </select>
-          <span class="backup-policy-help">Le mode fiable arrête l'instance avant la copie.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <span class="backup-policy-field-label">Rétention interne</span>
-          <div class="backup-policy-retention">
-            <input
-              class="backup-policy-input"
-              type="number"
-              min="0"
-              max="3650"
-              bind:value={backupPolicyDraft.localRetentionCount}
-              disabled={!!policyAction || !backupPolicyDraft.localEnabled}
-              aria-label="Nombre de sauvegardes internes à garder"
-            />
-            <span>sauvegardes</span>
-            <input
-              class="backup-policy-input"
-              type="number"
-              min="0"
-              max="3650"
-              bind:value={backupPolicyDraft.localRetentionDays}
-              disabled={!!policyAction || !backupPolicyDraft.localEnabled}
-              aria-label="Nombre de jours de sauvegardes internes à garder"
-            />
-            <span>jours</span>
-          </div>
-          <span class="backup-policy-help">0 = illimité. Les sauvegardes manuelles ne sont pas purgées.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <span class="backup-policy-field-label">Rétention S3/R2</span>
-          <div class="backup-policy-retention">
-            <input
-              class="backup-policy-input"
-              type="number"
-              min="0"
-              max="3650"
-              bind:value={backupPolicyDraft.remoteRetentionCount}
-              disabled={!!policyAction || !backupPolicyDraft.remoteEnabled}
-              aria-label="Nombre de sauvegardes S3 à garder"
-            />
-            <span>sauvegardes</span>
-            <input
-              class="backup-policy-input"
-              type="number"
-              min="0"
-              max="3650"
-              bind:value={backupPolicyDraft.remoteRetentionDays}
-              disabled={!!policyAction || !backupPolicyDraft.remoteEnabled}
-              aria-label="Nombre de jours de sauvegardes S3 à garder"
-            />
-            <span>jours</span>
-          </div>
-          <span class="backup-policy-help">La purge S3 ne touche que les sauvegardes automatiques.</span>
-        </div>
-      </div>
-
-      <div class="backup-policy-footer">
-        <div class="backup-policy-last">
-          <span>Dernière exécution : {backupPolicy?.lastRunAt ? formatDate(backupPolicy.lastRunAt) : '-'}</span>
-          <span>Dernier succès : {backupPolicy?.lastSuccessAt ? formatDate(backupPolicy.lastSuccessAt) : '-'}</span>
-          {#if backupPolicy?.lastDurationSeconds}
-            <span>Durée : {formatDuration(backupPolicy.lastDurationSeconds * 1000)}</span>
-          {/if}
-          {#if backupPolicy?.lastError}
-            <span class="backup-policy-last-error">{backupPolicy.lastError}</span>
-          {/if}
-        </div>
-        <div class="backup-policy-actions">
-          <button
-            type="button"
-            class="backup-policy-secondary"
-            disabled={isBusy || !!policyAction}
-            onclick={runBackupPolicyNow}
-          >
-            <wa-icon name={policyAction === 'run' ? 'rotate' : 'play'}></wa-icon>
-            {policyAction === 'run' ? 'Exécution...' : 'Lancer maintenant'}
-          </button>
-          <button type="button" class="backup-policy-primary" disabled={!policyCanSave} onclick={saveBackupPolicy}>
-            <wa-icon name={policyAction === 'save' ? 'rotate' : 'floppy-disk'}></wa-icon>
-            {policyAction === 'save' ? 'Enregistrement...' : 'Enregistrer'}
-          </button>
-        </div>
-      </div>
-    {/if}
+        {/if}
       </div>
     {/if}
 
@@ -1315,244 +1350,262 @@
         role="tabpanel"
         aria-labelledby="backup-tab-litestream-tab"
       >
-    <div class="backup-policy__header">
-      <div>
-        <strong>Litestream à la demande</strong>
-        <span>Répliquer <code>data.db</code> en continu vers S3/R2 uniquement quand cette option est activée.</span>
-      </div>
-      <span class="backup-policy-status {litestreamStatusClass(litestreamPolicy?.status)}">{litestreamStatusText}</span>
-    </div>
-
-    {#if litestreamErrorMessage}
-      <p class="backup-policy-error">{litestreamErrorMessage}</p>
-    {/if}
-
-    {#if isLitestreamLoading}
-      <div class="backup-policy-loading">Chargement de Litestream...</div>
-    {:else}
-      {#if !litestreamReady}
-        <div class="backup-policy-warning">
-          Pré-requis manquant : {litestreamMissingText || 'configuration serveur'}.
-        </div>
-      {/if}
-
-      <div class="backup-policy-note">
-        Litestream accélère la reprise de <code>data.db</code>. Les fichiers uploadés, hooks et migrations restent couverts
-        par les sauvegardes complètes.
-      </div>
-
-      <div class="backup-policy-grid">
-        <label class="backup-policy-toggle">
-          <input
-            type="checkbox"
-            bind:checked={litestreamDraft.enabled}
-            disabled={!!litestreamAction || (!litestreamRuntimeReady && !litestreamDraft.enabled)}
-          />
-          <span>
-            <strong>Activer</strong>
-            <small>{litestreamDraft.enabled ? 'Réplication active demandée' : 'Configuration prête à enregistrer'}</small>
-          </span>
-        </label>
-
-        <div class="backup-policy-section-title backup-policy-field--wide">
-          <strong>Paramètres S3/R2 de cette instance</strong>
-          <span>Chaque instance peut utiliser son propre endpoint, bucket et jeu de clés.</span>
+        <div class="backup-policy__header">
+          <div>
+            <strong>Litestream à la demande</strong>
+            <span>Répliquer <code>data.db</code> en continu vers S3/R2 uniquement quand cette option est activée.</span>
+          </div>
+          <span class="backup-policy-status {litestreamStatusClass(litestreamPolicy?.status)}"
+            >{litestreamStatusText}</span
+          >
         </div>
 
-        <div class="backup-policy-field">
-          <label for="litestream-s3-endpoint">Endpoint</label>
-          <input
-            id="litestream-s3-endpoint"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.s3Endpoint}
-            disabled={!!litestreamAction}
-            placeholder="https://xxxxxxxx.r2.cloudflarestorage.com"
-            autocomplete="off"
-          />
-          <span class="backup-policy-help">URL de l’endpoint S3 compatible.</span>
-        </div>
+        {#if litestreamErrorMessage}
+          <p class="backup-policy-error">{litestreamErrorMessage}</p>
+        {/if}
 
-        <div class="backup-policy-field">
-          <label for="litestream-s3-bucket">Bucket</label>
-          <input
-            id="litestream-s3-bucket"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.s3Bucket}
-            disabled={!!litestreamAction}
-            placeholder="mon-bucket"
-            autocomplete="off"
-          />
-          <span class="backup-policy-help">Bucket cible pour cette instance.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="litestream-s3-prefix">Préfixe</label>
-          <input
-            id="litestream-s3-prefix"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.s3Prefix}
-            disabled={!!litestreamAction}
-            placeholder="client-a"
-            autocomplete="off"
-          />
-          <span class="backup-policy-help">Optionnel. Un chemin Litestream sera ajouté automatiquement.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="litestream-s3-region">Région</label>
-          <input
-            id="litestream-s3-region"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.s3Region}
-            disabled={!!litestreamAction}
-            placeholder="auto"
-            autocomplete="off"
-          />
-          <span class="backup-policy-help">Pour R2, gardez généralement <code>auto</code>.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="litestream-s3-access-key">Access key ID</label>
-          <input
-            id="litestream-s3-access-key"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.s3AccessKeyId}
-            disabled={!!litestreamAction}
-            placeholder="Access key ID"
-            autocomplete="off"
-          />
-          <span class="backup-policy-help">Identifiant de clé autorisé sur ce bucket.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="litestream-s3-secret-key">Secret access key</label>
-          <input
-            id="litestream-s3-secret-key"
-            class="backup-policy-input"
-            type="password"
-            bind:value={litestreamDraft.s3SecretAccessKey}
-            disabled={!!litestreamAction}
-            placeholder={litestreamPolicy?.hasS3SecretAccessKey ? 'Déjà enregistrée' : 'Secret access key'}
-            autocomplete="new-password"
-          />
-          <span class="backup-policy-help">
-            {litestreamPolicy?.hasS3SecretAccessKey ? 'Laissez vide pour conserver la clé existante.' : 'Requise pour activer Litestream.'}
-          </span>
-        </div>
-
-        <label class="backup-policy-check backup-policy-field backup-policy-field--wide">
-          <input type="checkbox" bind:checked={litestreamDraft.s3ForcePathStyle} disabled={!!litestreamAction} />
-          <span>Forcer le path-style S3</span>
-        </label>
-
-        <div class="backup-policy-field">
-          <label for="litestream-sync">Synchronisation</label>
-          <input
-            id="litestream-sync"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.syncInterval}
-            disabled={!!litestreamAction}
-            placeholder="10s"
-          />
-          <span class="backup-policy-help">Intervalle d’envoi vers S3/R2.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="litestream-snapshot">Snapshot complet</label>
-          <input
-            id="litestream-snapshot"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.snapshotInterval}
-            disabled={!!litestreamAction}
-            placeholder="1h"
-          />
-          <span class="backup-policy-help">Point complet périodique.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="litestream-retention">Rétention</label>
-          <input
-            id="litestream-retention"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.snapshotRetention}
-            disabled={!!litestreamAction}
-            placeholder="72h"
-          />
-          <span class="backup-policy-help">Fenêtre restaurable Litestream.</span>
-        </div>
-
-        <div class="backup-policy-field">
-          <label for="litestream-validation">Validation</label>
-          <input
-            id="litestream-validation"
-            class="backup-policy-input"
-            bind:value={litestreamDraft.validationInterval}
-            disabled={!!litestreamAction}
-            placeholder="6h"
-          />
-          <span class="backup-policy-help">Contrôle périodique de continuité.</span>
-        </div>
-
-        <div class="backup-policy-field backup-policy-field--wide">
-          <span class="backup-policy-field-label">Destination distante</span>
-          <code class="backup-policy-code">{litestreamReplicaPreview}</code>
-          <span class="backup-policy-help">
-            Service PM2 : {litestreamCapabilities.serviceName || 'pockethost-litestream'}
-          </span>
-        </div>
-      </div>
-
-      {#if !litestreamDurationsValid(litestreamDraft)}
-        <p class="backup-policy-error">Les durées doivent utiliser le format <code>10s</code>, <code>5m</code> ou <code>1h</code>.</p>
-      {/if}
-
-      <div class="backup-policy-footer">
-        <div class="backup-policy-last">
-          <span>Démarré : {litestreamPolicy?.lastStartedAt ? formatDate(litestreamPolicy.lastStartedAt) : '-'}</span>
-          <span>Contrôlé : {litestreamPolicy?.lastCheckedAt ? formatDate(litestreamPolicy.lastCheckedAt) : '-'}</span>
-          {#if litestreamPolicy?.lastError}
-            <span class="backup-policy-last-error">{litestreamPolicy.lastError}</span>
+        {#if isLitestreamLoading}
+          <div class="backup-policy-loading">Chargement de Litestream...</div>
+        {:else}
+          {#if !litestreamReady}
+            <div class="backup-policy-warning">
+              Pré-requis manquant : {litestreamMissingText || 'configuration serveur'}.
+            </div>
           {/if}
-        </div>
-        <div class="backup-policy-actions">
-          <button type="button" class="backup-policy-primary" disabled={!litestreamCanSave} onclick={saveLitestreamPolicy}>
-            <wa-icon name={litestreamAction === 'save' ? 'rotate' : 'floppy-disk'}></wa-icon>
-            {litestreamAction === 'save' ? 'Enregistrement...' : 'Enregistrer Litestream'}
-          </button>
-        </div>
+
+          <div class="backup-policy-note">
+            Litestream accélère la reprise de <code>data.db</code>. Les fichiers uploadés, hooks et migrations restent
+            couverts par les sauvegardes complètes.
+          </div>
+
+          <div class="backup-policy-grid">
+            <label class="backup-policy-toggle">
+              <input
+                type="checkbox"
+                bind:checked={litestreamDraft.enabled}
+                disabled={!!litestreamAction || (!litestreamRuntimeReady && !litestreamDraft.enabled)}
+              />
+              <span>
+                <strong>Activer</strong>
+                <small
+                  >{litestreamDraft.enabled
+                    ? 'Réplication active demandée'
+                    : 'Configuration prête à enregistrer'}</small
+                >
+              </span>
+            </label>
+
+            <div class="backup-policy-section-title backup-policy-field--wide">
+              <strong>Paramètres S3/R2 de cette instance</strong>
+              <span>Chaque instance peut utiliser son propre endpoint, bucket et jeu de clés.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-s3-endpoint">Endpoint</label>
+              <input
+                id="litestream-s3-endpoint"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.s3Endpoint}
+                disabled={!!litestreamAction}
+                placeholder="https://xxxxxxxx.r2.cloudflarestorage.com"
+                autocomplete="off"
+              />
+              <span class="backup-policy-help">URL de l’endpoint S3 compatible.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-s3-bucket">Bucket</label>
+              <input
+                id="litestream-s3-bucket"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.s3Bucket}
+                disabled={!!litestreamAction}
+                placeholder="mon-bucket"
+                autocomplete="off"
+              />
+              <span class="backup-policy-help">Bucket cible pour cette instance.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-s3-prefix">Préfixe</label>
+              <input
+                id="litestream-s3-prefix"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.s3Prefix}
+                disabled={!!litestreamAction}
+                placeholder="client-a"
+                autocomplete="off"
+              />
+              <span class="backup-policy-help">Optionnel. Un chemin Litestream sera ajouté automatiquement.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-s3-region">Région</label>
+              <input
+                id="litestream-s3-region"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.s3Region}
+                disabled={!!litestreamAction}
+                placeholder="auto"
+                autocomplete="off"
+              />
+              <span class="backup-policy-help">Pour R2, gardez généralement <code>auto</code>.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-s3-access-key">Access key ID</label>
+              <input
+                id="litestream-s3-access-key"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.s3AccessKeyId}
+                disabled={!!litestreamAction}
+                placeholder="Access key ID"
+                autocomplete="off"
+              />
+              <span class="backup-policy-help">Identifiant de clé autorisé sur ce bucket.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-s3-secret-key">Secret access key</label>
+              <input
+                id="litestream-s3-secret-key"
+                class="backup-policy-input"
+                type="password"
+                bind:value={litestreamDraft.s3SecretAccessKey}
+                disabled={!!litestreamAction}
+                placeholder={litestreamPolicy?.hasS3SecretAccessKey ? 'Déjà enregistrée' : 'Secret access key'}
+                autocomplete="new-password"
+              />
+              <span class="backup-policy-help">
+                {litestreamPolicy?.hasS3SecretAccessKey
+                  ? 'Laissez vide pour conserver la clé existante.'
+                  : 'Requise pour activer Litestream.'}
+              </span>
+            </div>
+
+            <label class="backup-policy-check backup-policy-field backup-policy-field--wide">
+              <input type="checkbox" bind:checked={litestreamDraft.s3ForcePathStyle} disabled={!!litestreamAction} />
+              <span>Forcer le path-style S3</span>
+            </label>
+
+            <div class="backup-policy-field">
+              <label for="litestream-sync">Synchronisation</label>
+              <input
+                id="litestream-sync"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.syncInterval}
+                disabled={!!litestreamAction}
+                placeholder="10s"
+              />
+              <span class="backup-policy-help">Intervalle d’envoi vers S3/R2.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-snapshot">Snapshot complet</label>
+              <input
+                id="litestream-snapshot"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.snapshotInterval}
+                disabled={!!litestreamAction}
+                placeholder="1h"
+              />
+              <span class="backup-policy-help">Point complet périodique.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-retention">Rétention</label>
+              <input
+                id="litestream-retention"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.snapshotRetention}
+                disabled={!!litestreamAction}
+                placeholder="72h"
+              />
+              <span class="backup-policy-help">Fenêtre restaurable Litestream.</span>
+            </div>
+
+            <div class="backup-policy-field">
+              <label for="litestream-validation">Validation</label>
+              <input
+                id="litestream-validation"
+                class="backup-policy-input"
+                bind:value={litestreamDraft.validationInterval}
+                disabled={!!litestreamAction}
+                placeholder="6h"
+              />
+              <span class="backup-policy-help">Contrôle périodique de continuité.</span>
+            </div>
+
+            <div class="backup-policy-field backup-policy-field--wide">
+              <span class="backup-policy-field-label">Destination distante</span>
+              <code class="backup-policy-code">{litestreamReplicaPreview}</code>
+              <span class="backup-policy-help">
+                Service PM2 : {litestreamCapabilities.serviceName || 'pockethost-litestream'}
+              </span>
+            </div>
+          </div>
+
+          {#if !litestreamDurationsValid(litestreamDraft)}
+            <p class="backup-policy-error">
+              Les durées doivent utiliser le format <code>10s</code>, <code>5m</code> ou <code>1h</code>.
+            </p>
+          {/if}
+
+          <div class="backup-policy-footer">
+            <div class="backup-policy-last">
+              <span>Démarré : {litestreamPolicy?.lastStartedAt ? formatDate(litestreamPolicy.lastStartedAt) : '-'}</span
+              >
+              <span
+                >Contrôlé : {litestreamPolicy?.lastCheckedAt ? formatDate(litestreamPolicy.lastCheckedAt) : '-'}</span
+              >
+              {#if litestreamPolicy?.lastError}
+                <span class="backup-policy-last-error">{litestreamPolicy.lastError}</span>
+              {/if}
+            </div>
+            <div class="backup-policy-actions">
+              <button
+                type="button"
+                class="backup-policy-primary"
+                disabled={!litestreamCanSave}
+                onclick={saveLitestreamPolicy}
+              >
+                <wa-icon name={litestreamAction === 'save' ? 'rotate' : 'floppy-disk'}></wa-icon>
+                {litestreamAction === 'save' ? 'Enregistrement...' : 'Enregistrer Litestream'}
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
-    {/if}
-  </div>
     {/if}
   </div>
 
   {#if backupPageTab === 'archive'}
     {#if liveOperationVisible}
       <section class="backup-live" aria-live="polite">
-      <div class="backup-live__icon">
-        <wa-icon name="rotate"></wa-icon>
-      </div>
-      <div class="backup-live__body">
-        <div class="backup-live__header">
-          <strong>{liveOperationLabel}</strong>
-          <span>Depuis {liveOperationElapsed}</span>
+        <div class="backup-live__icon">
+          <wa-icon name="rotate"></wa-icon>
         </div>
-        <p>{liveOperationText}</p>
-        <div
-          class="backup-live__track"
-          role="progressbar"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow={liveOperationPercent}
-        >
-          <span style={`width: ${liveOperationPercent}%`}></span>
+        <div class="backup-live__body">
+          <div class="backup-live__header">
+            <strong>{liveOperationLabel}</strong>
+            <span>Depuis {liveOperationElapsed}</span>
+          </div>
+          <p>{liveOperationText}</p>
+          <div
+            class="backup-live__track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow={liveOperationPercent}
+          >
+            <span style={`width: ${liveOperationPercent}%`}></span>
+          </div>
+          <div class="backup-live__stats">
+            <span>Source : {liveOperationSource ? formatBytes(liveOperationSource) : 'calcul en cours'}</span>
+            <span>Archive : {liveOperationCompressed ? formatBytes(liveOperationCompressed) : 'préparation'}</span>
+            <span>{liveOperationCount} opération en cours</span>
+          </div>
         </div>
-        <div class="backup-live__stats">
-          <span>Source : {liveOperationSource ? formatBytes(liveOperationSource) : 'calcul en cours'}</span>
-          <span>Archive : {liveOperationCompressed ? formatBytes(liveOperationCompressed) : 'préparation'}</span>
-          <span>{liveOperationCount} opération en cours</span>
-        </div>
-      </div>
       </section>
     {/if}
 
@@ -1575,111 +1628,111 @@
             class:backup-row--restore={shouldShowRestoreProgress(backup)}
             class:backup-row--failed={backup.status === 'failed'}
           >
-          <div class="backup-main">
-            <div class="backup-title-row">
-              <span class="backup-title">{backup.filename || backup.id}</span>
-              <span class="backup-status backup-status--{backup.status}">{statusLabel(backup.status)}</span>
-              {#if restoreTagLabel(backup)}
-                <span class="backup-restore-tag" title={restoreTagTitle(backup)}>
-                  <wa-icon name="rotate-left"></wa-icon>
-                  {restoreTagLabel(backup)}
-                </span>
+            <div class="backup-main">
+              <div class="backup-title-row">
+                <span class="backup-title">{backup.filename || backup.id}</span>
+                <span class="backup-status backup-status--{backup.status}">{statusLabel(backup.status)}</span>
+                {#if restoreTagLabel(backup)}
+                  <span class="backup-restore-tag" title={restoreTagTitle(backup)}>
+                    <wa-icon name="rotate-left"></wa-icon>
+                    {restoreTagLabel(backup)}
+                  </span>
+                {/if}
+              </div>
+              <div class="backup-meta">
+                <span>Fichier : {fileDate ? formatDate(fileDate) : '-'}</span>
+                <span>{kindLabel(backup.kind)}</span>
+                <span>{formatBytes(backup.compressedBytes)} compressés</span>
+                <span>{formatBytes(backup.sizeBytes)} source</span>
+              </div>
+              {#if originalName}
+                <p class="backup-source-file">
+                  <wa-icon name="file-zipper"></wa-icon>
+                  <span>
+                    Nom importé : <strong>{originalName}</strong>
+                    {#if sourceDate}
+                      <small>fichier du {formatDate(sourceDate)}</small>
+                    {/if}
+                  </span>
+                </p>
+              {/if}
+              {#if backup.status === 'running' || shouldShowRestoreProgress(backup)}
+                {@const operation = visibleOperationForBackup(backup)}
+                <div class="backup-row-progress" aria-live="polite">
+                  <div class="backup-row-progress__meta">
+                    <strong>{operation.label}</strong>
+                    <span>{formatDuration(Math.max(0, now - operation.startedAt))}</span>
+                  </div>
+                  <div
+                    class="backup-row-progress__track"
+                    role="progressbar"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow={operation.percent}
+                  >
+                    <span style={`width: ${operation.percent}%`}></span>
+                  </div>
+                </div>
+              {/if}
+              {#if backup.checksum}
+                <code class="backup-checksum">sha256:{backup.checksum.slice(0, 16)}...</code>
+              {/if}
+              {#if backup.remoteKey}
+                <p class="backup-remote">Copie R2/S3 : {backup.remoteKey}</p>
+              {:else if backup.remoteError}
+                <p class="backup-warning">Copie R2/S3 non faite : {backup.remoteError}</p>
+              {/if}
+              {#if backup.error}
+                <p class="backup-error">{backup.error}</p>
               {/if}
             </div>
-            <div class="backup-meta">
-              <span>Fichier : {fileDate ? formatDate(fileDate) : '-'}</span>
-              <span>{kindLabel(backup.kind)}</span>
-              <span>{formatBytes(backup.compressedBytes)} compressés</span>
-              <span>{formatBytes(backup.sizeBytes)} source</span>
-            </div>
-            {#if originalName}
-              <p class="backup-source-file">
-                <wa-icon name="file-zipper"></wa-icon>
-                <span>
-                  Nom importé : <strong>{originalName}</strong>
-                  {#if sourceDate}
-                    <small>fichier du {formatDate(sourceDate)}</small>
-                  {/if}
-                </span>
-              </p>
-            {/if}
-            {#if backup.status === 'running' || shouldShowRestoreProgress(backup)}
-              {@const operation = visibleOperationForBackup(backup)}
-              <div class="backup-row-progress" aria-live="polite">
-                <div class="backup-row-progress__meta">
-                  <strong>{operation.label}</strong>
-                  <span>{formatDuration(Math.max(0, now - operation.startedAt))}</span>
-                </div>
-                <div
-                  class="backup-row-progress__track"
-                  role="progressbar"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  aria-valuenow={operation.percent}
-                >
-                  <span style={`width: ${operation.percent}%`}></span>
-                </div>
-              </div>
-            {/if}
-            {#if backup.checksum}
-              <code class="backup-checksum">sha256:{backup.checksum.slice(0, 16)}...</code>
-            {/if}
-            {#if backup.remoteKey}
-              <p class="backup-remote">Copie R2/S3 : {backup.remoteKey}</p>
-            {:else if backup.remoteError}
-              <p class="backup-warning">Copie R2/S3 non faite : {backup.remoteError}</p>
-            {/if}
-            {#if backup.error}
-              <p class="backup-error">{backup.error}</p>
-            {/if}
-          </div>
 
-          <div class="backup-actions">
-            <button
-              type="button"
-              class="backup-action"
-              disabled={isBusy || backup.status !== 'ready'}
-              onclick={() => downloadBackup(backup)}
-              title="Télécharger"
-              aria-label="Télécharger la sauvegarde"
-            >
-              <wa-icon name={action === `download:${backup.id}` ? 'rotate' : 'download'}></wa-icon>
-              <span>Télécharger</span>
-            </button>
-            <button
-              type="button"
-              class="backup-action backup-action--restore"
-              disabled={isBusy || backup.status !== 'ready'}
-              onclick={() => restoreBackup(backup)}
-              title="Restaurer"
-              aria-label="Restaurer cette sauvegarde"
-            >
-              <wa-icon name={action === `restore:${backup.id}` ? 'rotate' : 'rotate-left'}></wa-icon>
-              <span>Restaurer</span>
-            </button>
-            <button
-              type="button"
-              class="backup-action backup-action--restore-new"
-              disabled={isBusy || backup.status !== 'ready'}
-              onclick={() => restoreBackupToNewInstance(backup)}
-              title="Restaurer dans une nouvelle instance"
-              aria-label="Restaurer cette sauvegarde dans une nouvelle instance"
-            >
-              <wa-icon name={action === `restore-new:${backup.id}` ? 'rotate' : 'copy'}></wa-icon>
-              <span>Nouvelle instance</span>
-            </button>
-            <button
-              type="button"
-              class="backup-action backup-action--danger"
-              disabled={isBusy}
-              onclick={() => deleteBackup(backup)}
-              title="Supprimer"
-              aria-label="Supprimer cette sauvegarde"
-            >
-              <wa-icon name={action === `delete:${backup.id}` ? 'rotate' : 'trash'}></wa-icon>
-              <span>Supprimer</span>
-            </button>
-          </div>
+            <div class="backup-actions">
+              <button
+                type="button"
+                class="backup-action"
+                disabled={isBusy || backup.status !== 'ready'}
+                onclick={() => downloadBackup(backup)}
+                title="Télécharger"
+                aria-label="Télécharger la sauvegarde"
+              >
+                <wa-icon name={action === `download:${backup.id}` ? 'rotate' : 'download'}></wa-icon>
+                <span>Télécharger</span>
+              </button>
+              <button
+                type="button"
+                class="backup-action backup-action--restore"
+                disabled={isBusy || backup.status !== 'ready'}
+                onclick={() => restoreBackup(backup)}
+                title="Restaurer"
+                aria-label="Restaurer cette sauvegarde"
+              >
+                <wa-icon name={action === `restore:${backup.id}` ? 'rotate' : 'rotate-left'}></wa-icon>
+                <span>Restaurer</span>
+              </button>
+              <button
+                type="button"
+                class="backup-action backup-action--restore-new"
+                disabled={isBusy || backup.status !== 'ready'}
+                onclick={() => restoreBackupToNewInstance(backup)}
+                title="Restaurer dans une nouvelle instance"
+                aria-label="Restaurer cette sauvegarde dans une nouvelle instance"
+              >
+                <wa-icon name={action === `restore-new:${backup.id}` ? 'rotate' : 'copy'}></wa-icon>
+                <span>Nouvelle instance</span>
+              </button>
+              <button
+                type="button"
+                class="backup-action backup-action--danger"
+                disabled={isBusy}
+                onclick={() => deleteBackup(backup)}
+                title="Supprimer"
+                aria-label="Supprimer cette sauvegarde"
+              >
+                <wa-icon name={action === `delete:${backup.id}` ? 'rotate' : 'trash'}></wa-icon>
+                <span>Supprimer</span>
+              </button>
+            </div>
           </article>
         {/each}
       </div>

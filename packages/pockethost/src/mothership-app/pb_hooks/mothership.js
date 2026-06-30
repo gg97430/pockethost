@@ -1209,6 +1209,13 @@ const recordObject = (value) => {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 	return JSON.parse(JSON.stringify(value));
 };
+const latestBackupRecord = (backup) => {
+	try {
+		return $app.findRecordById("instance_backups", backup.id) || backup;
+	} catch {
+		return backup;
+	}
+};
 const updateBackupOperation = (backup, phase, input = {}) => {
 	const manifest = recordObject(backup.get("manifest"));
 	const currentOperation = manifest.operation && typeof manifest.operation === "object" && !Array.isArray(manifest.operation) ? manifest.operation : {};
@@ -1229,12 +1236,13 @@ const updateBackupOperation = (backup, phase, input = {}) => {
 	$app.save(backup);
 };
 const updateRestoreOperation = (backup, phase, input = {}) => {
-	const manifest = recordObject(backup.get("manifest"));
+	const record = latestBackupRecord(backup);
+	const manifest = recordObject(record.get("manifest"));
 	const currentOperation = manifest.restoreOperation && typeof manifest.restoreOperation === "object" && !Array.isArray(manifest.restoreOperation) ? manifest.restoreOperation : {};
 	const now = (/* @__PURE__ */ new Date()).toISOString();
 	const isComplete = phase === "ready" || phase === "failed";
 	const rawPercent = typeof input.percent === "number" ? input.percent : typeof currentOperation.percent === "number" ? currentOperation.percent : 0;
-	backup.set("manifest", {
+	record.set("manifest", {
 		...manifest,
 		restoreOperation: {
 			...currentOperation,
@@ -1251,7 +1259,8 @@ const updateRestoreOperation = (backup, phase, input = {}) => {
 			updatedAt: now
 		}
 	});
-	$app.save(backup);
+	$app.save(record);
+	backup.set("manifest", record.get("manifest"));
 };
 const sourceSizeBytes = (root) => {
 	return runCommand$1("du", "-sb", ...BACKUP_DIRS.map((dir) => `${root}/${dir}`)).split("\n").map((line) => Number(line.trim().split(/\s+/)[0] || 0)).filter((value) => Number.isFinite(value)).reduce((sum, value) => sum + value, 0);
@@ -2645,7 +2654,7 @@ const runScheduledBackupPolicy = (policyId, trigger) => {
 const refreshImportedBackupSizeMetadata = (backup) => {
 	if (backup.getString("kind") !== "import") return backup;
 	if (backup.getString("status") !== "ready") return backup;
-	const manifest = backupManifestObject(backup);
+	let manifest = backupManifestObject(backup);
 	if (manifest.sourceSizeComputedAt) return backup;
 	const filename = backup.getString("filename");
 	if (!filename) return backup;
@@ -2655,15 +2664,19 @@ const refreshImportedBackupSizeMetadata = (backup) => {
 		if (!pathExists$2(localPath)) return backup;
 		const compressedBytes = fileSize(localPath);
 		const sourceBytes = archiveSourceSizeBytes(localPath, filename) || compressedBytes;
-		backup.set("sizeBytes", sourceBytes);
-		backup.set("compressedBytes", compressedBytes);
-		backup.set("manifest", {
+		const record = latestBackupRecord(backup);
+		manifest = backupManifestObject(record);
+		if (manifest.sourceSizeComputedAt) return record;
+		record.set("sizeBytes", sourceBytes);
+		record.set("compressedBytes", compressedBytes);
+		record.set("manifest", {
 			...manifest,
 			sourceSizeBytes: sourceBytes,
 			compressedSizeBytes: compressedBytes,
 			sourceSizeComputedAt: (/* @__PURE__ */ new Date()).toISOString()
 		});
-		$app.save(backup);
+		$app.save(record);
+		return record;
 	} catch {}
 	return backup;
 };

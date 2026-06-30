@@ -526,11 +526,7 @@ const backupPolicyCronDue = (cron: string, now: CronNowParts) => {
   return domMatches && dowMatches
 }
 
-const lastPolicyRunMinuteKey = (policy: core.Record) =>
-  policy
-    .getString('lastRunAt')
-    .replace(' ', 'T')
-    .slice(0, 16)
+const lastPolicyRunMinuteKey = (policy: core.Record) => policy.getString('lastRunAt').replace(' ', 'T').slice(0, 16)
 
 const slugForFilename = (value: string) => {
   const clean = value
@@ -833,6 +829,15 @@ const recordObject = (value: unknown) => {
   return JSON.parse(JSON.stringify(value)) as Record<string, any>
 }
 
+const latestBackupRecord = (backup: core.Record) => {
+  try {
+    const latest = $app.findRecordById('instance_backups', backup.id)
+    return latest || backup
+  } catch {
+    return backup
+  }
+}
+
 const updateBackupOperation = (backup: core.Record, phase: string, input: BackupOperationInput = {}) => {
   const manifest = recordObject(backup.get('manifest'))
   const currentOperation =
@@ -863,7 +868,8 @@ const updateBackupOperation = (backup: core.Record, phase: string, input: Backup
 }
 
 const updateRestoreOperation = (backup: core.Record, phase: string, input: RestoreOperationInput = {}) => {
-  const manifest = recordObject(backup.get('manifest'))
+  const record = latestBackupRecord(backup)
+  const manifest = recordObject(record.get('manifest'))
   const currentOperation =
     manifest.restoreOperation &&
     typeof manifest.restoreOperation === 'object' &&
@@ -879,7 +885,7 @@ const updateRestoreOperation = (backup: core.Record, phase: string, input: Resto
         ? currentOperation.percent
         : 0
 
-  backup.set('manifest', {
+  record.set('manifest', {
     ...manifest,
     restoreOperation: {
       ...currentOperation,
@@ -898,7 +904,8 @@ const updateRestoreOperation = (backup: core.Record, phase: string, input: Resto
       updatedAt: now,
     },
   })
-  $app.save(backup)
+  $app.save(record)
+  backup.set('manifest', record.get('manifest'))
 }
 
 type BackupDetails = {
@@ -2805,7 +2812,7 @@ export const refreshImportedBackupSizeMetadata = (backup: core.Record) => {
   if (backup.getString('kind') !== 'import') return backup
   if (backup.getString('status') !== 'ready') return backup
 
-  const manifest = backupManifestObject(backup)
+  let manifest = backupManifestObject(backup)
   if (manifest.sourceSizeComputedAt) return backup
 
   const filename = backup.getString('filename')
@@ -2818,15 +2825,21 @@ export const refreshImportedBackupSizeMetadata = (backup: core.Record) => {
 
     const compressedBytes = fileSize(localPath)
     const sourceBytes = archiveSourceSizeBytes(localPath, filename) || compressedBytes
-    backup.set('sizeBytes', sourceBytes)
-    backup.set('compressedBytes', compressedBytes)
-    backup.set('manifest', {
+
+    const record = latestBackupRecord(backup)
+    manifest = backupManifestObject(record)
+    if (manifest.sourceSizeComputedAt) return record
+
+    record.set('sizeBytes', sourceBytes)
+    record.set('compressedBytes', compressedBytes)
+    record.set('manifest', {
       ...manifest,
       sourceSizeBytes: sourceBytes,
       compressedSizeBytes: compressedBytes,
       sourceSizeComputedAt: new Date().toISOString(),
     })
-    $app.save(backup)
+    $app.save(record)
+    return record
   } catch {}
 
   return backup

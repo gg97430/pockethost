@@ -180,6 +180,9 @@ onBootstrap((e) => {
 	e.next();
 	return require(`${__hooks}/mothership`).HandleInstanceBackupPoliciesBootstrap(e);
 });
+cronAdd("instance-backup-policy-dispatcher", "* * * * *", () => {
+	require(`${__hooks}/mothership`).HandleInstanceBackupPolicyCronDispatcher();
+});
 /** Reconcile optional Litestream replication */
 onBootstrap((e) => {
 	e.next();

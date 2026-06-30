@@ -931,6 +931,84 @@ const normalizeBackupPolicyCron = (value) => {
 	if (!isValidBackupPolicyCron(cron)) throw new BadRequestError("Planification cron invalide.");
 	return cron;
 };
+const shellLiteral = (value) => `'${value.replace(/'/g, "'\\''")}'`;
+const cronExpressionForSchedule = (cron) => {
+	const expression = cron.trim();
+	switch (expression) {
+		case "@yearly":
+		case "@annually": return "0 0 1 1 *";
+		case "@monthly": return "0 0 1 * *";
+		case "@weekly": return "0 0 * * 0";
+		case "@daily":
+		case "@midnight": return "0 0 * * *";
+		case "@hourly": return "0 * * * *";
+		case "@weekdays": return "0 0 * * 1-5";
+		case "@weekends": return "0 0 * * 0,6";
+		default: return expression;
+	}
+};
+const backupPolicyCronNowParts = () => {
+	const lines = runCommand$1("sh", "-c", `TZ=${shellLiteral(appliedBackupPolicyServerTimezone())} date '+%M %H %d %m %w %Y' && date -u '+%Y-%m-%dT%H:%M'`).split(/\r?\n/).filter(Boolean);
+	const local = (lines[0] || "").trim().split(/\s+/).map(Number);
+	const utcMinuteKey = (lines[1] || (/* @__PURE__ */ new Date()).toISOString().slice(0, 16)).trim();
+	return {
+		minute: local[0] || 0,
+		hour: local[1] || 0,
+		dayOfMonth: local[2] || 1,
+		month: local[3] || 1,
+		dayOfWeek: local[4] || 0,
+		year: local[5] || (/* @__PURE__ */ new Date()).getUTCFullYear(),
+		utcMinuteKey
+	};
+};
+const cronFieldIsWildcard = (field) => field === "*" || field === "?";
+const matchesCronNumberField = (field, value, min, max) => {
+	if (cronFieldIsWildcard(field)) return true;
+	return field.split(",").some((segment) => {
+		const [rangePart, stepPart] = segment.split("/");
+		const step = stepPart ? Number(stepPart) : 1;
+		if (!Number.isFinite(step) || step <= 0) return false;
+		let start = min;
+		let end = max;
+		if (rangePart && rangePart !== "*" && rangePart !== "?") if (rangePart.includes("-")) {
+			const [rangeStart, rangeEnd] = rangePart.split("-").map(Number);
+			if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return false;
+			start = rangeStart;
+			end = rangeEnd;
+		} else {
+			const exact = Number(rangePart);
+			if (!Number.isFinite(exact)) return false;
+			start = exact;
+			end = exact;
+		}
+		if (value < start || value > end) return false;
+		return (value - start) % step === 0;
+	});
+};
+const matchesCronDayOfMonth = (field, now) => {
+	if (field.toUpperCase() === "L") return now.dayOfMonth === new Date(now.year, now.month, 0).getDate();
+	if (/[W#]/i.test(field)) return false;
+	return matchesCronNumberField(field, now.dayOfMonth, 1, 31);
+};
+const matchesCronDayOfWeek = (field, now) => {
+	if (/[LW#]/i.test(field)) return false;
+	return matchesCronNumberField(field.split(",").map((part) => part === "7" ? "0" : part).join(","), now.dayOfWeek, 0, 6);
+};
+const backupPolicyCronDue = (cron, now) => {
+	const parts = cronExpressionForSchedule(cron).split(/\s+/);
+	if (parts.length !== 5) return false;
+	const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+	if (!matchesCronNumberField(minute, now.minute, 0, 59)) return false;
+	if (!matchesCronNumberField(hour, now.hour, 0, 23)) return false;
+	if (!matchesCronNumberField(month, now.month, 1, 12)) return false;
+	const domWildcard = cronFieldIsWildcard(dayOfMonth);
+	const dowWildcard = cronFieldIsWildcard(dayOfWeek);
+	const domMatches = matchesCronDayOfMonth(dayOfMonth, now);
+	const dowMatches = matchesCronDayOfWeek(dayOfWeek, now);
+	if (!domWildcard && !dowWildcard) return domMatches || dowMatches;
+	return domMatches && dowMatches;
+};
+const lastPolicyRunMinuteKey = (policy) => policy.getString("lastRunAt").replace(" ", "T").slice(0, 16);
 const slugForFilename = (value) => {
 	return value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/g, "") || "instance";
 };
@@ -1869,9 +1947,7 @@ const readRestoreNewInput = (e, source) => {
 const backupManifestObject = (backup) => {
 	return recordObject(backup.get("manifest"));
 };
-const backupPolicyJobIds = /* @__PURE__ */ new Set();
 const runningBackupPolicyIds = /* @__PURE__ */ new Set();
-const backupPolicyCronName = (policyId) => `instance-backup-policy-${policyId}`;
 const s3BackupsAvailable = () => {
 	try {
 		return !!s3Config() && commandExists("aws");
@@ -2385,37 +2461,38 @@ const applyBackupPolicyInput = (policy, instance, input) => {
 	policy.set("remoteRetentionDays", normalizeInteger(input.remoteRetentionDays, DEFAULT_BACKUP_POLICY_REMOTE_RETENTION_DAYS, 0, 3650));
 	policy.set("activeBehavior", activeBehavior);
 };
-const unregisterBackupPolicyCron = (policyId) => {
-	const name = backupPolicyCronName(policyId);
-	try {
-		cronRemove(name);
-	} catch {}
-	backupPolicyJobIds.delete(policyId);
-};
 const registerBackupPolicyCron = (policy) => {
 	applyBackupPolicyCronTimezone();
-	unregisterBackupPolicyCron(policy.id);
 	if (!policy.getBool("enabled")) return;
-	const cron = policy.getString("cron");
-	if (!isValidBackupPolicyCron(cron)) return;
-	cronAdd(backupPolicyCronName(policy.id), cron, () => {
-		try {
-			runScheduledBackupPolicy(policy.id, "cron");
-		} catch (error) {
-			mkLog("cron:instance:backup-policy")(`policy ${policy.id} failed: ${errorMessage(error)}`);
-		}
-	});
-	backupPolicyJobIds.add(policy.id);
+	if (!isValidBackupPolicyCron(policy.getString("cron"))) return;
 };
 const registerAllBackupPolicyCrons = () => {
 	applyBackupPolicyCronTimezone();
+};
+const enabledBackupPolicies = () => {
 	let policies = [];
 	try {
 		policies = $app.findRecordsByFilter("instance_backup_policies", "enabled = true", "", 500, 0);
 	} catch {
 		policies = [];
 	}
-	for (const policy of policies) if (policy) registerBackupPolicyCron(policy);
+	return policies.filter((policy) => !!policy);
+};
+const runBackupPolicyCronDispatcher = () => {
+	const log = mkLog("cron:instance:backup-policy");
+	applyBackupPolicyCronTimezone();
+	const now = backupPolicyCronNowParts();
+	const policies = enabledBackupPolicies();
+	for (const policy of policies) try {
+		const cron = policy.getString("cron");
+		if (!isValidBackupPolicyCron(cron)) continue;
+		if (!backupPolicyCronDue(cron, now)) continue;
+		if (lastPolicyRunMinuteKey(policy) === now.utcMinuteKey) continue;
+		log(`running policy ${policy.id} (${cron})`);
+		runScheduledBackupPolicy(policy.id, "cron");
+	} catch (error) {
+		log(`policy ${policy.id} failed: ${errorMessage(error)}`);
+	}
 };
 const setPolicyRunState = (policy, status, input = {}) => {
 	policy.set("lastStatus", status);
@@ -2885,6 +2962,9 @@ const HandleInstanceBackupPolicyUpdate = (e) => {
 };
 const ReconcileBackupPolicyCrons = () => {
 	registerAllBackupPolicyCrons();
+};
+const HandleInstanceBackupPolicyCronDispatcher = () => {
+	runBackupPolicyCronDispatcher();
 };
 const HandleInstanceBackupPolicyRun = (e) => {
 	const log = mkLog("POST:instance:backup-policy:run");
@@ -6987,6 +7067,7 @@ exports.HandleInstanceBackupDelete = HandleInstanceBackupDelete;
 exports.HandleInstanceBackupDownload = HandleInstanceBackupDownload;
 exports.HandleInstanceBackupImport = HandleInstanceBackupImport;
 exports.HandleInstanceBackupPoliciesBootstrap = HandleInstanceBackupPoliciesBootstrap;
+exports.HandleInstanceBackupPolicyCronDispatcher = HandleInstanceBackupPolicyCronDispatcher;
 exports.HandleInstanceBackupPolicyGet = HandleInstanceBackupPolicyGet;
 exports.HandleInstanceBackupPolicyRun = HandleInstanceBackupPolicyRun;
 exports.HandleInstanceBackupPolicyUpdate = HandleInstanceBackupPolicyUpdate;

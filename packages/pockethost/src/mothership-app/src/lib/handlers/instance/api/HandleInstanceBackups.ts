@@ -85,6 +85,15 @@ type BackupPolicyInput = {
   remoteRetentionDays?: number | string
   activeBehavior?: BackupPolicyActiveBehavior
 }
+type CronNowParts = {
+  minute: number
+  hour: number
+  dayOfMonth: number
+  month: number
+  dayOfWeek: number
+  year: number
+  utcMinuteKey: string
+}
 type LitestreamPolicyInput = {
   enabled?: boolean
   s3Endpoint?: string
@@ -402,6 +411,126 @@ const normalizeBackupPolicyCron = (value: unknown) => {
   }
   return cron
 }
+
+const shellLiteral = (value: string) => `'${value.replace(/'/g, "'\\''")}'`
+
+const cronExpressionForSchedule = (cron: string) => {
+  const expression = cron.trim()
+  switch (expression) {
+    case '@yearly':
+    case '@annually':
+      return '0 0 1 1 *'
+    case '@monthly':
+      return '0 0 1 * *'
+    case '@weekly':
+      return '0 0 * * 0'
+    case '@daily':
+    case '@midnight':
+      return '0 0 * * *'
+    case '@hourly':
+      return '0 * * * *'
+    case '@weekdays':
+      return '0 0 * * 1-5'
+    case '@weekends':
+      return '0 0 * * 0,6'
+    default:
+      return expression
+  }
+}
+
+const backupPolicyCronNowParts = (): CronNowParts => {
+  const timezone = appliedBackupPolicyServerTimezone()
+  const output = runCommand(
+    'sh',
+    '-c',
+    `TZ=${shellLiteral(timezone)} date '+%M %H %d %m %w %Y' && date -u '+%Y-%m-%dT%H:%M'`
+  )
+  const lines = output.split(/\r?\n/).filter(Boolean)
+  const local = (lines[0] || '').trim().split(/\s+/).map(Number)
+  const utcMinuteKey = (lines[1] || new Date().toISOString().slice(0, 16)).trim()
+
+  return {
+    minute: local[0] || 0,
+    hour: local[1] || 0,
+    dayOfMonth: local[2] || 1,
+    month: local[3] || 1,
+    dayOfWeek: local[4] || 0,
+    year: local[5] || new Date().getUTCFullYear(),
+    utcMinuteKey,
+  }
+}
+
+const cronFieldIsWildcard = (field: string) => field === '*' || field === '?'
+
+const matchesCronNumberField = (field: string, value: number, min: number, max: number) => {
+  if (cronFieldIsWildcard(field)) return true
+
+  return field.split(',').some((segment) => {
+    const [rangePart, stepPart] = segment.split('/')
+    const step = stepPart ? Number(stepPart) : 1
+    if (!Number.isFinite(step) || step <= 0) return false
+
+    let start = min
+    let end = max
+    if (rangePart && rangePart !== '*' && rangePart !== '?') {
+      if (rangePart.includes('-')) {
+        const [rangeStart, rangeEnd] = rangePart.split('-').map(Number)
+        if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return false
+        start = rangeStart
+        end = rangeEnd
+      } else {
+        const exact = Number(rangePart)
+        if (!Number.isFinite(exact)) return false
+        start = exact
+        end = exact
+      }
+    }
+
+    if (value < start || value > end) return false
+    return (value - start) % step === 0
+  })
+}
+
+const matchesCronDayOfMonth = (field: string, now: CronNowParts) => {
+  if (field.toUpperCase() === 'L') {
+    return now.dayOfMonth === new Date(now.year, now.month, 0).getDate()
+  }
+  if (/[W#]/i.test(field)) return false
+  return matchesCronNumberField(field, now.dayOfMonth, 1, 31)
+}
+
+const matchesCronDayOfWeek = (field: string, now: CronNowParts) => {
+  if (/[LW#]/i.test(field)) return false
+  const normalizedField = field
+    .split(',')
+    .map((part) => (part === '7' ? '0' : part))
+    .join(',')
+  return matchesCronNumberField(normalizedField, now.dayOfWeek, 0, 6)
+}
+
+const backupPolicyCronDue = (cron: string, now: CronNowParts) => {
+  const parts = cronExpressionForSchedule(cron).split(/\s+/)
+  if (parts.length !== 5) return false
+
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+  if (!matchesCronNumberField(minute, now.minute, 0, 59)) return false
+  if (!matchesCronNumberField(hour, now.hour, 0, 23)) return false
+  if (!matchesCronNumberField(month, now.month, 1, 12)) return false
+
+  const domWildcard = cronFieldIsWildcard(dayOfMonth)
+  const dowWildcard = cronFieldIsWildcard(dayOfWeek)
+  const domMatches = matchesCronDayOfMonth(dayOfMonth, now)
+  const dowMatches = matchesCronDayOfWeek(dayOfWeek, now)
+
+  if (!domWildcard && !dowWildcard) return domMatches || dowMatches
+  return domMatches && dowMatches
+}
+
+const lastPolicyRunMinuteKey = (policy: core.Record) =>
+  policy
+    .getString('lastRunAt')
+    .replace(' ', 'T')
+    .slice(0, 16)
 
 const slugForFilename = (value: string) => {
   const clean = value
@@ -1708,9 +1837,7 @@ const backupManifestObject = (backup: core.Record) => {
   return recordObject(backup.get('manifest')) as Record<string, unknown>
 }
 
-const backupPolicyJobIds = new Set<string>()
 const runningBackupPolicyIds = new Set<string>()
-const backupPolicyCronName = (policyId: string) => `instance-backup-policy-${policyId}`
 
 const s3BackupsAvailable = () => {
   try {
@@ -2433,36 +2560,17 @@ const applyBackupPolicyInput = (policy: core.Record, instance: core.Record, inpu
   policy.set('activeBehavior', activeBehavior)
 }
 
-const unregisterBackupPolicyCron = (policyId: string) => {
-  const name = backupPolicyCronName(policyId)
-  try {
-    cronRemove(name)
-  } catch {}
-  backupPolicyJobIds.delete(policyId)
-}
-
 const registerBackupPolicyCron = (policy: core.Record) => {
   applyBackupPolicyCronTimezone()
-  unregisterBackupPolicyCron(policy.id)
   if (!policy.getBool('enabled')) return
-
-  const cron = policy.getString('cron')
-  if (!isValidBackupPolicyCron(cron)) return
-
-  cronAdd(backupPolicyCronName(policy.id), cron, () => {
-    try {
-      runScheduledBackupPolicy(policy.id, 'cron')
-    } catch (error) {
-      const log = mkLog('cron:instance:backup-policy')
-      log(`policy ${policy.id} failed: ${errorMessage(error)}`)
-    }
-  })
-  backupPolicyJobIds.add(policy.id)
+  if (!isValidBackupPolicyCron(policy.getString('cron'))) return
 }
 
 const registerAllBackupPolicyCrons = () => {
   applyBackupPolicyCronTimezone()
+}
 
+const enabledBackupPolicies = () => {
   let policies: core.Record[] = []
   try {
     policies = $app.findRecordsByFilter('instance_backup_policies', 'enabled = true', '', 500, 0)
@@ -2470,8 +2578,28 @@ const registerAllBackupPolicyCrons = () => {
     policies = []
   }
 
+  return policies.filter((policy): policy is core.Record => !!policy)
+}
+
+const runBackupPolicyCronDispatcher = () => {
+  const log = mkLog('cron:instance:backup-policy')
+  applyBackupPolicyCronTimezone()
+
+  const now = backupPolicyCronNowParts()
+  const policies = enabledBackupPolicies()
+
   for (const policy of policies) {
-    if (policy) registerBackupPolicyCron(policy)
+    try {
+      const cron = policy.getString('cron')
+      if (!isValidBackupPolicyCron(cron)) continue
+      if (!backupPolicyCronDue(cron, now)) continue
+      if (lastPolicyRunMinuteKey(policy) === now.utcMinuteKey) continue
+
+      log(`running policy ${policy.id} (${cron})`)
+      runScheduledBackupPolicy(policy.id, 'cron')
+    } catch (error) {
+      log(`policy ${policy.id} failed: ${errorMessage(error)}`)
+    }
   }
 }
 
@@ -3112,6 +3240,10 @@ export const HandleInstanceBackupPolicyUpdate = (e: core.RequestEvent) => {
 
 export const ReconcileBackupPolicyCrons = () => {
   registerAllBackupPolicyCrons()
+}
+
+export const HandleInstanceBackupPolicyCronDispatcher = () => {
+  runBackupPolicyCronDispatcher()
 }
 
 export const HandleInstanceBackupPolicyRun = (e: core.RequestEvent) => {

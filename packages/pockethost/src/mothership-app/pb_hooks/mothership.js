@@ -2335,8 +2335,15 @@ const createDefaultBackupPolicy = (instance) => {
 	$app.save(policy);
 	return policy;
 };
+const clearObsoleteBackupPolicyError = (policy) => {
+	if (!policy.getString("lastError").includes("invalid sort field \"created\"")) return policy;
+	policy.set("lastError", "");
+	if (policy.getString("lastStatus") === "failed") policy.set("lastStatus", policy.getString("lastSuccessAt") ? "ready" : "never");
+	$app.save(policy);
+	return policy;
+};
 const getOrCreateBackupPolicy = (instance) => {
-	return findBackupPolicyForInstance(instance.id) || createDefaultBackupPolicy(instance);
+	return clearObsoleteBackupPolicyError(findBackupPolicyForInstance(instance.id) || createDefaultBackupPolicy(instance));
 };
 const readBackupPolicyInput = (e) => {
 	let data = new DynamicModel({

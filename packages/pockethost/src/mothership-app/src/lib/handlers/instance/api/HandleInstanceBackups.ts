@@ -2349,8 +2349,22 @@ const createDefaultBackupPolicy = (instance: core.Record) => {
   return policy
 }
 
+const clearObsoleteBackupPolicyError = (policy: core.Record) => {
+  if (!policy.getString('lastError').includes('invalid sort field "created"')) {
+    return policy
+  }
+
+  policy.set('lastError', '')
+  if (policy.getString('lastStatus') === 'failed') {
+    policy.set('lastStatus', policy.getString('lastSuccessAt') ? 'ready' : 'never')
+  }
+  $app.save(policy)
+  return policy
+}
+
 const getOrCreateBackupPolicy = (instance: core.Record) => {
-  return findBackupPolicyForInstance(instance.id) || createDefaultBackupPolicy(instance)
+  const policy = findBackupPolicyForInstance(instance.id) || createDefaultBackupPolicy(instance)
+  return clearObsoleteBackupPolicyError(policy)
 }
 
 const readBackupPolicyInput = (e: core.RequestEvent) => {

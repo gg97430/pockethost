@@ -8,7 +8,15 @@ set -Eeuo pipefail
 #   SERVER_IP=141.94.92.92 \
 #   ADMIN_EMAIL=admin@monappli.re \
 #   ADMIN_PASSWORD='change-me' \
+#   CLOUDFLARE_API_TOKEN='cf-token-with-zone-read-and-dns-edit' \
 #   bash script.sh
+#
+# With CLOUDFLARE_API_TOKEN, the script creates/updates:
+#   A ${APP_HOST} -> SERVER_IP, proxied by Cloudflare
+#   A *.${DOMAIN} -> SERVER_IP, DNS-only for tenant instances
+#   A ftp.${DOMAIN} -> SERVER_IP, DNS-only
+#   a Let's Encrypt certificate for ${APP_HOST} and *.${DOMAIN}
+# Set AUTO_LETSENCRYPT=0 if you only want Cloudflare DNS automation.
 #
 # TLS options:
 #   TLS_CERT_B64="$(base64 -w0 tls.cert)" TLS_KEY_B64="$(base64 -w0 tls.key)" bash script.sh
@@ -122,6 +130,26 @@ bool_enabled() {
   [[ "${1:-}" == "1" || "${1:-}" == "true" || "${1:-}" == "yes" ]]
 }
 
+auto_enabled() {
+  local value="${1:-}"
+  local trigger="${2:-}"
+
+  if [[ "${value}" == "auto" ]]; then
+    [[ -n "${trigger}" ]]
+    return
+  fi
+
+  bool_enabled "${value}"
+}
+
+json_bool() {
+  if bool_enabled "$1"; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
 DOMAIN="${DOMAIN:-monappli.re}"
 APP_SUBDOMAIN="${APP_SUBDOMAIN:-app}"
 APP_HOST="${APP_HOST:-${APP_SUBDOMAIN}.${DOMAIN}}"
@@ -170,6 +198,19 @@ PH_FTP_PORT="${PH_FTP_PORT:-21}"
 PH_SFTP_PORT="${PH_SFTP_PORT:-2222}"
 PH_FTP_PASV_PORT_MIN="${PH_FTP_PASV_PORT_MIN:-10000}"
 PH_FTP_PASV_PORT_MAX="${PH_FTP_PASV_PORT_MAX:-20000}"
+
+CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-${MOTHERSHIP_CLOUDFLARE_API_TOKEN:-}}"
+CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID:-${MOTHERSHIP_CLOUDFLARE_ZONE_ID:-}}"
+CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-${MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID:-}}"
+CLOUDFLARE_ZONE_NAME="${CLOUDFLARE_ZONE_NAME:-}"
+CLOUDFLARE_DNS="${CLOUDFLARE_DNS:-auto}"
+CLOUDFLARE_APP_PROXIED="${CLOUDFLARE_APP_PROXIED:-true}"
+CLOUDFLARE_INSTANCE_PROXIED="${CLOUDFLARE_INSTANCE_PROXIED:-false}"
+CLOUDFLARE_FTP_PROXIED="${CLOUDFLARE_FTP_PROXIED:-false}"
+CLOUDFLARE_PROPAGATION_SECONDS="${CLOUDFLARE_PROPAGATION_SECONDS:-90}"
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-${ADMIN_EMAIL}}"
+LETSENCRYPT_CERT_NAME="${LETSENCRYPT_CERT_NAME:-${APP_HOST}}"
+AUTO_LETSENCRYPT="${AUTO_LETSENCRYPT:-auto}"
 
 INSTANCE_BACKUP_CPU_LIMIT_PERCENT="${INSTANCE_BACKUP_CPU_LIMIT_PERCENT:-50}"
 INSTANCE_RESTORE_CPU_LIMIT_PERCENT="${INSTANCE_RESTORE_CPU_LIMIT_PERCENT:-50}"
@@ -304,6 +345,156 @@ detect_server_ip() {
   [[ -n "${SERVER_IP}" ]] || die "Impossible de detecter SERVER_IP. Relance avec SERVER_IP=x.x.x.x"
 }
 
+cloudflare_check_response() {
+  local response="$1"
+  local context="$2"
+  local errors
+
+  if printf '%s' "${response}" | jq -e '.success == true' >/dev/null 2>&1; then
+    return
+  fi
+
+  errors="$(printf '%s' "${response}" | jq -r '[.errors[]?.message] | join("; ")' 2>/dev/null || true)"
+  [[ -n "${errors}" ]] || errors="reponse API invalide"
+  die "Cloudflare: ${context}: ${errors}"
+}
+
+cloudflare_api_json() {
+  local method="$1"
+  local endpoint="$2"
+  local payload="${3:-}"
+  local response
+
+  if [[ -n "${payload}" ]]; then
+    response="$(
+      curl -sS -X "${method}" \
+        -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        --data "${payload}" \
+        "https://api.cloudflare.com/client/v4/${endpoint}"
+    )" || die "Cloudflare: appel API impossible (${endpoint})"
+  else
+    response="$(
+      curl -sS -X "${method}" \
+        -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        "https://api.cloudflare.com/client/v4/${endpoint}"
+    )" || die "Cloudflare: appel API impossible (${endpoint})"
+  fi
+
+  cloudflare_check_response "${response}" "${method} ${endpoint}"
+  printf '%s' "${response}"
+}
+
+cloudflare_api_get_dns_records() {
+  local name="$1"
+  local type="${2:-A}"
+  local response
+
+  response="$(
+    curl -sS -G \
+      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      --data-urlencode "type=${type}" \
+      --data-urlencode "name=${name}" \
+      --data-urlencode "per_page=100" \
+      "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records"
+  )" || die "Cloudflare: lecture DNS impossible (${name})"
+
+  cloudflare_check_response "${response}" "GET dns_records ${name}"
+  printf '%s' "${response}"
+}
+
+resolve_cloudflare_config() {
+  local env_file="${INSTALL_DIR}/.env"
+
+  if [[ -f "${env_file}" ]]; then
+    [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || CLOUDFLARE_API_TOKEN="$(read_dotenv_value "${env_file}" MOTHERSHIP_CLOUDFLARE_API_TOKEN || true)"
+    [[ -n "${CLOUDFLARE_ZONE_ID}" ]] || CLOUDFLARE_ZONE_ID="$(read_dotenv_value "${env_file}" MOTHERSHIP_CLOUDFLARE_ZONE_ID || true)"
+    [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || CLOUDFLARE_ACCOUNT_ID="$(read_dotenv_value "${env_file}" MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID || true)"
+  fi
+
+  MOTHERSHIP_CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN}"
+  MOTHERSHIP_CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID}"
+  MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID}"
+}
+
+resolve_cloudflare_zone() {
+  [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || return 0
+
+  local response candidate zone_id zone_name account_id
+
+  if [[ -n "${CLOUDFLARE_ZONE_ID}" ]]; then
+    response="$(cloudflare_api_json GET "zones/${CLOUDFLARE_ZONE_ID}")"
+    CLOUDFLARE_ZONE_NAME="$(printf '%s' "${response}" | jq -r '.result.name // empty')"
+    account_id="$(printf '%s' "${response}" | jq -r '.result.account.id // empty')"
+    [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || CLOUDFLARE_ACCOUNT_ID="${account_id}"
+    return
+  fi
+
+  candidate="${DOMAIN}"
+  while [[ -n "${candidate}" ]]; do
+    response="$(cloudflare_api_json GET "zones?name=${candidate}&status=active&per_page=1")"
+    zone_id="$(printf '%s' "${response}" | jq -r '.result[0].id // empty')"
+    zone_name="$(printf '%s' "${response}" | jq -r '.result[0].name // empty')"
+    account_id="$(printf '%s' "${response}" | jq -r '.result[0].account.id // empty')"
+
+    if [[ -n "${zone_id}" ]]; then
+      CLOUDFLARE_ZONE_ID="${zone_id}"
+      CLOUDFLARE_ZONE_NAME="${zone_name}"
+      [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || CLOUDFLARE_ACCOUNT_ID="${account_id}"
+      return
+    fi
+
+    [[ "${candidate}" == *.* ]] || break
+    candidate="${candidate#*.}"
+  done
+
+  die "Cloudflare: impossible de trouver la zone active pour ${DOMAIN}. Fournis CLOUDFLARE_ZONE_ID si le token ne peut pas lister les zones."
+}
+
+upsert_cloudflare_a_record() {
+  local name="$1"
+  local content="$2"
+  local proxied="$3"
+  local response record_id payload duplicate_id
+  local record_ids=()
+
+  response="$(cloudflare_api_get_dns_records "${name}" A)"
+  while IFS= read -r record_id; do
+    [[ -n "${record_id}" ]] && record_ids+=("${record_id}")
+  done < <(printf '%s' "${response}" | jq -r '.result[].id // empty')
+  payload="$(jq -cn --arg name "${name}" --arg content "${content}" --argjson proxied "$(json_bool "${proxied}")" '{type:"A",name:$name,content:$content,ttl:1,proxied:$proxied}')"
+
+  if [[ "${#record_ids[@]}" -gt 0 ]]; then
+    cloudflare_api_json PUT "zones/${CLOUDFLARE_ZONE_ID}/dns_records/${record_ids[0]}" "${payload}" >/dev/null
+    for duplicate_id in "${record_ids[@]:1}"; do
+      cloudflare_api_json DELETE "zones/${CLOUDFLARE_ZONE_ID}/dns_records/${duplicate_id}" >/dev/null
+    done
+  else
+    cloudflare_api_json POST "zones/${CLOUDFLARE_ZONE_ID}/dns_records" "${payload}" >/dev/null
+  fi
+
+  printf '  A %-40s -> %s proxied=%s\n' "${name}" "${content}" "$(json_bool "${proxied}")"
+}
+
+configure_cloudflare_dns() {
+  auto_enabled "${CLOUDFLARE_DNS}" "${CLOUDFLARE_API_TOKEN}" || return 0
+  [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || die "CLOUDFLARE_DNS est active mais CLOUDFLARE_API_TOKEN est vide"
+
+  log "Configuration DNS Cloudflare"
+  resolve_cloudflare_zone
+
+  [[ -n "${CLOUDFLARE_ZONE_ID}" ]] || die "Cloudflare: zone id introuvable"
+  upsert_cloudflare_a_record "${APP_HOST}" "${SERVER_IP}" "${CLOUDFLARE_APP_PROXIED}"
+  upsert_cloudflare_a_record "*.${DOMAIN}" "${SERVER_IP}" "${CLOUDFLARE_INSTANCE_PROXIED}"
+  upsert_cloudflare_a_record "ftp.${DOMAIN}" "${SERVER_IP}" "${CLOUDFLARE_FTP_PROXIED}"
+
+  MOTHERSHIP_CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN}"
+  MOTHERSHIP_CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID}"
+  MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID}"
+}
+
 prepare_directories() {
   log "Preparation des repertoires"
   as_root mkdir -p \
@@ -314,6 +505,79 @@ prepare_directories() {
     "${PH_HOME}/ssh" \
     "${INSTALL_DIR}"
   as_root chown -R "${INSTALL_USER}:${INSTALL_USER}" "${PH_HOME}" "${INSTALL_DIR}"
+}
+
+install_certbot_cloudflare() {
+  if command -v certbot >/dev/null 2>&1 && certbot plugins 2>/dev/null | grep -q 'dns-cloudflare'; then
+    return
+  fi
+
+  log "Installation de Certbot Cloudflare"
+  as_root apt-get install -y certbot python3-certbot-dns-cloudflare
+}
+
+write_letsencrypt_deploy_hook() {
+  local hook_file="/etc/letsencrypt/renewal-hooks/deploy/pockethost-${LETSENCRYPT_CERT_NAME//[^a-zA-Z0-9_.-]/_}.sh"
+
+  as_root mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  as_root tee "${hook_file}" >/dev/null <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CERT_DIR="/etc/letsencrypt/live/${LETSENCRYPT_CERT_NAME}"
+SSL_DIR="${PH_HOME}/ssl"
+
+cp "\${CERT_DIR}/fullchain.pem" "\${SSL_DIR}/tls.cert"
+cp "\${CERT_DIR}/privkey.pem" "\${SSL_DIR}/tls.key"
+chown ${INSTALL_USER}:${INSTALL_USER} "\${SSL_DIR}/tls.cert" "\${SSL_DIR}/tls.key"
+chmod 644 "\${SSL_DIR}/tls.cert"
+chmod 600 "\${SSL_DIR}/tls.key"
+
+if command -v pm2 >/dev/null 2>&1; then
+  sudo -H -u ${INSTALL_USER} pm2 restart firewall >/dev/null 2>&1 || true
+fi
+EOF
+  as_root chmod 700 "${hook_file}"
+}
+
+install_letsencrypt_tls() {
+  auto_enabled "${AUTO_LETSENCRYPT}" "${CLOUDFLARE_API_TOKEN}" || return 1
+  [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || return 1
+
+  local cert_file="$1"
+  local key_file="$2"
+  local credentials_file="${PH_HOME}/ssl/cloudflare-certbot.ini"
+  local cert_dir="/etc/letsencrypt/live/${LETSENCRYPT_CERT_NAME}"
+  local domain_args=()
+
+  install_certbot_cloudflare
+
+  printf 'dns_cloudflare_api_token = %s\n' "${CLOUDFLARE_API_TOKEN}" >"${credentials_file}"
+  chmod 600 "${credentials_file}"
+  as_root chown root:root "${credentials_file}" 2>/dev/null || true
+
+  domain_args=(-d "${APP_HOST}")
+  if [[ "${APP_HOST}" != "*.${DOMAIN}" ]]; then
+    domain_args+=(-d "*.${DOMAIN}")
+  fi
+
+  log "Generation du certificat Let's Encrypt (${APP_HOST}, *.${DOMAIN})"
+  as_root certbot certonly \
+    --non-interactive \
+    --agree-tos \
+    --no-eff-email \
+    --email "${LETSENCRYPT_EMAIL}" \
+    --dns-cloudflare \
+    --dns-cloudflare-credentials "${credentials_file}" \
+    --dns-cloudflare-propagation-seconds "${CLOUDFLARE_PROPAGATION_SECONDS}" \
+    --cert-name "${LETSENCRYPT_CERT_NAME}" \
+    --keep-until-expiring \
+    "${domain_args[@]}"
+
+  [[ -f "${cert_dir}/fullchain.pem" && -f "${cert_dir}/privkey.pem" ]] || die "Certificat Let's Encrypt introuvable dans ${cert_dir}"
+  cp "${cert_dir}/fullchain.pem" "${cert_file}"
+  cp "${cert_dir}/privkey.pem" "${key_file}"
+  write_letsencrypt_deploy_hook
 }
 
 install_tls() {
@@ -327,6 +591,8 @@ install_tls() {
   elif [[ -n "${TLS_CERT_PATH:-}" && -n "${TLS_KEY_PATH:-}" ]]; then
     cp "${TLS_CERT_PATH}" "${cert_file}"
     cp "${TLS_KEY_PATH}" "${key_file}"
+  elif install_letsencrypt_tls "${cert_file}" "${key_file}"; then
+    log "Certificat Let's Encrypt installe"
   elif [[ -f "${cert_file}" && -f "${key_file}" ]]; then
     log "Certificat TLS existant conserve"
   elif bool_enabled "${SELF_SIGNED_TLS}"; then
@@ -458,9 +724,9 @@ SMTP_SENDER_NAME="${SMTP_SENDER_NAME:-Gestion PocketBase}"
 SMTP_SENDER_ADDRESS=${SMTP_SENDER_ADDRESS:-${ADMIN_EMAIL}}
 PH_SUPPORT_EMAIL=${PH_SUPPORT_EMAIL:-${ADMIN_EMAIL}}
 
-MOTHERSHIP_CLOUDFLARE_API_TOKEN=${MOTHERSHIP_CLOUDFLARE_API_TOKEN:-}
-MOTHERSHIP_CLOUDFLARE_ZONE_ID=${MOTHERSHIP_CLOUDFLARE_ZONE_ID:-}
-MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID=${MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID:-}
+MOTHERSHIP_CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+MOTHERSHIP_CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID}
+MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
 EOF
   fi
 
@@ -468,6 +734,15 @@ EOF
   write_dotenv_value "${env_file}" MOTHERSHIP_ADMIN_USERNAME "${ADMIN_EMAIL}"
   write_dotenv_value "${env_file}" MOTHERSHIP_ADMIN_PASSWORD "${ADMIN_PASSWORD}"
   write_dotenv_value "${env_file}" TEST_EMAIL "${ADMIN_EMAIL}"
+  if [[ -n "${CLOUDFLARE_API_TOKEN}" ]]; then
+    write_dotenv_value "${env_file}" MOTHERSHIP_CLOUDFLARE_API_TOKEN "${CLOUDFLARE_API_TOKEN}"
+  fi
+  if [[ -n "${CLOUDFLARE_ZONE_ID}" ]]; then
+    write_dotenv_value "${env_file}" MOTHERSHIP_CLOUDFLARE_ZONE_ID "${CLOUDFLARE_ZONE_ID}"
+  fi
+  if [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]]; then
+    write_dotenv_value "${env_file}" MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID "${CLOUDFLARE_ACCOUNT_ID}"
+  fi
 
   log "Ecriture de ${dashboard_env}"
   cat >"${dashboard_env}" <<EOF
@@ -753,10 +1028,22 @@ Commandes utiles:
   sudo -u ${INSTALL_USER} bash -lc 'cd ${INSTALL_DIR} && git pull --ff-only && pnpm install --frozen-lockfile && pnpm --filter pockethost-mothership-app build && pnpm --filter @pockethost/dashboard build && pnpm --filter pockethost-instance build && pm2 restart all'
 
 DNS requis:
+EOF
+  if [[ -n "${CLOUDFLARE_ZONE_ID}" ]]; then
+    cat <<EOF
+  Cloudflare configure automatiquement:
+    zone: ${CLOUDFLARE_ZONE_NAME:-${CLOUDFLARE_ZONE_ID}}
+    A ${APP_HOST} ${SERVER_IP} proxied=$(json_bool "${CLOUDFLARE_APP_PROXIED}")
+    A *.${DOMAIN} ${SERVER_IP} proxied=$(json_bool "${CLOUDFLARE_INSTANCE_PROXIED}")
+    A ftp.${DOMAIN} ${SERVER_IP} proxied=$(json_bool "${CLOUDFLARE_FTP_PROXIED}")
+EOF
+  else
+    cat <<EOF
   A ${APP_HOST} ${SERVER_IP}
   A *.${DOMAIN} ${SERVER_IP}
   A ftp.${DOMAIN} ${SERVER_IP}
 EOF
+  fi
 }
 
 main() {
@@ -774,6 +1061,8 @@ main() {
   install_litestream
   configure_system
   prepare_directories
+  resolve_cloudflare_config
+  configure_cloudflare_dns
   install_tls
   clone_or_update_repo
   resolve_secrets

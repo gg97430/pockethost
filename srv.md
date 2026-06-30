@@ -15,7 +15,7 @@ L'architecture actuelle est volontairement simple:
 
 ## 0. Installation automatique
 
-Le script `script.sh` installe un serveur Ubuntu neuf: paquets systeme, Docker, Node 24, pnpm, PM2, Litestream, firewall UFW, variables d'environnement, build du projet, demarrage PM2 et creation du premier compte superadmin.
+Le script `script.sh` installe un serveur Ubuntu neuf: paquets systeme, Docker, Node 24, pnpm, PM2, Litestream, firewall UFW, DNS Cloudflare, certificat Let's Encrypt, variables d'environnement, build du projet, demarrage PM2 et creation du premier compte superadmin.
 
 Sur le serveur:
 
@@ -26,12 +26,45 @@ DOMAIN=monappli.re \
 SERVER_IP=141.94.92.92 \
 ADMIN_EMAIL=admin@monappli.re \
 ADMIN_PASSWORD='mot-de-passe-fort' \
+CLOUDFLARE_API_TOKEN='token-cloudflare-zone-read-dns-edit' \
+bash script.sh
+```
+
+Pour un deuxieme serveur isole sous `app2.monappli.re`, utiliser le sous-domaine comme racine des instances:
+
+```bash
+DOMAIN=app2.monappli.re \
+APP_HOST=app2.monappli.re \
+SERVER_IP=91.134.89.55 \
+ADMIN_EMAIL=admin@monappli.re \
+ADMIN_PASSWORD='mot-de-passe-fort' \
+CLOUDFLARE_API_TOKEN='token-cloudflare-zone-read-dns-edit' \
+bash script.sh
+```
+
+Le token Cloudflare doit avoir au minimum:
+
+- `Zone:Read`
+- `DNS:Edit`
+- la zone concernee, par exemple `monappli.re`
+
+Avec `CLOUDFLARE_API_TOKEN`, le script detecte la zone Cloudflare, cree/met a jour les enregistrements DNS, genere un certificat Let's Encrypt wildcard par challenge DNS, installe le certificat dans le firewall, et ecrit `MOTHERSHIP_CLOUDFLARE_API_TOKEN`, `MOTHERSHIP_CLOUDFLARE_ZONE_ID`, `MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID` dans `.env`.
+
+Si un ancien certificat self-signed existe deja, il sera remplace par le certificat Let's Encrypt. Pour automatiser seulement les DNS sans toucher au TLS, ajouter `AUTO_LETSENCRYPT=0`.
+
+Si tu veux quand meme fournir un certificat deja copie sur le serveur:
+
+```bash
+DOMAIN=monappli.re \
+SERVER_IP=141.94.92.92 \
+ADMIN_EMAIL=admin@monappli.re \
+ADMIN_PASSWORD='mot-de-passe-fort' \
 TLS_CERT_PATH=/root/tls.cert \
 TLS_KEY_PATH=/root/tls.key \
 bash script.sh
 ```
 
-Sans certificat deja copie sur le serveur, tu peux fournir le certificat Cloudflare Origin en base64:
+Ou fournir le certificat en base64:
 
 ```bash
 TLS_CERT_B64="$(base64 -w0 tls.cert)" \
@@ -52,19 +85,16 @@ Le script n'ecrase pas un `.env` existant. Pour regenerer la configuration, ajou
 - Domaine: `monappli.re`.
 - IP serveur: `141.94.92.92`.
 - Acces GitHub au fork `gg97430/pockethost`.
-- Certificat TLS valide pour `monappli.re` et `*.monappli.re`.
-- Token Cloudflare si tu veux automatiser les DNS de domaines personnalises.
+- Token Cloudflare avec `Zone:Read` et `DNS:Edit`.
 
 ## 2. DNS Cloudflare
 
-Dans Cloudflare, creer au minimum:
+Avec `CLOUDFLARE_API_TOKEN`, le script cree automatiquement:
 
 ```text
-A      app                 141.94.92.92
-A      *                   141.94.92.92
-A      monappli.re         141.94.92.92
-A      pockethost-central  141.94.92.92
-A      ftp                 141.94.92.92
+A      app.monappli.re     141.94.92.92   proxied
+A      *.monappli.re       141.94.92.92   DNS only
+A      ftp.monappli.re     141.94.92.92   DNS only
 ```
 
 Notes:
@@ -72,7 +102,8 @@ Notes:
 - `app.monappli.re` sert le dashboard interne.
 - `*.monappli.re` sert les instances.
 - `ftp.monappli.re` doit rester en DNS only si FTP/SFTP est utilise, car Cloudflare ne proxy pas FTP/SFTP.
-- Pour HTTPS via Cloudflare, mettre SSL/TLS en `Full (strict)` et installer un certificat Origin Cloudflare couvrant `monappli.re` et `*.monappli.re`.
+- Pour un serveur sous `app2.monappli.re`, le script cree `app2.monappli.re`, `*.app2.monappli.re` et `ftp.app2.monappli.re`.
+- Pour HTTPS via Cloudflare, mettre SSL/TLS en `Full (strict)`. Le script installe un certificat Let's Encrypt couvrant le dashboard et le wildcard des instances.
 
 ## 3. Preparation Ubuntu
 
@@ -203,6 +234,10 @@ PH_FTP_PASV_IP=141.94.92.92
 PH_FTP_PASV_PORT_MIN=10000
 PH_FTP_PASV_PORT_MAX=20000
 
+MOTHERSHIP_CLOUDFLARE_API_TOKEN=token-cloudflare-zone-read-dns-edit
+MOTHERSHIP_CLOUDFLARE_ZONE_ID=zone-id-cloudflare
+MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID=account-id-cloudflare
+
 MOTHERSHIP_SEMVER=0.39.*
 PH_AUTO_VERIFY_SIGNUPS=true
 PH_SIGNUP_SUBSCRIPTION_QUANTITY=250
@@ -240,28 +275,37 @@ Le process `firewall` attend ces fichiers:
 /home/ubuntu/.local/share/pockethost/ssl/tls.cert
 ```
 
-Avec Cloudflare, generer un certificat Origin dans:
+Avec `CLOUDFLARE_API_TOKEN`, `script.sh` genere automatiquement un certificat Let's Encrypt par challenge DNS Cloudflare, puis copie:
 
 ```text
-Cloudflare > SSL/TLS > Origin Server > Create certificate
+/etc/letsencrypt/live/<APP_HOST>/fullchain.pem -> /home/ubuntu/.local/share/pockethost/ssl/tls.cert
+/etc/letsencrypt/live/<APP_HOST>/privkey.pem   -> /home/ubuntu/.local/share/pockethost/ssl/tls.key
 ```
 
-Hostnames a inclure:
+Le script installe aussi un hook de renouvellement dans:
 
 ```text
-monappli.re
+/etc/letsencrypt/renewal-hooks/deploy/
+```
+
+Le certificat couvre:
+
+```text
+app.monappli.re
 *.monappli.re
 ```
 
-Puis copier le certificat et la cle:
+Pour un serveur `app2.monappli.re`, il couvre:
+
+```text
+app2.monappli.re
+*.app2.monappli.re
+```
+
+Si tu veux utiliser un certificat manuel a la place, fournir:
 
 ```bash
-mkdir -p /home/ubuntu/.local/share/pockethost/ssl
-nano /home/ubuntu/.local/share/pockethost/ssl/tls.cert
-nano /home/ubuntu/.local/share/pockethost/ssl/tls.key
-chmod 600 /home/ubuntu/.local/share/pockethost/ssl/tls.key
-chmod 644 /home/ubuntu/.local/share/pockethost/ssl/tls.cert
-chown -R ubuntu:ubuntu /home/ubuntu/.local/share/pockethost/ssl
+TLS_CERT_PATH=/root/tls.cert TLS_KEY_PATH=/root/tls.key bash script.sh
 ```
 
 Verifier:
@@ -278,6 +322,7 @@ Depuis `/home/ubuntu/pockethost`:
 pnpm --filter pockethost check:types
 pnpm --filter pockethost-mothership-app build
 pnpm --filter @pockethost/dashboard build
+pnpm --filter pockethost-instance build
 ```
 
 Le build mothership genere:

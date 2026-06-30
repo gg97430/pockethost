@@ -2420,9 +2420,11 @@ const setPolicyRunState = (policy, status, input = {}) => {
 	$app.save(policy);
 };
 const scheduledBackupsForInstance = (instanceId) => {
-	return $app.findRecordsByFilter("instance_backups", "instance = {:instance} && kind = \"scheduled\" && status = \"ready\"", "-created", 500, 0, { instance: instanceId }).filter((record) => !!record);
+	return sortBackupsNewestFirst$1($app.findRecordsByFilter("instance_backups", "instance = {:instance} && kind = \"scheduled\" && status = \"ready\"", "", 500, 0, { instance: instanceId }).filter((record) => !!record));
 };
 const backupTimestampMs = (backup) => {
+	const fromFilename = timestampFromBackupFilename(backup.getString("filename"));
+	if (fromFilename) return fromFilename;
 	const raw = backup.getString("created") || backup.getString("updated");
 	const timestamp = Date.parse(raw);
 	return Number.isFinite(timestamp) ? timestamp : 0;
@@ -4351,7 +4353,11 @@ const serializeUser = (record) => ({
 	updated: record.getString("updated"),
 	instanceCount: countInstancesForUser(record.id)
 });
-const listOperatorUsers = () => $app.findRecordsByFilter("users", "id != \"\"", "-created").filter((record) => !!record).map(serializeUser);
+const userTimestampMs = (record) => {
+	const timestamp = Date.parse(record.getString("created") || record.getString("updated") || "");
+	return Number.isFinite(timestamp) ? timestamp : 0;
+};
+const listOperatorUsers = () => $app.findRecordsByFilter("users", "id != \"\"", "").filter((record) => !!record).sort((a, b) => userTimestampMs(b) - userTimestampMs(a) || b.id.localeCompare(a.id)).map(serializeUser);
 const ensureAnotherSuperAdminExists = (currentUserId) => {
 	const superAdmins = $app.findRecordsByFilter("users", "superAdmin = true").filter((record) => !!record);
 	if (superAdmins.length <= 1 && superAdmins[0]?.id === currentUserId) throw new BadRequestError("Impossible de retirer le dernier superadmin.");

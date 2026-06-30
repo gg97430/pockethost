@@ -68,10 +68,16 @@ const serializeUser = (record: models.Record) => ({
   instanceCount: countInstancesForUser(record.id),
 })
 
+const userTimestampMs = (record: models.Record) => {
+  const timestamp = Date.parse(record.getString('created') || record.getString('updated') || '')
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
 const listOperatorUsers = () =>
   $app
-    .findRecordsByFilter('users', 'id != ""', '-created')
+    .findRecordsByFilter('users', 'id != ""', '')
     .filter((record): record is models.Record => !!record)
+    .sort((a, b) => userTimestampMs(b) - userTimestampMs(a) || b.id.localeCompare(a.id))
     .map(serializeUser)
 
 const ensureAnotherSuperAdminExists = (currentUserId: string) => {

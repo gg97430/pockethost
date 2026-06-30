@@ -2475,15 +2475,18 @@ const scheduledBackupsForInstance = (instanceId: string) => {
   const records = $app.findRecordsByFilter(
     'instance_backups',
     'instance = {:instance} && kind = "scheduled" && status = "ready"',
-    '-created',
+    '',
     500,
     0,
     { instance: instanceId }
   )
-  return records.filter((record): record is core.Record => !!record)
+  return sortBackupsNewestFirst(records.filter((record): record is core.Record => !!record))
 }
 
 const backupTimestampMs = (backup: core.Record) => {
+  const fromFilename = timestampFromBackupFilename(backup.getString('filename'))
+  if (fromFilename) return fromFilename
+
   const raw = backup.getString('created') || backup.getString('updated')
   const timestamp = Date.parse(raw)
   return Number.isFinite(timestamp) ? timestamp : 0

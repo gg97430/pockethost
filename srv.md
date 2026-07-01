@@ -242,8 +242,8 @@ MOTHERSHIP_SEMVER=0.39.*
 PH_AUTO_VERIFY_SIGNUPS=true
 PH_SIGNUP_SUBSCRIPTION_QUANTITY=250
 
-# A activer si le firewall doit limiter les abus.
-PH_ENABLE_FIREWALL_RATE_LIMIT=1
+# Rate limit firewall desactive pour cette installation interne.
+PH_DISABLE_FIREWALL_RATE_LIMIT=true
 
 # Optionnel: limiter l'acces a certaines IP CIDR.
 # Attention: si renseigne, les autres IP peuvent etre bloquees.
@@ -824,7 +824,13 @@ pm2 restart firewall edge-ftp
 
 ### Rate limiter
 
-Le firewall a un rate limiter interne. En mode `NODE_ENV=development`, il est desactive par defaut sauf si:
+Le firewall a un rate limiter interne, mais il est desactive par defaut sur cette installation interne:
+
+```env
+PH_DISABLE_FIREWALL_RATE_LIMIT=true
+```
+
+Pour le reactiver explicitement plus tard:
 
 ```env
 PH_ENABLE_FIREWALL_RATE_LIMIT=1

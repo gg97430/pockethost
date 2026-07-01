@@ -55,10 +55,7 @@ export const _PH_DISABLE_INSTANCE_WEBHOOKS = _PH_ENABLE_INSTANCE_WEBHOOKS
 export const _PH_ENABLE_FIREWALL_RATE_LIMIT = env.get('PH_ENABLE_FIREWALL_RATE_LIMIT').asBool()
 export const _PH_DISABLE_FIREWALL_RATE_LIMIT = _PH_ENABLE_FIREWALL_RATE_LIMIT
   ? false
-  : env
-      .get('PH_DISABLE_FIREWALL_RATE_LIMIT')
-      .default(_IS_DEV ? 'true' : 'false')
-      .asBool()
+  : env.get('PH_DISABLE_FIREWALL_RATE_LIMIT').default('true').asBool()
 export const _DEBUG = env.get(`PH_DEBUG`).default(_IS_DEV.toString()).asBool()
 export const _APEX_DOMAIN = env.get('APEX_DOMAIN').default('pockethost.lvh.me').asString()
 export const _HTTP_PROTOCOL = env

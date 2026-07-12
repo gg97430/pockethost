@@ -11,6 +11,7 @@
   import InstanceDeveloperSnippet from './InstanceDeveloperSnippet.svelte'
   import InstanceHealthCards from './InstanceHealthCards.svelte'
   import InstanceQuickActions from './InstanceQuickActions.svelte'
+  import InstanceResourceChart from './InstanceResourceChart.svelte'
   import { instance } from './store'
 
   type PreviewLog = {
@@ -88,6 +89,11 @@
     }
   }
 
+  const handleMetric = (metric: InstanceOverview['runtime'], collectedAt: string) => {
+    if (!overview) return
+    overview = { ...overview, runtime: metric, collectedAt }
+  }
+
   const copyText = async (key: string, value: string) => {
     errorMessage = ''
     try {
@@ -151,15 +157,19 @@
 
     if (!power) return
 
-    const unwatch = client().watchInstanceLog($instance, (newLog) => {
-      const log = {
-        time: '<no time>',
-        stream: StreamNames.StdOut,
-        message: '<no message>',
-        ...newLog,
-      } as PreviewLog
-      liveLogs = [...liveLogs, log].slice(-6)
-    }, 30)
+    const unwatch = client().watchInstanceLog(
+      $instance,
+      (newLog) => {
+        const log = {
+          time: '<no time>',
+          stream: StreamNames.StdOut,
+          message: '<no message>',
+          ...newLog,
+        } as PreviewLog
+        liveLogs = [...liveLogs, log].slice(-6)
+      },
+      30
+    )
 
     return () => unwatch()
   })
@@ -212,6 +222,13 @@
   </section>
 
   <InstanceHealthCards instance={$instance} {overview} />
+
+  <InstanceResourceChart
+    instanceId={id}
+    initialMetric={overview?.runtime}
+    initialCollectedAt={overview?.collectedAt}
+    onMetric={handleMetric}
+  />
 
   <div class="overview-grid">
     <section class="overview-panel">
@@ -333,8 +350,7 @@
     border-radius: 0.875rem;
     background:
       linear-gradient(135deg, rgb(30 184 84 / 0.16), transparent 42%),
-      linear-gradient(120deg, rgb(59 130 246 / 0.12), transparent 58%),
-      var(--app-surface);
+      linear-gradient(120deg, rgb(59 130 246 / 0.12), transparent 58%), var(--app-surface);
     padding: 1rem;
     box-shadow: var(--app-shadow-sm);
   }

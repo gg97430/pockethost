@@ -3497,10 +3497,10 @@ const parseDockerBytePair = (value) => {
 	const parts = `${value || ""}`.split("/").map((part) => part.trim());
 	return [parseDockerBytes(parts[0]), parseDockerBytes(parts[1])];
 };
-const readDockerStatsByName = () => {
+const readDockerStatsByName = (containerNames = []) => {
 	const rows = /* @__PURE__ */ new Map();
 	try {
-		const output = toString($os.cmd("docker", "stats", "--no-stream", "--format", "{{json .}}").combinedOutput()).trim();
+		const output = toString($os.cmd("docker", "stats", "--no-stream", "--format", "{{json .}}", ...containerNames).combinedOutput()).trim();
 		if (!output) return rows;
 		for (const line of output.split("\n")) {
 			const trimmed = line.trim();
@@ -3516,7 +3516,7 @@ const readDockerStatsByName = () => {
 	}
 	return rows;
 };
-const serializeInstanceResourceMetrics = (instance, dockerStatsByName) => {
+const serializeInstanceRuntimeMetrics = (instance, dockerStatsByName) => {
 	const row = dockerStatsByName.get(instance.id);
 	const [memoryBytes, memoryLimitBytes] = parseDockerBytePair(row?.MemUsage);
 	const [blockReadBytes, blockWriteBytes] = parseDockerBytePair(row?.BlockIO);
@@ -3526,12 +3526,16 @@ const serializeInstanceResourceMetrics = (instance, dockerStatsByName) => {
 		memoryBytes,
 		memoryLimitBytes,
 		memoryPercent: parseDockerPercent(row?.MemPerc),
-		diskBytes: getDirectorySizeBytes(instanceRoot(instance.id)),
+		diskBytes: null,
 		blockReadBytes,
 		blockWriteBytes,
 		containerName: row?.Name || ""
 	};
 };
+const serializeInstanceResourceMetrics = (instance, dockerStatsByName) => ({
+	...serializeInstanceRuntimeMetrics(instance, dockerStatsByName),
+	diskBytes: getDirectorySizeBytes(instanceRoot(instance.id))
+});
 const findAccessibleInstances = (authRecord) => {
 	return (authRecord.getBool("superAdmin") ? $app.findRecordsByFilter("instances", "1=1", "subdomain", 500, 0) : $app.findRecordsByFilter("instances", "uid = {:uid}", "subdomain", 500, 0, { uid: authRecord.id })).filter((record) => !!record);
 };
@@ -3573,6 +3577,15 @@ const HandleInstancesMetrics = (e) => {
 	for (const instance of findAccessibleInstances(authRecord)) metrics[instance.id] = serializeInstanceResourceMetrics(instance, dockerStatsByName);
 	return e.json(200, {
 		instances: metrics,
+		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
+	});
+};
+const HandleInstanceMetrics = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	return e.json(200, {
+		metric: serializeInstanceRuntimeMetrics(instance, readDockerStatsByName([instance.id])),
 		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
 	});
 };
@@ -7093,6 +7106,7 @@ exports.HandleInstanceDuplicate = HandleInstanceDuplicate;
 exports.HandleInstanceLitestreamBootstrap = HandleInstanceLitestreamBootstrap;
 exports.HandleInstanceLitestreamPolicyGet = HandleInstanceLitestreamPolicyGet;
 exports.HandleInstanceLitestreamPolicyUpdate = HandleInstanceLitestreamPolicyUpdate;
+exports.HandleInstanceMetrics = HandleInstanceMetrics;
 exports.HandleInstanceOverview = HandleInstanceOverview;
 exports.HandleInstanceUpdate = HandleInstanceUpdate;
 exports.HandleInstancesMetrics = HandleInstancesMetrics;

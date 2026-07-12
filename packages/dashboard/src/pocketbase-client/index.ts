@@ -9,6 +9,7 @@ export type {
   InstanceBackupPolicyResponse,
   InstanceLitestreamPolicy,
   InstanceLitestreamPolicyResponse,
+  InstanceMetricResponse,
   InstanceOverview,
   InstanceOverviewBackup,
   OperatorAdminOverview,

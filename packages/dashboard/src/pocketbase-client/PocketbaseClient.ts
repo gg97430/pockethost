@@ -310,6 +310,11 @@ export type DashboardInstanceMetricsResponse = {
   collectedAt: string
 }
 
+export type InstanceMetricResponse = {
+  metric: DashboardInstanceMetric
+  collectedAt: string
+}
+
 export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const { url } = config
 
@@ -426,6 +431,11 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
 
   const getInstanceOverview = (id: InstanceId) =>
     client.send<InstanceOverview>(`/api/instance/${id}/overview`, {
+      method: 'GET',
+    })
+
+  const getInstanceMetrics = (id: InstanceId) =>
+    client.send<InstanceMetricResponse>(`/api/instance/${id}/metrics`, {
       method: 'GET',
     })
 
@@ -1017,6 +1027,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     deleteInstance,
     duplicateInstance,
     getInstanceOverview,
+    getInstanceMetrics,
     getDashboardInstanceMetrics,
     createInstanceBackup,
     importInstanceBackup,

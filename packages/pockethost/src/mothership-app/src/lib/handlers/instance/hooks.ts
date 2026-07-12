@@ -51,6 +51,14 @@ routerAdd(
 )
 routerAdd(
   'GET',
+  '/api/instance/{id}/metrics',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceMetrics(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'GET',
   '/api/instances/metrics',
   (e) => {
     return require(`${__hooks}/mothership`).HandleInstancesMetrics(e)

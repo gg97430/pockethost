@@ -109,11 +109,13 @@ const parseDockerBytePair = (value?: string): [number | null, number | null] => 
   return [parseDockerBytes(parts[0]), parseDockerBytes(parts[1])]
 }
 
-const readDockerStatsByName = () => {
+const readDockerStatsByName = (containerNames: string[] = []) => {
   const rows = new Map<string, DockerStatsRow>()
 
   try {
-    const output = toString($os.cmd('docker', 'stats', '--no-stream', '--format', '{{json .}}').combinedOutput()).trim()
+    const output = toString(
+      $os.cmd('docker', 'stats', '--no-stream', '--format', '{{json .}}', ...containerNames).combinedOutput()
+    ).trim()
     if (!output) return rows
 
     for (const line of output.split('\n')) {
@@ -135,7 +137,7 @@ const readDockerStatsByName = () => {
   return rows
 }
 
-const serializeInstanceResourceMetrics = (instance: core.Record, dockerStatsByName: Map<string, DockerStatsRow>) => {
+const serializeInstanceRuntimeMetrics = (instance: core.Record, dockerStatsByName: Map<string, DockerStatsRow>) => {
   const row = dockerStatsByName.get(instance.id)
   const [memoryBytes, memoryLimitBytes] = parseDockerBytePair(row?.MemUsage)
   const [blockReadBytes, blockWriteBytes] = parseDockerBytePair(row?.BlockIO)
@@ -146,12 +148,17 @@ const serializeInstanceResourceMetrics = (instance: core.Record, dockerStatsByNa
     memoryBytes,
     memoryLimitBytes,
     memoryPercent: parseDockerPercent(row?.MemPerc),
-    diskBytes: getDirectorySizeBytes(instanceRoot(instance.id)),
+    diskBytes: null,
     blockReadBytes,
     blockWriteBytes,
     containerName: row?.Name || '',
   }
 }
+
+const serializeInstanceResourceMetrics = (instance: core.Record, dockerStatsByName: Map<string, DockerStatsRow>) => ({
+  ...serializeInstanceRuntimeMetrics(instance, dockerStatsByName),
+  diskBytes: getDirectorySizeBytes(instanceRoot(instance.id)),
+})
 
 const findAccessibleInstances = (authRecord: core.Record) => {
   const records = authRecord.getBool('superAdmin')
@@ -214,6 +221,17 @@ export const HandleInstancesMetrics = (e: core.RequestEvent) => {
 
   return e.json(200, {
     instances: metrics,
+    collectedAt: new Date().toISOString(),
+  })
+}
+
+export const HandleInstanceMetrics = (e: core.RequestEvent) => {
+  const authRecord = requireAuthRecord(e.auth)
+  const instance = findInstance(pathValue(e, 'id'))
+  assertInstanceAccess(instance, authRecord)
+
+  return e.json(200, {
+    metric: serializeInstanceRuntimeMetrics(instance, readDockerStatsByName([instance.id])),
     collectedAt: new Date().toISOString(),
   })
 }

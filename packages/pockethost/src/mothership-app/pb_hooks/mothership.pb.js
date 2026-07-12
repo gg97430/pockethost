@@ -94,6 +94,9 @@ routerAdd("GET", "/api/instance/{id}/overview", (e) => {
 routerAdd("GET", "/api/instance/{id}/metrics", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstanceMetrics(e);
 }, $apis.requireAuth());
+routerAdd("GET", "/api/instance/{id}/metrics/history", (e) => {
+	return require(`${__hooks}/mothership`).HandleInstanceMetricsHistory(e);
+}, $apis.requireAuth());
 routerAdd("GET", "/api/instances/metrics", (e) => {
 	return require(`${__hooks}/mothership`).HandleInstancesMetrics(e);
 }, $apis.requireAuth());
@@ -185,6 +188,14 @@ onBootstrap((e) => {
 });
 cronAdd("instance-backup-policy-dispatcher", "* * * * *", () => {
 	require(`${__hooks}/mothership`).HandleInstanceBackupPolicyCronDispatcher();
+});
+/** Persist opt-in instance CPU/RAM samples once per minute. */
+cronAdd("instance-resource-metrics-sampler", "* * * * *", () => {
+	require(`${__hooks}/mothership`).CollectInstanceResourceMetrics();
+});
+/** Keep the metrics collection bounded to seven days. */
+cronAdd("instance-resource-metrics-retention", "17 * * * *", () => {
+	require(`${__hooks}/mothership`).PurgeExpiredInstanceResourceMetrics();
 });
 /** Reconcile optional Litestream replication */
 onBootstrap((e) => {

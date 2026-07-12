@@ -3431,6 +3431,28 @@ const HandleInstanceDuplicate = (e) => {
 
 //#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceOverview.ts
+const INSTANCE_RESOURCE_METRICS_COLLECTION = "instance_resource_metrics";
+const INSTANCE_METRICS_RETENTION_MS = 10080 * 60 * 1e3;
+const INSTANCE_METRICS_QUERY_LIMIT = 12e3;
+const historyRanges = {
+	"30m": {
+		durationMs: 1800 * 1e3,
+		bucketMs: 60 * 1e3
+	},
+	"6h": {
+		durationMs: 360 * 60 * 1e3,
+		bucketMs: 60 * 1e3
+	},
+	"24h": {
+		durationMs: 1440 * 60 * 1e3,
+		bucketMs: 120 * 1e3
+	},
+	"7d": {
+		durationMs: INSTANCE_METRICS_RETENTION_MS,
+		bucketMs: 600 * 1e3
+	}
+};
+const formatPocketBaseDate = (timestamp) => new Date(timestamp).toISOString().replace("T", " ");
 const assertSafeInstanceId = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
@@ -3536,6 +3558,44 @@ const serializeInstanceResourceMetrics = (instance, dockerStatsByName) => ({
 	...serializeInstanceRuntimeMetrics(instance, dockerStatsByName),
 	diskBytes: getDirectorySizeBytes(instanceRoot(instance.id))
 });
+const findMetricsHistoryRange = (e) => {
+	const requested = `${e.request.url.query().get("range") || "30m"}`;
+	return requested in historyRanges ? requested : "30m";
+};
+const serializeStoredMetricPoint = (record) => ({
+	timestamp: record.getDateTime("created").unix() * 1e3,
+	cpuPercent: record.getFloat("cpuPercent"),
+	memoryBytes: record.getInt("memoryBytes"),
+	memoryLimitBytes: record.getInt("memoryLimitBytes"),
+	memoryPercent: record.getFloat("memoryPercent")
+});
+const aggregateMetricPoints = (points, bucketMs) => {
+	const buckets = /* @__PURE__ */ new Map();
+	for (const point of points) {
+		if (!Number.isFinite(point.timestamp)) continue;
+		const timestamp = Math.floor(point.timestamp / bucketMs) * bucketMs;
+		const bucket = buckets.get(timestamp) || {
+			count: 0,
+			cpuPercent: 0,
+			memoryBytes: 0,
+			memoryLimitBytes: 0,
+			memoryPercent: 0
+		};
+		bucket.count += 1;
+		bucket.cpuPercent += point.cpuPercent;
+		bucket.memoryBytes += point.memoryBytes;
+		bucket.memoryLimitBytes += point.memoryLimitBytes;
+		bucket.memoryPercent += point.memoryPercent;
+		buckets.set(timestamp, bucket);
+	}
+	return Array.from(buckets.entries()).sort(([a], [b]) => a - b).map(([timestamp, bucket]) => ({
+		collectedAt: new Date(timestamp).toISOString(),
+		cpuPercent: bucket.cpuPercent / bucket.count,
+		memoryBytes: Math.round(bucket.memoryBytes / bucket.count),
+		memoryLimitBytes: Math.round(bucket.memoryLimitBytes / bucket.count),
+		memoryPercent: bucket.memoryPercent / bucket.count
+	}));
+};
 const findAccessibleInstances = (authRecord) => {
 	return (authRecord.getBool("superAdmin") ? $app.findRecordsByFilter("instances", "1=1", "subdomain", 500, 0) : $app.findRecordsByFilter("instances", "uid = {:uid}", "subdomain", 500, 0, { uid: authRecord.id })).filter((record) => !!record);
 };
@@ -3588,6 +3648,62 @@ const HandleInstanceMetrics = (e) => {
 		metric: serializeInstanceRuntimeMetrics(instance, readDockerStatsByName([instance.id])),
 		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
 	});
+};
+const HandleInstanceMetricsHistory = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const range = findMetricsHistoryRange(e);
+	const config = historyRanges[range];
+	const cutoff = formatPocketBaseDate(Date.now() - config.durationMs);
+	const records = $app.findRecordsByFilter(INSTANCE_RESOURCE_METRICS_COLLECTION, "instance = {:instance} && created >= {:cutoff}", "created", INSTANCE_METRICS_QUERY_LIMIT, 0, {
+		instance: instance.id,
+		cutoff
+	});
+	return e.json(200, {
+		range,
+		historyEnabled: instance.getBool("metricsHistoryEnabled"),
+		bucketSeconds: config.bucketMs / 1e3,
+		points: aggregateMetricPoints(records.map(serializeStoredMetricPoint), config.bucketMs),
+		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
+	});
+};
+const CollectInstanceResourceMetrics = () => {
+	const instances = $app.findRecordsByFilter("instances", "metricsHistoryEnabled = true", "", 500, 0);
+	if (instances.length === 0) return { saved: 0 };
+	const dockerStatsByName = readDockerStatsByName();
+	const collection = $app.findCollectionByNameOrId(INSTANCE_RESOURCE_METRICS_COLLECTION);
+	let saved = 0;
+	for (const instance of instances) {
+		const metric = serializeInstanceRuntimeMetrics(instance, dockerStatsByName);
+		if (metric.cpuPercent === null || metric.memoryBytes === null || metric.memoryLimitBytes === null || metric.memoryPercent === null) continue;
+		try {
+			const record = new Record(collection);
+			record.set("instance", instance.id);
+			record.set("cpuPercent", metric.cpuPercent);
+			record.set("memoryBytes", metric.memoryBytes);
+			record.set("memoryLimitBytes", metric.memoryLimitBytes);
+			record.set("memoryPercent", metric.memoryPercent);
+			$app.save(record);
+			saved += 1;
+		} catch (error) {
+			console.warn(`Impossible d'enregistrer les métriques de l'instance ${instance.id}: ${error}`);
+		}
+	}
+	return { saved };
+};
+const PurgeExpiredInstanceResourceMetrics = () => {
+	const cutoff = formatPocketBaseDate(Date.now() - INSTANCE_METRICS_RETENTION_MS);
+	let deleted = 0;
+	for (;;) {
+		const records = $app.findRecordsByFilter(INSTANCE_RESOURCE_METRICS_COLLECTION, "created < {:cutoff}", "created", 1e3, 0, { cutoff });
+		if (records.length === 0) break;
+		for (const record of records) {
+			$app.delete(record);
+			deleted += 1;
+		}
+	}
+	return { deleted };
 };
 
 //#endregion
@@ -3676,6 +3792,7 @@ const HandleInstanceUpdate = (e) => {
 			webhooks: null,
 			syncAdmin: null,
 			autoVacuum: null,
+			metricsHistoryEnabled: null,
 			dev: null,
 			cname: null
 		}
@@ -3684,7 +3801,7 @@ const HandleInstanceUpdate = (e) => {
 	log(`After bind`);
 	data = JSON.parse(JSON.stringify(data));
 	const id = e.request.pathValue("id");
-	const { fields: { subdomain, power, version, secrets, webhooks, syncAdmin, autoVacuum, dev, cname } } = data;
+	const { fields: { subdomain, power, version, secrets, webhooks, syncAdmin, autoVacuum, metricsHistoryEnabled, dev, cname } } = data;
 	log(`vars`, JSON.stringify({
 		id,
 		subdomain,
@@ -3694,6 +3811,7 @@ const HandleInstanceUpdate = (e) => {
 		webhooks,
 		syncAdmin,
 		autoVacuum,
+		metricsHistoryEnabled,
 		dev,
 		cname
 	}));
@@ -3721,6 +3839,7 @@ const HandleInstanceUpdate = (e) => {
 		webhooks,
 		syncAdmin,
 		autoVacuum,
+		metricsHistoryEnabled,
 		dev,
 		cname
 	});
@@ -7080,6 +7199,7 @@ exports.BeforeCreate_ssh_keys = BeforeCreate_ssh_keys;
 exports.BeforeUpdate_cname = BeforeUpdate_cname;
 exports.BeforeUpdate_ssh_keys = BeforeUpdate_ssh_keys;
 exports.BeforeUpdate_version = BeforeUpdate_version;
+exports.CollectInstanceResourceMetrics = CollectInstanceResourceMetrics;
 exports.DEFAULT_BACKUP_S3_PREFIX = DEFAULT_BACKUP_S3_PREFIX;
 exports.DEFAULT_BACKUP_S3_REGION = DEFAULT_BACKUP_S3_REGION;
 exports.DEFAULT_SERVER_TIMEZONE = DEFAULT_SERVER_TIMEZONE;
@@ -7107,6 +7227,7 @@ exports.HandleInstanceLitestreamBootstrap = HandleInstanceLitestreamBootstrap;
 exports.HandleInstanceLitestreamPolicyGet = HandleInstanceLitestreamPolicyGet;
 exports.HandleInstanceLitestreamPolicyUpdate = HandleInstanceLitestreamPolicyUpdate;
 exports.HandleInstanceMetrics = HandleInstanceMetrics;
+exports.HandleInstanceMetricsHistory = HandleInstanceMetricsHistory;
 exports.HandleInstanceOverview = HandleInstanceOverview;
 exports.HandleInstanceUpdate = HandleInstanceUpdate;
 exports.HandleInstancesMetrics = HandleInstancesMetrics;
@@ -7142,6 +7263,7 @@ exports.HandleVersionsRequest = HandleVersionsRequest;
 exports.LIVE_PLATFORM_TOPIC = LIVE_PLATFORM_TOPIC;
 exports.LIVE_VIEW_STATS_TOPIC = LIVE_VIEW_STATS_TOPIC;
 exports.OPERATOR_SETTINGS_NAME = OPERATOR_SETTINGS_NAME;
+exports.PurgeExpiredInstanceResourceMetrics = PurgeExpiredInstanceResourceMetrics;
 exports.ReconcileBackupPolicyCrons = ReconcileBackupPolicyCrons;
 exports.TestBackupS3Config = TestBackupS3Config;
 exports.applyOperatorMailSettings = applyOperatorMailSettings;

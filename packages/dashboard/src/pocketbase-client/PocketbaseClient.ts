@@ -315,6 +315,24 @@ export type InstanceMetricResponse = {
   collectedAt: string
 }
 
+export type InstanceMetricHistoryRange = '30m' | '6h' | '24h' | '7d'
+
+export type InstanceMetricHistoryPoint = {
+  collectedAt: string
+  cpuPercent: number
+  memoryBytes: number
+  memoryLimitBytes: number
+  memoryPercent: number
+}
+
+export type InstanceMetricHistoryResponse = {
+  range: InstanceMetricHistoryRange
+  historyEnabled: boolean
+  bucketSeconds: number
+  points: InstanceMetricHistoryPoint[]
+  collectedAt: string
+}
+
 export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const { url } = config
 
@@ -436,6 +454,11 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
 
   const getInstanceMetrics = (id: InstanceId) =>
     client.send<InstanceMetricResponse>(`/api/instance/${id}/metrics`, {
+      method: 'GET',
+    })
+
+  const getInstanceMetricHistory = (id: InstanceId, range: InstanceMetricHistoryRange) =>
+    client.send<InstanceMetricHistoryResponse>(`/api/instance/${id}/metrics/history?range=${range}`, {
       method: 'GET',
     })
 
@@ -1028,6 +1051,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     duplicateInstance,
     getInstanceOverview,
     getInstanceMetrics,
+    getInstanceMetricHistory,
     getDashboardInstanceMetrics,
     createInstanceBackup,
     importInstanceBackup,

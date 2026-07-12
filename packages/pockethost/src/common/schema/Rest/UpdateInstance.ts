@@ -6,7 +6,16 @@ export type UpdateInstancePayload = {
   fields: Partial<
     Pick<
       InstanceFields,
-      'power' | 'secrets' | 'webhooks' | 'subdomain' | 'syncAdmin' | 'autoVacuum' | 'version' | 'dev' | 'cname'
+      | 'power'
+      | 'secrets'
+      | 'webhooks'
+      | 'subdomain'
+      | 'syncAdmin'
+      | 'autoVacuum'
+      | 'metricsHistoryEnabled'
+      | 'version'
+      | 'dev'
+      | 'cname'
     >
   >
 }
@@ -27,6 +36,7 @@ export const UpdateInstancePayloadSchema: JSONSchemaType<UpdateInstancePayload> 
       properties: {
         syncAdmin: { type: 'boolean', nullable: true },
         autoVacuum: { type: 'boolean', nullable: true },
+        metricsHistoryEnabled: { type: 'boolean', nullable: true },
         subdomain: { type: 'string', nullable: true },
         power: { type: 'boolean', nullable: true },
         version: {

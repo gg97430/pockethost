@@ -73,6 +73,7 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
       webhooks: null,
       syncAdmin: null,
       autoVacuum: null,
+      metricsHistoryEnabled: null,
       dev: null,
       cname: null,
     },
@@ -86,6 +87,7 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
       webhooks: InstanceWebhookCollection | null
       syncAdmin: boolean | null
       autoVacuum: boolean | null
+      metricsHistoryEnabled: boolean | null
       dev: boolean | null
       cname: string | null
     }
@@ -99,7 +101,7 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
 
   const id = e.request.pathValue('id')
   const {
-    fields: { subdomain, power, version, secrets, webhooks, syncAdmin, autoVacuum, dev, cname },
+    fields: { subdomain, power, version, secrets, webhooks, syncAdmin, autoVacuum, metricsHistoryEnabled, dev, cname },
   } = data
 
   log(
@@ -113,6 +115,7 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
       webhooks,
       syncAdmin,
       autoVacuum,
+      metricsHistoryEnabled,
       dev,
       cname,
     })
@@ -167,6 +170,7 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
     webhooks,
     syncAdmin,
     autoVacuum,
+    metricsHistoryEnabled,
     dev,
     cname,
   })

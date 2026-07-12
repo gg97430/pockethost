@@ -47,6 +47,8 @@ export type InstanceFields<TExtra = {}> = BaseFields & {
   syncAdmin: boolean
   /** Defaults to true when unset */
   autoVacuum?: boolean
+  /** Persist one CPU/RAM sample per minute for seven days. Defaults to false. */
+  metricsHistoryEnabled?: boolean
   cname: string
   dev: boolean
   /** @deprecated Will be removed - frontend now handles health checking directly */

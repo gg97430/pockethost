@@ -6,6 +6,7 @@
   import { INSTANCE_ADMIN_URL, INSTANCE_URL } from '$lib/appEnv'
   import { client, type InstanceOverview } from '$src/pocketbase-client'
   import { isInstanceFullyOff } from '$util/instancePower'
+  import { patchGlobalInstance } from '$util/stores'
   import { StreamNames } from 'pockethost/common'
   import { onMount } from 'svelte'
   import InstanceDeveloperSnippet from './InstanceDeveloperSnippet.svelte'
@@ -92,6 +93,17 @@
   const handleMetric = (metric: InstanceOverview['runtime'], collectedAt: string) => {
     if (!overview) return
     overview = { ...overview, runtime: metric, collectedAt }
+  }
+
+  const handleHistoryToggle = async (enabled: boolean) => {
+    const previous = !!$instance.metricsHistoryEnabled
+    patchGlobalInstance(id, { metricsHistoryEnabled: enabled })
+    try {
+      await client().updateInstance({ id, fields: { metricsHistoryEnabled: enabled } })
+    } catch (error) {
+      patchGlobalInstance(id, { metricsHistoryEnabled: previous })
+      throw error
+    }
   }
 
   const copyText = async (key: string, value: string) => {
@@ -225,9 +237,11 @@
 
   <InstanceResourceChart
     instanceId={id}
+    historyEnabled={!!$instance.metricsHistoryEnabled}
     initialMetric={overview?.runtime}
     initialCollectedAt={overview?.collectedAt}
     onMetric={handleMetric}
+    onHistoryToggle={handleHistoryToggle}
   />
 
   <div class="overview-grid">

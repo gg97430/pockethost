@@ -6,6 +6,10 @@ import { Tail } from 'tail'
 
 type UnsubFunc = () => void
 
+const MAX_LOG_FILE_SIZE_BYTES = 10 * 1024 * 1024
+const MAX_PENDING_LOG_WRITES = 2_000
+const DROP_WARNING_INTERVAL_MS = 60_000
+
 export type InstanceLogWriterApi = {
   info: (msg: string) => void
   error: (msg: string) => void
@@ -67,7 +71,10 @@ const MultiChannelLimiter = () => {
         timeouts.delete(channel)
       }
 
-      return channels.get(channel)!.schedule(fn)!
+      const channelLimiter = channels.get(channel)!
+      if (channelLimiter.queued() >= MAX_PENDING_LOG_WRITES) return undefined
+
+      return channelLimiter.schedule(fn)!
     },
   }
 }
@@ -81,16 +88,22 @@ export function InstanceLogWriter(instanceId: string, target: string, logger: Lo
   ensureInstanceDirectoryStructure(instanceId, lgr)
 
   const logFile = mkInstanceDataPath(instanceId, `logs`, `${target}.log`)
+  let droppedSinceWarning = 0
+  let lastDropWarningAt = 0
 
-  const appendLogEntry = async (msg: string, stream: 'stdout' | 'stderr') =>
-    limiter.schedule(logFile, async () => {
+  const appendLogEntry = (msg: string, stream: 'stdout' | 'stderr') => {
+    const line =
+      stringify({
+        message: msg,
+        stream,
+        time: new Date().toISOString(),
+      }) + '\n'
+
+    const pending = limiter.schedule(logFile, async () => {
       try {
         if (existsSync(logFile)) {
-          // Check file size
           const stats = await stat(logFile)
-          const MAX_SIZE = 1024 // 10MB in bytes
-
-          if (stats.size > MAX_SIZE) {
+          if (stats.size + Buffer.byteLength(line) > MAX_LOG_FILE_SIZE_BYTES) {
             await cp(logFile, `${logFile}.1`, {
               force: true,
             })
@@ -99,18 +112,22 @@ export function InstanceLogWriter(instanceId: string, target: string, logger: Lo
         }
 
         dbg(msg)
-        await appendFile(
-          logFile,
-          stringify({
-            message: msg,
-            stream,
-            time: new Date().toISOString(),
-          }) + '\n'
-        )
+        await appendFile(logFile, line)
       } catch (e) {
         error(`Failed to write log entry: ${e}`)
       }
     })
+
+    if (!pending) {
+      droppedSinceWarning += 1
+      const now = Date.now()
+      if (lastDropWarningAt === 0 || now - lastDropWarningAt >= DROP_WARNING_INTERVAL_MS) {
+        warn(`Log writer overloaded; dropped ${droppedSinceWarning} pending entries for ${instanceId}/${target}`)
+        droppedSinceWarning = 0
+        lastDropWarningAt = now
+      }
+    }
+  }
 
   const api = {
     info: (msg: string) => {

@@ -3828,6 +3828,45 @@ const MONITORING_DEFAULTS = {
 	startupGraceMs: 120 * 1e3,
 	requestTimeoutSeconds: 5
 };
+const notificationPayloadText = (value, field) => {
+	const text = `${typeof value === "string" ? value : ""}`.trim();
+	if (!text) throw new Error(`Payload de notification invalide : champ ${field} absent.`);
+	return text;
+};
+const normalizeMonitoringNotificationPayload = (value) => {
+	let parsed = value;
+	try {
+		if (typeof value === "string") parsed = JSON.parse(value);
+		else if (value && typeof value === "object") parsed = JSON.parse(JSON.stringify(value));
+	} catch {
+		throw new Error("Payload de notification invalide.");
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Payload de notification invalide.");
+	const payload = parsed;
+	const type = notificationPayloadText(payload.type, "type");
+	const phase = notificationPayloadText(payload.phase, "phase");
+	if (![
+		"health",
+		"cpu",
+		"memory",
+		"backup",
+		"test"
+	].includes(type)) throw new Error("Payload de notification invalide : type inconnu.");
+	if (![
+		"opened",
+		"resolved",
+		"test"
+	].includes(phase)) throw new Error("Payload de notification invalide : phase inconnue.");
+	return {
+		title: notificationPayloadText(payload.title, "title"),
+		message: notificationPayloadText(payload.message, "message"),
+		instanceId: notificationPayloadText(payload.instanceId, "instanceId"),
+		instanceName: notificationPayloadText(payload.instanceName, "instanceName"),
+		type,
+		phase,
+		occurredAt: notificationPayloadText(payload.occurredAt, "occurredAt")
+	};
+};
 const normalizeHealthPath = (value) => {
 	const path = `${typeof value === "string" ? value : ""}`.trim();
 	if (!path || path.length > 200) throw new Error("Le chemin de santé doit contenir entre 1 et 200 caractères.");
@@ -4352,7 +4391,7 @@ const CollectInstanceMonitoring = (snapshot) => {
 		failed
 	};
 };
-const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => ({
+const escapeHtml = (value) => `${value ?? ""}`.replace(/[&<>"']/g, (character) => ({
 	"&": "&amp;",
 	"<": "&lt;",
 	">": "&gt;",
@@ -4360,12 +4399,14 @@ const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => ({
 	"'": "&#039;"
 })[character]);
 const deliveryPayload = (delivery) => {
-	const value = delivery.get("payload");
-	if (value && typeof value === "object") return value;
 	try {
-		return JSON.parse(delivery.getString("payload"));
-	} catch {
-		throw new Error("Payload de notification invalide.");
+		return normalizeMonitoringNotificationPayload(delivery.getString("payload"));
+	} catch (serializedError) {
+		try {
+			return normalizeMonitoringNotificationPayload(delivery.get("payload"));
+		} catch {
+			throw serializedError;
+		}
 	}
 };
 const sendEmailDelivery = (delivery, payload) => {
@@ -4373,13 +4414,18 @@ const sendEmailDelivery = (delivery, payload) => {
 	const skipReason = mailRecipientSkipReason(user);
 	if (skipReason) throw new Error(`Email non envoyé : compte ${skipReason}.`);
 	const settings = $app.settings();
+	const senderAddress = `${settings.meta?.senderAddress || ""}`.trim();
+	const senderName = `${settings.meta?.senderName || "Gestion PocketBase"}`.trim();
+	const recipientAddress = `${user.email() || ""}`.trim();
+	if (!senderAddress) throw new Error("Email non envoyé : l'adresse expéditeur SMTP n'est pas configurée.");
+	if (!recipientAddress) throw new Error("Email non envoyé : l'utilisateur n'a pas d'adresse email.");
 	const html = `<h2>${escapeHtml(payload.title)}</h2><p>${escapeHtml(payload.message)}</p><p><strong>Instance :</strong> ${escapeHtml(payload.instanceName)}</p><p><small>${escapeHtml(payload.occurredAt)}</small></p>`;
 	const message = new MailerMessage({
 		from: {
-			address: settings.meta.senderAddress,
-			name: settings.meta.senderName
+			address: senderAddress,
+			name: senderName
 		},
-		to: [{ address: user.email() }],
+		to: [{ address: recipientAddress }],
 		subject: `[PocketHost] ${payload.title}`,
 		html
 	});

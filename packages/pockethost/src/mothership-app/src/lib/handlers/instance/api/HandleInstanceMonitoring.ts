@@ -15,8 +15,10 @@ import {
   monitoringRetryDelayMs,
   normalizeDiscordWebhook,
   normalizeHealthPath,
+  normalizeMonitoringNotificationPayload,
   normalizeSlackWebhook,
   type MonitoringHistoryRange,
+  type MonitoringNotificationPayload,
 } from './instanceMonitoring'
 
 const POLICY_COLLECTION = 'instance_monitoring_policies'
@@ -29,16 +31,6 @@ const INCIDENT_PAGE_SIZE = 25
 type MonitoringIncidentType = 'health' | 'cpu' | 'memory' | 'backup'
 type MonitoringChannel = 'email' | 'discord' | 'slack'
 type MonitoringPhase = 'opened' | 'resolved' | 'test'
-
-type MonitoringNotificationPayload = {
-  title: string
-  message: string
-  instanceId: string
-  instanceName: string
-  type: MonitoringIncidentType | 'test'
-  phase: MonitoringPhase
-  occurredAt: string
-}
 
 const nowIso = () => new Date().toISOString()
 const formatPocketBaseDate = (timestamp: number) => new Date(timestamp).toISOString().replace('T', ' ')
@@ -565,19 +557,21 @@ export const CollectInstanceMonitoring = (snapshot: DockerMetricsSnapshot) => {
   return { checked, failed }
 }
 
-const escapeHtml = (value: string) =>
-  value.replace(
+const escapeHtml = (value: unknown) =>
+  `${value ?? ''}`.replace(
     /[&<>"']/g,
     (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]!
   )
 
 const deliveryPayload = (delivery: core.Record) => {
-  const value = delivery.get('payload')
-  if (value && typeof value === 'object') return value as MonitoringNotificationPayload
   try {
-    return JSON.parse(delivery.getString('payload')) as MonitoringNotificationPayload
-  } catch {
-    throw new Error('Payload de notification invalide.')
+    return normalizeMonitoringNotificationPayload(delivery.getString('payload'))
+  } catch (serializedError) {
+    try {
+      return normalizeMonitoringNotificationPayload(delivery.get('payload'))
+    } catch {
+      throw serializedError
+    }
   }
 }
 
@@ -586,10 +580,15 @@ const sendEmailDelivery = (delivery: core.Record, payload: MonitoringNotificatio
   const skipReason = mailRecipientSkipReason(user as any)
   if (skipReason) throw new Error(`Email non envoyé : compte ${skipReason}.`)
   const settings = $app.settings()
+  const senderAddress = `${settings.meta?.senderAddress || ''}`.trim()
+  const senderName = `${settings.meta?.senderName || 'Gestion PocketBase'}`.trim()
+  const recipientAddress = `${user.email() || ''}`.trim()
+  if (!senderAddress) throw new Error("Email non envoyé : l'adresse expéditeur SMTP n'est pas configurée.")
+  if (!recipientAddress) throw new Error("Email non envoyé : l'utilisateur n'a pas d'adresse email.")
   const html = `<h2>${escapeHtml(payload.title)}</h2><p>${escapeHtml(payload.message)}</p><p><strong>Instance :</strong> ${escapeHtml(payload.instanceName)}</p><p><small>${escapeHtml(payload.occurredAt)}</small></p>`
   const message = new MailerMessage({
-    from: { address: settings.meta.senderAddress, name: settings.meta.senderName },
-    to: [{ address: user.email() }],
+    from: { address: senderAddress, name: senderName },
+    to: [{ address: recipientAddress }],
     subject: `[PocketHost] ${payload.title}`,
     html,
   })

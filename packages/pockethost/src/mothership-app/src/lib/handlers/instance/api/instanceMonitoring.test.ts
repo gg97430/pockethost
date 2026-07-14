@@ -5,6 +5,7 @@ import {
   monitoringRetryDelayMs,
   normalizeDiscordWebhook,
   normalizeHealthPath,
+  normalizeMonitoringNotificationPayload,
   normalizeSlackWebhook,
 } from './instanceMonitoring'
 
@@ -54,5 +55,26 @@ describe('instance monitoring input validation', () => {
 
   it('uses bounded retry delays', () => {
     expect([0, 1, 2, 3, 4, 9].map(monitoringRetryDelayMs)).toEqual([0, 60_000, 300_000, 900_000, 3_600_000, 3_600_000])
+  })
+
+  it('normalizes serialized notification payloads before delivery', () => {
+    const payload = {
+      title: 'TEST · Surveillance · avenirassur',
+      message: 'Les notifications sont correctement configurées.',
+      instanceId: 'a8k0ofg6ojwiiba',
+      instanceName: 'avenirassur',
+      type: 'test',
+      phase: 'test',
+      occurredAt: '2026-07-14T10:28:57.558Z',
+    }
+
+    expect(normalizeMonitoringNotificationPayload(JSON.stringify(payload))).toEqual(payload)
+    expect(normalizeMonitoringNotificationPayload(payload)).toEqual(payload)
+  })
+
+  it('rejects incomplete notification payloads with an explicit error', () => {
+    expect(() => normalizeMonitoringNotificationPayload(JSON.stringify({ type: 'test', phase: 'test' }))).toThrow(
+      'champ title absent'
+    )
   })
 })

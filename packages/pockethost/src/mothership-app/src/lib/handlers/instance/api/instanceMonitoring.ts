@@ -26,6 +26,56 @@ export type ThresholdSignalState = {
   incidentOpen: boolean
 }
 
+export type MonitoringNotificationPayload = {
+  title: string
+  message: string
+  instanceId: string
+  instanceName: string
+  type: 'health' | 'cpu' | 'memory' | 'backup' | 'test'
+  phase: 'opened' | 'resolved' | 'test'
+  occurredAt: string
+}
+
+const notificationPayloadText = (value: unknown, field: string) => {
+  const text = `${typeof value === 'string' ? value : ''}`.trim()
+  if (!text) throw new Error(`Payload de notification invalide : champ ${field} absent.`)
+  return text
+}
+
+export const normalizeMonitoringNotificationPayload = (value: unknown): MonitoringNotificationPayload => {
+  let parsed = value
+  try {
+    if (typeof value === 'string') parsed = JSON.parse(value)
+    else if (value && typeof value === 'object') parsed = JSON.parse(JSON.stringify(value))
+  } catch {
+    throw new Error('Payload de notification invalide.')
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Payload de notification invalide.')
+  }
+
+  const payload = parsed as Record<string, unknown>
+  const type = notificationPayloadText(payload.type, 'type')
+  const phase = notificationPayloadText(payload.phase, 'phase')
+  if (!['health', 'cpu', 'memory', 'backup', 'test'].includes(type)) {
+    throw new Error('Payload de notification invalide : type inconnu.')
+  }
+  if (!['opened', 'resolved', 'test'].includes(phase)) {
+    throw new Error('Payload de notification invalide : phase inconnue.')
+  }
+
+  return {
+    title: notificationPayloadText(payload.title, 'title'),
+    message: notificationPayloadText(payload.message, 'message'),
+    instanceId: notificationPayloadText(payload.instanceId, 'instanceId'),
+    instanceName: notificationPayloadText(payload.instanceName, 'instanceName'),
+    type: type as MonitoringNotificationPayload['type'],
+    phase: phase as MonitoringNotificationPayload['phase'],
+    occurredAt: notificationPayloadText(payload.occurredAt, 'occurredAt'),
+  }
+}
+
 export const normalizeHealthPath = (value: unknown) => {
   const path = `${typeof value === 'string' ? value : ''}`.trim()
   if (!path || path.length > 200) throw new Error('Le chemin de santé doit contenir entre 1 et 200 caractères.')

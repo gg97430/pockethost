@@ -3954,6 +3954,8 @@ const monitoringRetryDelayMs = (attempts) => {
 	];
 	return delayMinutes[Math.min(Math.max(0, attempts), delayMinutes.length - 1)] * 60 * 1e3;
 };
+const MONITORING_MAX_DELIVERY_ATTEMPTS = 5;
+const shouldRetryMonitoringDelivery = (phase, attempts) => phase !== "test" && attempts < 5;
 const formatMonitoringPercent = (value) => `${Math.round(value * 10) / 10}`.replace(".", ",");
 const monitoringHistoryRanges = {
 	"24h": {
@@ -4471,7 +4473,7 @@ const processDelivery = (delivery) => {
 		delivery.set("lastError", "");
 	} catch (error) {
 		delivery.set("lastError", `${error}`.slice(0, 1e3));
-		if (attempts >= 5) {
+		if (!shouldRetryMonitoringDelivery(delivery.getString("phase"), attempts)) {
 			delivery.set("status", "abandoned");
 			delivery.set("nextAttemptAt", "");
 		} else delivery.set("nextAttemptAt", new Date(Date.now() + monitoringRetryDelayMs(attempts)).toISOString());

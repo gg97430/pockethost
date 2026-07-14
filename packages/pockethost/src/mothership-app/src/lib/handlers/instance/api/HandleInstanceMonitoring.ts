@@ -7,7 +7,6 @@ import {
 } from './HandleInstanceOverview'
 import {
   MONITORING_DEFAULTS,
-  MONITORING_MAX_DELIVERY_ATTEMPTS,
   classifyHealthError,
   evaluateHealthSignal,
   evaluateThresholdSignal,
@@ -18,6 +17,7 @@ import {
   normalizeHealthPath,
   normalizeMonitoringNotificationPayload,
   normalizeSlackWebhook,
+  shouldRetryMonitoringDelivery,
   type MonitoringHistoryRange,
   type MonitoringNotificationPayload,
 } from './instanceMonitoring'
@@ -639,7 +639,7 @@ const processDelivery = (delivery: core.Record) => {
     delivery.set('lastError', '')
   } catch (error) {
     delivery.set('lastError', `${error}`.slice(0, 1000))
-    if (attempts >= MONITORING_MAX_DELIVERY_ATTEMPTS) {
+    if (!shouldRetryMonitoringDelivery(delivery.getString('phase'), attempts)) {
       delivery.set('status', 'abandoned')
       delivery.set('nextAttemptAt', '')
     } else {

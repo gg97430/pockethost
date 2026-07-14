@@ -191,6 +191,9 @@ export const monitoringRetryDelayMs = (attempts: number) => {
 
 export const MONITORING_MAX_DELIVERY_ATTEMPTS = 5
 
+export const shouldRetryMonitoringDelivery = (phase: string, attempts: number) =>
+  phase !== 'test' && attempts < MONITORING_MAX_DELIVERY_ATTEMPTS
+
 export const formatMonitoringPercent = (value: number) => `${Math.round(value * 10) / 10}`.replace('.', ',')
 
 export const monitoringHistoryRanges = {

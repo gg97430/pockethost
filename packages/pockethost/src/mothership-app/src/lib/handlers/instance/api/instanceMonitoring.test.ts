@@ -8,6 +8,7 @@ import {
   normalizeHealthPath,
   normalizeMonitoringNotificationPayload,
   normalizeSlackWebhook,
+  shouldRetryMonitoringDelivery,
 } from './instanceMonitoring'
 
 describe('instance monitoring state machine', () => {
@@ -61,6 +62,12 @@ describe('instance monitoring input validation', () => {
   it('formats percentages without Intl, which is unavailable in PocketBase hooks', () => {
     expect(formatMonitoringPercent(92.34)).toBe('92,3')
     expect(formatMonitoringPercent(100)).toBe('100')
+  })
+
+  it('does not retry manual test deliveries', () => {
+    expect(shouldRetryMonitoringDelivery('test', 1)).toBe(false)
+    expect(shouldRetryMonitoringDelivery('opened', 1)).toBe(true)
+    expect(shouldRetryMonitoringDelivery('opened', 5)).toBe(false)
   })
 
   it('normalizes serialized notification payloads before delivery', () => {

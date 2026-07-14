@@ -248,6 +248,18 @@
     }
   }
 
+  const toggleMonitoring = async (event: Event) => {
+    if (!draft || isSaving) return
+    const enabled = (event.currentTarget as HTMLInputElement).checked
+    const previousEnabled = policy?.enabled ?? !enabled
+    draft = { ...draft, enabled }
+    if (!(await saveMonitoring(false)) && draft) {
+      draft = { ...draft, enabled: previousEnabled }
+      return
+    }
+    successMessage = enabled ? 'Surveillance activée.' : 'Surveillance désactivée.'
+  }
+
   const testNotifications = async () => {
     if (!draft || isTesting) return
     isTesting = true
@@ -344,7 +356,12 @@
           <span>Incidents ouverts <strong>{openIncidents.length}</strong></span>
         </div>
         <label class="master-switch">
-          <input type="checkbox" bind:checked={draft.enabled} />
+          <input
+            type="checkbox"
+            checked={draft.enabled}
+            disabled={isSaving}
+            onchange={(event) => void toggleMonitoring(event)}
+          />
           <span class="master-switch__track"><span></span></span>
           <span>{draft.enabled ? 'Activée' : 'Désactivée'}</span>
         </label>

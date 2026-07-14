@@ -341,6 +341,131 @@ export type InstanceMetricHistoryResponse = {
   collectedAt: string
 }
 
+export type InstanceMonitoringPolicy = {
+  id: string
+  user: string
+  instance: string
+  enabled: boolean
+  healthEnabled: boolean
+  healthPath: string
+  healthFailureCount: number
+  cpuEnabled: boolean
+  cpuThresholdPercent: number
+  cpuSustainMinutes: number
+  memoryEnabled: boolean
+  memoryThresholdPercent: number
+  memorySustainMinutes: number
+  backupAlertsEnabled: boolean
+  emailEnabled: boolean
+  discordEnabled: boolean
+  slackEnabled: boolean
+  hasDiscordWebhook: boolean
+  hasSlackWebhook: boolean
+  lastHealthStatus: 'unknown' | 'healthy' | 'unhealthy' | 'paused'
+  lastCheckAt: string
+  graceUntil: string
+  lastMetricsAt: string
+  healthFailureStreak: number
+  healthSuccessStreak: number
+  cpuHighStreak: number
+  cpuNormalStreak: number
+  memoryHighStreak: number
+  memoryNormalStreak: number
+  lastCpuCapacityPercent: number | null
+  lastMemoryPercent: number | null
+  lastLatencyMs: number | null
+  lastStatusCode: number | null
+  lastError: string
+  created: string
+  updated: string
+}
+
+export type InstanceMonitoringResponse = {
+  policy: InstanceMonitoringPolicy
+  capabilities: {
+    emailAddress: string
+    targetUrl: string
+    requestIntervalSeconds: number
+    requestTimeoutSeconds: number
+    retentionDays: number
+  }
+}
+
+export type UpdateInstanceMonitoringInput = Pick<
+  InstanceMonitoringPolicy,
+  | 'enabled'
+  | 'healthEnabled'
+  | 'healthPath'
+  | 'healthFailureCount'
+  | 'cpuEnabled'
+  | 'cpuThresholdPercent'
+  | 'cpuSustainMinutes'
+  | 'memoryEnabled'
+  | 'memoryThresholdPercent'
+  | 'memorySustainMinutes'
+  | 'backupAlertsEnabled'
+  | 'emailEnabled'
+  | 'discordEnabled'
+  | 'slackEnabled'
+> & {
+  discordWebhook?: string
+  slackWebhook?: string
+  clearDiscordWebhook?: boolean
+  clearSlackWebhook?: boolean
+}
+
+export type InstanceMonitoringHistoryRange = '24h' | '7d' | '30d'
+
+export type InstanceMonitoringHistoryPoint = {
+  collectedAt: string
+  totalChecks: number
+  successfulChecks: number
+  availabilityPercent: number | null
+  averageLatencyMs: number
+  maxLatencyMs: number
+}
+
+export type InstanceMonitoringHistoryResponse = {
+  range: InstanceMonitoringHistoryRange
+  bucketSeconds: number
+  summary: {
+    totalChecks: number
+    successfulChecks: number
+    availabilityPercent: number | null
+    averageLatencyMs: number | null
+  }
+  points: InstanceMonitoringHistoryPoint[]
+  collectedAt: string
+}
+
+export type InstanceMonitoringIncident = {
+  id: string
+  type: 'health' | 'cpu' | 'memory' | 'backup'
+  status: 'open' | 'resolved'
+  openedAt: string
+  resolvedAt: string
+  value: number
+  threshold: number
+  message: string
+  details: Record<string, unknown>
+  sourceId: string
+  created: string
+  updated: string
+}
+
+export type InstanceMonitoringIncidentsResponse = {
+  incidents: InstanceMonitoringIncident[]
+  nextCursor: string
+}
+
+export type InstanceMonitoringTestResponse = {
+  results: Array<{
+    channel: 'email' | 'discord' | 'slack'
+    status: 'pending' | 'sent' | 'abandoned'
+    error: string
+  }>
+}
+
 export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const { url } = config
 
@@ -473,6 +598,33 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const getDashboardInstanceMetrics = () =>
     client.send<DashboardInstanceMetricsResponse>('/api/instances/metrics', {
       method: 'GET',
+    })
+
+  const getInstanceMonitoring = (id: InstanceId) =>
+    client.send<InstanceMonitoringResponse>(`/api/instance/${id}/monitoring`, {
+      method: 'GET',
+    })
+
+  const updateInstanceMonitoring = (id: InstanceId, input: UpdateInstanceMonitoringInput) =>
+    client.send<InstanceMonitoringResponse>(`/api/instance/${id}/monitoring`, {
+      method: 'PUT',
+      body: input,
+    })
+
+  const getInstanceMonitoringHistory = (id: InstanceId, range: InstanceMonitoringHistoryRange) =>
+    client.send<InstanceMonitoringHistoryResponse>(`/api/instance/${id}/monitoring/history?range=${range}`, {
+      method: 'GET',
+    })
+
+  const getInstanceMonitoringIncidents = (id: InstanceId, cursor = '') =>
+    client.send<InstanceMonitoringIncidentsResponse>(
+      `/api/instance/${id}/monitoring/incidents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+      { method: 'GET' }
+    )
+
+  const testInstanceMonitoring = (id: InstanceId) =>
+    client.send<InstanceMonitoringTestResponse>(`/api/instance/${id}/monitoring/test`, {
+      method: 'POST',
     })
 
   const createInstanceBackup = (id: InstanceId, input: { name?: string } = {}) =>
@@ -1062,6 +1214,11 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     getInstanceMetrics,
     getInstanceMetricHistory,
     getDashboardInstanceMetrics,
+    getInstanceMonitoring,
+    updateInstanceMonitoring,
+    getInstanceMonitoringHistory,
+    getInstanceMonitoringIncidents,
+    testInstanceMonitoring,
     createInstanceBackup,
     importInstanceBackup,
     listInstanceBackups,

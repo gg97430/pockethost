@@ -93,6 +93,12 @@
               isActive: sectionActive('backups'),
             },
             { href: `${base}/logs`, label: 'Logs', icon: 'scroll', isActive: sectionActive('logs') },
+            {
+              href: `${base}/monitoring`,
+              label: 'Surveillance',
+              icon: 'heart-pulse',
+              isActive: sectionActive('monitoring'),
+            },
             { href: `${base}/ftp`, label: 'SFTP', icon: 'folder-open', isActive: sectionActive('ftp') },
             {
               href: INSTANCE_ADMIN_URL($instance),

@@ -352,30 +352,6 @@ const interpolateString = (template, dict) => {
 };
 
 //#endregion
-//#region src/lib/util/versions.ts
-const POCKETBASE_VERSIONS_SETTING = "pocketbase_versions";
-const parsePocketbaseVersionsValue = (raw) => {
-	if (!raw) return null;
-	if (typeof raw === "string") try {
-		return JSON.parse(raw);
-	} catch {
-		return null;
-	}
-	return raw;
-};
-const readPocketbaseVersions = () => {
-	try {
-		const value = parsePocketbaseVersionsValue($app.findFirstRecordByData("settings", "name", POCKETBASE_VERSIONS_SETTING).getString("value"));
-		if (!value?.versions?.length) return [];
-		return value.versions;
-	} catch {
-		return [];
-	}
-};
-/** Minor wildcard versions (e.g. `0.22.*`) from mothership settings */
-const listVersions = () => readPocketbaseVersions().map((entry) => entry.range);
-
-//#endregion
 //#region src/lib/handlers/operatorAdmin/operatorSettings.ts
 const OPERATOR_SETTINGS_NAME = "operator_settings";
 const DEFAULT_SERVER_TIMEZONE = "Indian/Reunion";
@@ -606,40 +582,6 @@ const normalizeOperatorSettings = (value) => {
 };
 
 //#endregion
-//#region src/lib/handlers/instance/api/HandleInstanceCreate.ts
-const HandleInstanceCreate = (e) => {
-	const log = mkLog(`POST:instance`);
-	const authRecord = e.auth;
-	log(`authRecord`, JSON.stringify(authRecord));
-	if (!authRecord) throw new Error(`Session utilisateur attendue`);
-	log(`TOP OF POST`);
-	let data = new DynamicModel({
-		subdomain: "",
-		version: listVersions()[0]
-	});
-	log(`before bind`);
-	e.bindBody(data);
-	log(`after bind`);
-	data = JSON.parse(JSON.stringify(data));
-	const { subdomain, version } = data;
-	const settings = readOperatorSettings();
-	log(`vars`, JSON.stringify({ subdomain }));
-	if (!subdomain) throw new BadRequestError(`Le sous-domaine est obligatoire pour créer une instance.`);
-	const collection = $app.findCollectionByNameOrId("instances");
-	const record = new Record(collection);
-	record.set("uid", authRecord.id);
-	record.set("subdomain", subdomain);
-	record.set("power", settings.defaultInstancePower);
-	record.set("status", "idle");
-	record.set("version", version);
-	record.set("dev", settings.defaultInstanceDevMode);
-	record.set("syncAdmin", settings.defaultSyncAdmin);
-	record.set("autoVacuum", settings.defaultAutoVacuum);
-	$app.save(record);
-	return e.json(200, { instance: record });
-};
-
-//#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceBackups.ts
 const BACKUP_FORMAT = "gestion-pocketbase-instance-backup-v1";
 const BACKUP_DIRS = [
@@ -706,7 +648,7 @@ const chunkPartsDir = (instanceId, uploadId) => `${chunkSessionDir(instanceId, u
 const chunkMetaPath = (instanceId, uploadId) => `${chunkSessionDir(instanceId, uploadId)}/metadata.json`;
 const assembledImportDir = (instanceId) => `${importRoot$1()}/assembled/${instanceId}`;
 const chunkPartFilename = (index) => `${String(index).padStart(8, "0")}.part`;
-const assertSafeInstanceId$3 = (id) => {
+const assertSafeInstanceId$4 = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
 const assertSafeBackupId = (id) => {
@@ -1056,17 +998,17 @@ const timestampFromBackupFilename = (filename) => {
 	const value = Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
 	return Number.isFinite(value) ? value : 0;
 };
-const findInstance$1 = (id) => {
-	assertSafeInstanceId$3(id);
+const findInstance$2 = (id) => {
+	assertSafeInstanceId$4(id);
 	const instance = $app.findRecordById("instances", id);
 	if (!instance) throw new BadRequestError(`Instance ${id} introuvable.`);
 	return instance;
 };
-const requireAuthRecord$1 = (authRecord) => {
+const requireAuthRecord$2 = (authRecord) => {
 	if (!authRecord) throw new BadRequestError("Session utilisateur attendue.");
 	return authRecord;
 };
-const assertInstanceAccess$1 = (instance, authRecord) => {
+const assertInstanceAccess$2 = (instance, authRecord) => {
 	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
 };
 const assertServerImportAllowed = (authRecord, requestedPath) => {
@@ -1143,7 +1085,7 @@ const getBackupRecord = (instance, backupId) => {
 	if (!backup || backup.getString("instance") !== instance.id) throw new BadRequestError("Sauvegarde introuvable.");
 	return backup;
 };
-const pathValue$1 = (e, name) => {
+const pathValue$2 = (e, name) => {
 	if (!e.request) throw new BadRequestError("Requete invalide.");
 	return e.request.pathValue(name);
 };
@@ -1157,14 +1099,14 @@ const assertNoRunningOperation = (instanceId) => {
 	if (running) throw new BadRequestError("Une operation de sauvegarde est deja en cours pour cette instance.");
 };
 const setInstancePower = (instanceId, power) => {
-	const record = findInstance$1(instanceId);
+	const record = findInstance$2(instanceId);
 	record.set("power", power);
 	$app.save(record);
 	return record;
 };
 const waitUntilIdle = (instanceId) => {
 	for (let i = 0; i < MAX_STOP_WAIT_SECONDS; i++) {
-		const current = findInstance$1(instanceId);
+		const current = findInstance$2(instanceId);
 		if (!current.getBool("power") && current.getString("status").toLowerCase() === "idle") return current;
 		sleepOneSecond();
 	}
@@ -1320,7 +1262,7 @@ const ensureInstanceDirs = (root) => {
 	for (const dir of BACKUP_DIRS) $os.mkdirAll(`${root}/${dir}`, DIR_MODE);
 };
 const createArchive = (instance, backup, kind) => {
-	assertSafeInstanceId$3(instance.id);
+	assertSafeInstanceId$4(instance.id);
 	const root = instanceRoot$3(instance.id);
 	const dir = backupDir(instance.id);
 	const filename = createBackupFilename(instance, kind);
@@ -1480,7 +1422,7 @@ const createBackupForInstance = (instance, authRecord, kind, managePower, skipRu
 			label: "Instance arretee, preparation des fichiers",
 			percent: 14
 		});
-		markBackupReady(backup, createArchive(findInstance$1(instance.id), backup, kind), options);
+		markBackupReady(backup, createArchive(findInstance$2(instance.id), backup, kind), options);
 		return backup;
 	} catch (error) {
 		markBackupFailed(backup, error);
@@ -1778,7 +1720,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			compressedBytes: compressedBytes || fileSize(archivePath)
 		});
 		if (manifest.instance?.version) {
-			const current = findInstance$1(instance.id);
+			const current = findInstance$2(instance.id);
 			current.set("version", manifest.instance.version);
 			$app.save(current);
 		}
@@ -2270,7 +2212,7 @@ const buildLitestreamConfig = (policies) => {
 	const validPolicies = [];
 	const dbLines = [];
 	for (const policy of policies) try {
-		const instance = findInstance$1(policy.getString("instance"));
+		const instance = findInstance$2(policy.getString("instance"));
 		const dbPath = litestreamDbPath(instance.id);
 		if (!pathExists$2(dbPath)) {
 			updateLitestreamPolicyState(policy, "failed", { lastError: "data.db introuvable pour cette instance." });
@@ -2598,7 +2540,7 @@ const runScheduledBackupPolicy = (policyId, trigger) => {
 	try {
 		const policy = $app.findRecordById("instance_backup_policies", policyId);
 		if (!policy || !policy.getBool("enabled")) return null;
-		const instance = findInstance$1(policy.getString("instance"));
+		const instance = findInstance$2(policy.getString("instance"));
 		const user = $app.findRecordById("users", policy.getString("user") || instance.getString("uid"));
 		if (!user) throw new Error("Utilisateur proprietaire introuvable.");
 		setPolicyRunState(policy, "running", {
@@ -2778,7 +2720,7 @@ const startChunkSession = (instance, authRecord, e) => {
 	};
 };
 const readChunkSession = (instanceId, uploadId) => {
-	assertSafeInstanceId$3(instanceId);
+	assertSafeInstanceId$4(instanceId);
 	assertSafeUploadId(uploadId);
 	try {
 		const raw = toString($os.readFile(chunkMetaPath(instanceId, uploadId)));
@@ -2911,26 +2853,26 @@ const readBackupCreateName = (e) => {
 };
 const HandleInstanceBackupCreate = (e) => {
 	const log = mkLog("POST:instance:backup");
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const backup = createBackupForInstance(instance, authRecord, "manual", true, false, { name: readBackupCreateName(e) });
 	log(`created ${backup.id} for ${instance.id}`);
 	return e.json(200, { backup: serializeInstanceBackup(backup) });
 };
 const HandleInstanceBackupImport = (e) => {
 	const log = mkLog("POST:instance:backup:import");
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const backup = createImportedBackup(instance, authRecord, e);
 	log(`imported ${backup.id} for ${instance.id}`);
 	return e.json(200, { backup: serializeInstanceBackup(backup) });
 };
 const HandleInstanceBackupChunkedStart = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const { uploadId, session } = startChunkSession(instance, authRecord, e);
 	return e.json(200, {
 		uploadId,
@@ -2939,39 +2881,39 @@ const HandleInstanceBackupChunkedStart = (e) => {
 	});
 };
 const HandleInstanceBackupChunkedUpload = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
-	const result = storeChunk(instance, authRecord, pathValue$1(e, "uploadId"), e);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
+	const result = storeChunk(instance, authRecord, pathValue$2(e, "uploadId"), e);
 	return e.json(200, result);
 };
 const HandleInstanceBackupChunkedComplete = (e) => {
 	const log = mkLog("POST:instance:backup:import:chunked:complete");
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
-	const backup = completeChunkSession(instance, authRecord, pathValue$1(e, "uploadId"));
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
+	const backup = completeChunkSession(instance, authRecord, pathValue$2(e, "uploadId"));
 	log(`imported ${backup.id} for ${instance.id} from chunked upload`);
 	return e.json(200, { backup: serializeInstanceBackup(backup) });
 };
 const HandleInstanceBackupChunkedCancel = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
-	cancelChunkSession(instance, authRecord, pathValue$1(e, "uploadId"));
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
+	cancelChunkSession(instance, authRecord, pathValue$2(e, "uploadId"));
 	return e.json(200, { status: "ok" });
 };
 const HandleInstanceBackupsList = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const backups = findInstanceBackups$1(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
 	return e.json(200, { backups });
 };
 const HandleInstanceBackupPolicyGet = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const policy = getOrCreateBackupPolicy(instance);
 	return e.json(200, {
 		policy: serializeBackupPolicy(policy),
@@ -2979,9 +2921,9 @@ const HandleInstanceBackupPolicyGet = (e) => {
 	});
 };
 const HandleInstanceBackupPolicyUpdate = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const policy = getOrCreateBackupPolicy(instance);
 	applyBackupPolicyInput(policy, instance, readBackupPolicyInput(e));
 	$app.save(policy);
@@ -2999,9 +2941,9 @@ const HandleInstanceBackupPolicyCronDispatcher = () => {
 };
 const HandleInstanceBackupPolicyRun = (e) => {
 	const log = mkLog("POST:instance:backup-policy:run");
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const policy = getOrCreateBackupPolicy(instance);
 	if (!policy.getBool("enabled")) throw new BadRequestError("La sauvegarde automatique n'est pas activee.");
 	const backup = runScheduledBackupPolicy(policy.id, "manual");
@@ -3012,9 +2954,9 @@ const HandleInstanceBackupPolicyRun = (e) => {
 	});
 };
 const HandleInstanceLitestreamPolicyGet = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const policy = refreshLitestreamPolicyState(getOrCreateLitestreamPolicy(instance));
 	return e.json(200, {
 		policy: serializeLitestreamPolicy(policy),
@@ -3022,9 +2964,9 @@ const HandleInstanceLitestreamPolicyGet = (e) => {
 	});
 };
 const HandleInstanceLitestreamPolicyUpdate = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	const policy = getOrCreateLitestreamPolicy(instance);
 	applyLitestreamPolicyInput(policy, instance, readLitestreamPolicyInput(e));
 	$app.save(policy);
@@ -3052,10 +2994,10 @@ const HandleInstanceLitestreamBootstrap = () => {
 	}
 };
 const HandleInstanceBackupDownload = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
-	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue$2(e, "backupId"));
 	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
 	const localPath = ensureLocalArchive(instance, backup);
 	const filename = backup.getString("filename");
@@ -3064,10 +3006,10 @@ const HandleInstanceBackupDownload = (e) => {
 	return e.fileFS($os.dirFS(backupDir(instance.id)), filename);
 };
 const HandleInstanceBackupDelete = (e) => {
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
-	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue$2(e, "backupId"));
 	const filename = backup.getString("filename");
 	if (filename) {
 		assertSafeBackupFilename(filename);
@@ -3083,11 +3025,11 @@ const HandleInstanceBackupDelete = (e) => {
 };
 const HandleInstanceBackupRestore = (e) => {
 	const log = mkLog("POST:instance:backup:restore");
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
 	assertNoRunningOperation(instance.id);
-	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
+	const backup = getBackupRecord(instance, pathValue$2(e, "backupId"));
 	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
 	let power = { shouldRestart: false };
 	try {
@@ -3110,8 +3052,8 @@ const HandleInstanceBackupRestore = (e) => {
 			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
 			compressedBytes: Number(backup.get("compressedBytes") || 0)
 		});
-		createBackupForInstance(findInstance$1(instance.id), authRecord, "pre-restore", false, true);
-		restoreArchive(findInstance$1(instance.id), backup, instance, {
+		createBackupForInstance(findInstance$2(instance.id), authRecord, "pre-restore", false, true);
+		restoreArchive(findInstance$2(instance.id), backup, instance, {
 			mode: "in-place",
 			targetInstanceId: instance.id,
 			targetSubdomain: instance.getString("subdomain"),
@@ -3156,14 +3098,72 @@ const HandleInstanceBackupRestore = (e) => {
 };
 const HandleInstanceBackupRestoreNew = (e) => {
 	const log = mkLog("POST:instance:backup:restore:new");
-	const authRecord = requireAuthRecord$1(e.auth);
-	const instance = findInstance$1(pathValue$1(e, "id"));
-	assertInstanceAccess$1(instance, authRecord);
-	const backup = getBackupRecord(instance, pathValue$1(e, "backupId"));
+	const authRecord = requireAuthRecord$2(e.auth);
+	const instance = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(instance, authRecord);
+	const backup = getBackupRecord(instance, pathValue$2(e, "backupId"));
 	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
 	const target = createRestoredInstanceFromBackup(instance, authRecord, backup, e);
 	log(`restored ${backup.id} from ${instance.id} into new instance ${target.id}`);
 	return e.json(200, { instance: target });
+};
+
+//#endregion
+//#region src/lib/util/versions.ts
+const POCKETBASE_VERSIONS_SETTING = "pocketbase_versions";
+const parsePocketbaseVersionsValue = (raw) => {
+	if (!raw) return null;
+	if (typeof raw === "string") try {
+		return JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	return raw;
+};
+const readPocketbaseVersions = () => {
+	try {
+		const value = parsePocketbaseVersionsValue($app.findFirstRecordByData("settings", "name", POCKETBASE_VERSIONS_SETTING).getString("value"));
+		if (!value?.versions?.length) return [];
+		return value.versions;
+	} catch {
+		return [];
+	}
+};
+/** Minor wildcard versions (e.g. `0.22.*`) from mothership settings */
+const listVersions = () => readPocketbaseVersions().map((entry) => entry.range);
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceCreate.ts
+const HandleInstanceCreate = (e) => {
+	const log = mkLog(`POST:instance`);
+	const authRecord = e.auth;
+	log(`authRecord`, JSON.stringify(authRecord));
+	if (!authRecord) throw new Error(`Session utilisateur attendue`);
+	log(`TOP OF POST`);
+	let data = new DynamicModel({
+		subdomain: "",
+		version: listVersions()[0]
+	});
+	log(`before bind`);
+	e.bindBody(data);
+	log(`after bind`);
+	data = JSON.parse(JSON.stringify(data));
+	const { subdomain, version } = data;
+	const settings = readOperatorSettings();
+	log(`vars`, JSON.stringify({ subdomain }));
+	if (!subdomain) throw new BadRequestError(`Le sous-domaine est obligatoire pour créer une instance.`);
+	const collection = $app.findCollectionByNameOrId("instances");
+	const record = new Record(collection);
+	record.set("uid", authRecord.id);
+	record.set("subdomain", subdomain);
+	record.set("power", settings.defaultInstancePower);
+	record.set("status", "idle");
+	record.set("version", version);
+	record.set("dev", settings.defaultInstanceDevMode);
+	record.set("syncAdmin", settings.defaultSyncAdmin);
+	record.set("autoVacuum", settings.defaultAutoVacuum);
+	$app.save(record);
+	return e.json(200, { instance: record });
 };
 
 //#endregion
@@ -3190,7 +3190,7 @@ const pathExists$1 = (path) => {
 };
 const runCommand = (name, ...args) => toString($os.cmd(name, ...args).combinedOutput()).trim();
 const basename = (path) => path.replace(/\/+$/g, "").split("/").pop() || "";
-const assertSafeInstanceId$2 = (id) => {
+const assertSafeInstanceId$3 = (id) => {
 	if (!SAFE_INSTANCE_ID.test(id)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
 const directorySizeBytes = (path) => {
@@ -3284,7 +3284,7 @@ const scanOrphanInstanceStorage = (remove = false) => {
 	};
 };
 const removeInstanceLocalStorage = (id) => {
-	assertSafeInstanceId$2(id);
+	assertSafeInstanceId$3(id);
 	const targets = [
 		instanceRoot$2(id),
 		`${backupRoot()}/${id}`,
@@ -3352,7 +3352,7 @@ const dataRoot$1 = () => {
 	if (inferred !== appDataDir) return inferred;
 	throw new Error("Impossible de trouver le dossier de donnees des instances.");
 };
-const assertSafeInstanceId$1 = (id) => {
+const assertSafeInstanceId$2 = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
 const instanceRoot$1 = (id) => `${dataRoot$1()}/instances/${id}`;
@@ -3369,8 +3369,8 @@ const copyDirectory = (source, target) => {
 	$os.cmd("cp", "-a", `${source}/.`, target).combinedOutput();
 };
 const copyInstanceFiles = (sourceId, targetId) => {
-	assertSafeInstanceId$1(sourceId);
-	assertSafeInstanceId$1(targetId);
+	assertSafeInstanceId$2(sourceId);
+	assertSafeInstanceId$2(targetId);
 	const sourceRoot = instanceRoot$1(sourceId);
 	const targetRoot = instanceRoot$1(targetId);
 	$os.mkdirAll(targetRoot, 493);
@@ -3410,7 +3410,7 @@ const HandleInstanceDuplicate = (e) => {
 	const authRecord = e.auth;
 	if (!authRecord) throw new BadRequestError(`Session utilisateur attendue`);
 	const sourceId = e.request.pathValue("id");
-	assertSafeInstanceId$1(sourceId);
+	assertSafeInstanceId$2(sourceId);
 	const source = $app.findRecordById("instances", sourceId);
 	if (!source) throw new BadRequestError(`Instance ${sourceId} introuvable.`);
 	if (source.get("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError(`Non autorise`);
@@ -3448,6 +3448,20 @@ const HandleInstanceDuplicate = (e) => {
 };
 
 //#endregion
+//#region src/lib/util/mailRecipient.ts
+/** Reason a user must not receive platform email, or null if OK to send. */
+const mailRecipientSkipReason = (user) => {
+	if (!user.getBool("verified")) return "unverified";
+	if (user.getBool("unsubscribe")) return "unsubscribed";
+	return null;
+};
+/** Permanent bounce or complaint: stop all future platform email. */
+const suppressUserEmail = (user) => {
+	user.setVerified(false);
+	user.set("unsubscribe", true);
+};
+
+//#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceOverview.ts
 const INSTANCE_RESOURCE_METRICS_COLLECTION = "instance_resource_metrics";
 const INSTANCE_METRICS_RETENTION_MS = 10080 * 60 * 1e3;
@@ -3470,8 +3484,8 @@ const historyRanges = {
 		bucketMs: 600 * 1e3
 	}
 };
-const formatPocketBaseDate = (timestamp) => new Date(timestamp).toISOString().replace("T", " ");
-const assertSafeInstanceId = (id) => {
+const formatPocketBaseDate$1 = (timestamp) => new Date(timestamp).toISOString().replace("T", " ");
+const assertSafeInstanceId$1 = (id) => {
 	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
 };
 const dataRoot = () => {
@@ -3483,20 +3497,20 @@ const dataRoot = () => {
 	throw new Error("Impossible de trouver le dossier de donnees des instances.");
 };
 const instanceRoot = (id) => `${dataRoot()}/instances/${id}`;
-const requireAuthRecord = (authRecord) => {
+const requireAuthRecord$1 = (authRecord) => {
 	if (!authRecord) throw new BadRequestError("Session utilisateur attendue.");
 	return authRecord;
 };
-const findInstance = (id) => {
-	assertSafeInstanceId(id);
+const findInstance$1 = (id) => {
+	assertSafeInstanceId$1(id);
 	const instance = $app.findRecordById("instances", id);
 	if (!instance) throw new BadRequestError(`Instance ${id} introuvable.`);
 	return instance;
 };
-const assertInstanceAccess = (instance, authRecord) => {
+const assertInstanceAccess$1 = (instance, authRecord) => {
 	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
 };
-const pathValue = (e, name) => {
+const pathValue$1 = (e, name) => {
 	if (!e.request) throw new BadRequestError("Requete invalide.");
 	return e.request.pathValue(name);
 };
@@ -3702,9 +3716,9 @@ const findInstanceBackups = (instanceId) => {
 	return sortBackupsNewestFirst($app.findRecordsByFilter("instance_backups", "instance = {:instance}", "", 100, 0, { instance: instanceId }).filter((record) => !!record));
 };
 const HandleInstanceOverview = (e) => {
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
 	const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
 	const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0);
 	const runtime = serializeInstanceResourceMetrics(instance, readDockerMetricsSnapshot([instance.id]));
@@ -3724,7 +3738,7 @@ const HandleInstanceOverview = (e) => {
 	});
 };
 const HandleInstancesMetrics = (e) => {
-	const instances = findAccessibleInstances(requireAuthRecord(e.auth));
+	const instances = findAccessibleInstances(requireAuthRecord$1(e.auth));
 	const snapshot = readDockerMetricsSnapshot();
 	const metrics = {};
 	for (const instance of instances) metrics[instance.id] = serializeInstanceResourceMetrics(instance, snapshot);
@@ -3734,21 +3748,21 @@ const HandleInstancesMetrics = (e) => {
 	});
 };
 const HandleInstanceMetrics = (e) => {
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
 	return e.json(200, {
 		metric: serializeInstanceRuntimeMetrics(instance, readDockerMetricsSnapshot([instance.id])),
 		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
 	});
 };
 const HandleInstanceMetricsHistory = (e) => {
-	const authRecord = requireAuthRecord(e.auth);
-	const instance = findInstance(pathValue(e, "id"));
-	assertInstanceAccess(instance, authRecord);
+	const authRecord = requireAuthRecord$1(e.auth);
+	const instance = findInstance$1(pathValue$1(e, "id"));
+	assertInstanceAccess$1(instance, authRecord);
 	const range = findMetricsHistoryRange(e);
 	const config = historyRanges[range];
-	const cutoff = formatPocketBaseDate(Date.now() - config.durationMs);
+	const cutoff = formatPocketBaseDate$1(Date.now() - config.durationMs);
 	const records = $app.findRecordsByFilter(INSTANCE_RESOURCE_METRICS_COLLECTION, "instance = {:instance} && created >= {:cutoff}", "created", INSTANCE_METRICS_QUERY_LIMIT, 0, {
 		instance: instance.id,
 		cutoff
@@ -3761,10 +3775,10 @@ const HandleInstanceMetricsHistory = (e) => {
 		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
 	});
 };
-const CollectInstanceResourceMetrics = () => {
+const CollectInstanceResourceMetrics = (providedSnapshot) => {
 	const instances = $app.findRecordsByFilter("instances", "metricsHistoryEnabled = true", "", 500, 0);
 	if (instances.length === 0) return { saved: 0 };
-	const snapshot = readDockerMetricsSnapshot();
+	const snapshot = providedSnapshot || readDockerMetricsSnapshot();
 	const collection = $app.findCollectionByNameOrId(INSTANCE_RESOURCE_METRICS_COLLECTION);
 	let saved = 0;
 	for (const instance of instances) {
@@ -3786,7 +3800,7 @@ const CollectInstanceResourceMetrics = () => {
 	return { saved };
 };
 const PurgeExpiredInstanceResourceMetrics = () => {
-	const cutoff = formatPocketBaseDate(Date.now() - INSTANCE_METRICS_RETENTION_MS);
+	const cutoff = formatPocketBaseDate$1(Date.now() - INSTANCE_METRICS_RETENTION_MS);
 	let deleted = 0;
 	for (;;) {
 		const records = $app.findRecordsByFilter(INSTANCE_RESOURCE_METRICS_COLLECTION, "created < {:cutoff}", "created", 1e3, 0, { cutoff });
@@ -3797,6 +3811,883 @@ const PurgeExpiredInstanceResourceMetrics = () => {
 		}
 	}
 	return { deleted };
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/instanceMonitoring.ts
+const MONITORING_DEFAULTS = {
+	healthPath: "/api/health",
+	healthFailureCount: 3,
+	healthRecoveryCount: 2,
+	cpuThresholdPercent: 85,
+	cpuSustainMinutes: 5,
+	memoryThresholdPercent: 85,
+	memorySustainMinutes: 5,
+	resourceRecoveryCount: 3,
+	resourceRecoveryMargin: 5,
+	startupGraceMs: 120 * 1e3,
+	requestTimeoutSeconds: 5
+};
+const normalizeHealthPath = (value) => {
+	const path = `${typeof value === "string" ? value : ""}`.trim();
+	if (!path || path.length > 200) throw new Error("Le chemin de santé doit contenir entre 1 et 200 caractères.");
+	if (!path.startsWith("/") || path.startsWith("//") || /[\u0000-\u001f\u007f]/.test(path)) throw new Error("Le chemin de santé doit être un chemin relatif commençant par /.");
+	if (/^[^?#]*\\/.test(path) || /^\/\w+:\/\//i.test(path)) throw new Error("Le chemin de santé est invalide.");
+	return path;
+};
+const normalizeWebhook = (value) => `${typeof value === "string" ? value : ""}`.trim();
+const normalizeDiscordWebhook = (value) => {
+	const url = normalizeWebhook(value);
+	if (!url) return "";
+	if (url.length > 2e3 || !/^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/[0-9]+\/[A-Za-z0-9._-]+$/.test(url)) throw new Error("L'URL Discord doit être une URL officielle https://discord.com/api/webhooks/…");
+	return url;
+};
+const normalizeSlackWebhook = (value) => {
+	const url = normalizeWebhook(value);
+	if (!url) return "";
+	if (url.length > 2e3 || !/^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(url)) throw new Error("L'URL Slack doit être une URL officielle https://hooks.slack.com/services/…");
+	return url;
+};
+const evaluateHealthSignal = (state, healthy, failuresRequired, recoveriesRequired = MONITORING_DEFAULTS.healthRecoveryCount) => {
+	const next = { ...state };
+	let transition = null;
+	if (healthy) {
+		next.failureStreak = 0;
+		next.successStreak += 1;
+		if (state.incidentOpen && next.successStreak >= recoveriesRequired) {
+			next.incidentOpen = false;
+			transition = "resolve";
+		}
+	} else {
+		next.successStreak = 0;
+		next.failureStreak += 1;
+		if (!state.incidentOpen && next.failureStreak >= failuresRequired) {
+			next.incidentOpen = true;
+			transition = "open";
+		}
+	}
+	return {
+		state: next,
+		transition
+	};
+};
+const evaluateThresholdSignal = (state, value, threshold, highSamplesRequired, normalSamplesRequired = MONITORING_DEFAULTS.resourceRecoveryCount, recoveryMargin = MONITORING_DEFAULTS.resourceRecoveryMargin) => {
+	const next = { ...state };
+	let transition = null;
+	if (value >= threshold) {
+		next.highStreak += 1;
+		next.normalStreak = 0;
+		if (!state.incidentOpen && next.highStreak >= highSamplesRequired) {
+			next.incidentOpen = true;
+			transition = "open";
+		}
+	} else if (value <= Math.max(0, threshold - recoveryMargin)) {
+		next.highStreak = 0;
+		next.normalStreak += 1;
+		if (state.incidentOpen && next.normalStreak >= normalSamplesRequired) {
+			next.incidentOpen = false;
+			transition = "resolve";
+		}
+	} else {
+		next.highStreak = 0;
+		next.normalStreak = 0;
+	}
+	return {
+		state: next,
+		transition
+	};
+};
+const classifyHealthError = (error) => {
+	const message = `${error}`.toLowerCase();
+	if (message.includes("timeout") || message.includes("deadline exceeded")) return "timeout";
+	if (message.includes("no such host") || message.includes("dns") || message.includes("resolve")) return "dns";
+	if (message.includes("tls") || message.includes("certificate") || message.includes("x509")) return "tls";
+	if (message.includes("connect") || message.includes("network") || message.includes("refused")) return "network";
+	return "unknown";
+};
+const monitoringRetryDelayMs = (attempts) => {
+	const delayMinutes = [
+		0,
+		1,
+		5,
+		15,
+		60
+	];
+	return delayMinutes[Math.min(Math.max(0, attempts), delayMinutes.length - 1)] * 60 * 1e3;
+};
+const monitoringHistoryRanges = {
+	"24h": {
+		durationMs: 1440 * 60 * 1e3,
+		bucketSeconds: 60
+	},
+	"7d": {
+		durationMs: 10080 * 60 * 1e3,
+		bucketSeconds: 600
+	},
+	"30d": {
+		durationMs: 720 * 60 * 60 * 1e3,
+		bucketSeconds: 3600
+	}
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceMonitoring.ts
+const POLICY_COLLECTION = "instance_monitoring_policies";
+const CHECK_COLLECTION = "instance_health_checks";
+const INCIDENT_COLLECTION = "instance_monitoring_incidents";
+const DELIVERY_COLLECTION = "instance_monitoring_deliveries";
+const HEALTH_RETENTION_MS = 720 * 60 * 60 * 1e3;
+const INCIDENT_PAGE_SIZE = 25;
+const nowIso = () => (/* @__PURE__ */ new Date()).toISOString();
+const formatPocketBaseDate = (timestamp) => new Date(timestamp).toISOString().replace("T", " ");
+const assertSafeInstanceId = (id) => {
+	if (!id.match(/^[a-z0-9]+$/)) throw new BadRequestError("Identifiant d'instance invalide.");
+};
+const pathValue = (e, name) => {
+	if (!e.request) throw new BadRequestError("Requête invalide.");
+	return e.request.pathValue(name);
+};
+const requireAuthRecord = (authRecord) => {
+	if (!authRecord) throw new BadRequestError("Session utilisateur attendue.");
+	return authRecord;
+};
+const findInstance = (id) => {
+	assertSafeInstanceId(id);
+	const instance = $app.findRecordById("instances", id);
+	if (!instance) throw new BadRequestError(`Instance ${id} introuvable.`);
+	return instance;
+};
+const assertInstanceAccess = (instance, authRecord) => {
+	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorisé.");
+};
+const findPolicy = (instanceId) => {
+	try {
+		return $app.findFirstRecordByFilter(POLICY_COLLECTION, "instance = {:instance}", { instance: instanceId });
+	} catch {
+		return null;
+	}
+};
+const setPolicyDefaults = (policy, instance) => {
+	policy.set("user", instance.getString("uid"));
+	policy.set("instance", instance.id);
+	policy.set("enabled", false);
+	policy.set("healthEnabled", true);
+	policy.set("healthPath", MONITORING_DEFAULTS.healthPath);
+	policy.set("healthFailureCount", MONITORING_DEFAULTS.healthFailureCount);
+	policy.set("cpuEnabled", true);
+	policy.set("cpuThresholdPercent", MONITORING_DEFAULTS.cpuThresholdPercent);
+	policy.set("cpuSustainMinutes", MONITORING_DEFAULTS.cpuSustainMinutes);
+	policy.set("memoryEnabled", true);
+	policy.set("memoryThresholdPercent", MONITORING_DEFAULTS.memoryThresholdPercent);
+	policy.set("memorySustainMinutes", MONITORING_DEFAULTS.memorySustainMinutes);
+	policy.set("backupAlertsEnabled", true);
+	policy.set("emailEnabled", true);
+	policy.set("discordEnabled", false);
+	policy.set("discordWebhook", "");
+	policy.set("slackEnabled", false);
+	policy.set("slackWebhook", "");
+	policy.set("lastHealthStatus", "unknown");
+	policy.set("lastCheckAt", "");
+	policy.set("graceUntil", "");
+	policy.set("lastMetricsAt", "");
+	policy.set("healthFailureStreak", 0);
+	policy.set("healthSuccessStreak", 0);
+	policy.set("cpuHighStreak", 0);
+	policy.set("cpuNormalStreak", 0);
+	policy.set("memoryHighStreak", 0);
+	policy.set("memoryNormalStreak", 0);
+	policy.set("lastCpuCapacityPercent", 0);
+	policy.set("lastMemoryPercent", 0);
+	policy.set("lastLatencyMs", 0);
+	policy.set("lastStatusCode", 0);
+	policy.set("lastError", "");
+	return policy;
+};
+const createPolicy = (instance) => {
+	const policy = new Record($app.findCollectionByNameOrId(POLICY_COLLECTION));
+	setPolicyDefaults(policy, instance);
+	$app.save(policy);
+	return policy;
+};
+const monitoringApexDomain = () => `${$os.getenv("APEX_DOMAIN") || "pockethost.lvh.me"}`.trim();
+const monitoringProtocol = () => `${$os.getenv("HTTP_PROTOCOL") || "https"}`.replace(/:$/, "");
+const monitoringTargetUrl = (instance, healthPath) => `${monitoringProtocol()}://${instance.getString("subdomain")}.${monitoringApexDomain()}${healthPath}`;
+const defaultPolicyPayload = (instance) => ({
+	id: "",
+	user: instance.getString("uid"),
+	instance: instance.id,
+	enabled: false,
+	healthEnabled: true,
+	healthPath: MONITORING_DEFAULTS.healthPath,
+	healthFailureCount: MONITORING_DEFAULTS.healthFailureCount,
+	cpuEnabled: true,
+	cpuThresholdPercent: MONITORING_DEFAULTS.cpuThresholdPercent,
+	cpuSustainMinutes: MONITORING_DEFAULTS.cpuSustainMinutes,
+	memoryEnabled: true,
+	memoryThresholdPercent: MONITORING_DEFAULTS.memoryThresholdPercent,
+	memorySustainMinutes: MONITORING_DEFAULTS.memorySustainMinutes,
+	backupAlertsEnabled: true,
+	emailEnabled: true,
+	discordEnabled: false,
+	slackEnabled: false,
+	hasDiscordWebhook: false,
+	hasSlackWebhook: false,
+	lastHealthStatus: "unknown",
+	lastCheckAt: "",
+	graceUntil: "",
+	lastMetricsAt: "",
+	healthFailureStreak: 0,
+	healthSuccessStreak: 0,
+	cpuHighStreak: 0,
+	cpuNormalStreak: 0,
+	memoryHighStreak: 0,
+	memoryNormalStreak: 0,
+	lastCpuCapacityPercent: null,
+	lastMemoryPercent: null,
+	lastLatencyMs: null,
+	lastStatusCode: null,
+	lastError: "",
+	created: "",
+	updated: ""
+});
+const nullableObservedMetric = (policy, field, observedAtField) => {
+	if (!policy.getString(observedAtField)) return null;
+	const value = Number(policy.get(field));
+	return Number.isFinite(value) ? value : null;
+};
+const serializePolicy = (instance, policy) => {
+	if (!policy) return defaultPolicyPayload(instance);
+	return {
+		id: policy.id,
+		user: policy.getString("user"),
+		instance: policy.getString("instance"),
+		enabled: policy.getBool("enabled"),
+		healthEnabled: policy.getBool("healthEnabled"),
+		healthPath: policy.getString("healthPath") || MONITORING_DEFAULTS.healthPath,
+		healthFailureCount: policy.getInt("healthFailureCount") || MONITORING_DEFAULTS.healthFailureCount,
+		cpuEnabled: policy.getBool("cpuEnabled"),
+		cpuThresholdPercent: policy.getFloat("cpuThresholdPercent") || MONITORING_DEFAULTS.cpuThresholdPercent,
+		cpuSustainMinutes: policy.getInt("cpuSustainMinutes") || MONITORING_DEFAULTS.cpuSustainMinutes,
+		memoryEnabled: policy.getBool("memoryEnabled"),
+		memoryThresholdPercent: policy.getFloat("memoryThresholdPercent") || MONITORING_DEFAULTS.memoryThresholdPercent,
+		memorySustainMinutes: policy.getInt("memorySustainMinutes") || MONITORING_DEFAULTS.memorySustainMinutes,
+		backupAlertsEnabled: policy.getBool("backupAlertsEnabled"),
+		emailEnabled: policy.getBool("emailEnabled"),
+		discordEnabled: policy.getBool("discordEnabled"),
+		slackEnabled: policy.getBool("slackEnabled"),
+		hasDiscordWebhook: !!policy.getString("discordWebhook"),
+		hasSlackWebhook: !!policy.getString("slackWebhook"),
+		lastHealthStatus: policy.getString("lastHealthStatus") || "unknown",
+		lastCheckAt: policy.getString("lastCheckAt"),
+		graceUntil: policy.getString("graceUntil"),
+		lastMetricsAt: policy.getString("lastMetricsAt"),
+		healthFailureStreak: policy.getInt("healthFailureStreak"),
+		healthSuccessStreak: policy.getInt("healthSuccessStreak"),
+		cpuHighStreak: policy.getInt("cpuHighStreak"),
+		cpuNormalStreak: policy.getInt("cpuNormalStreak"),
+		memoryHighStreak: policy.getInt("memoryHighStreak"),
+		memoryNormalStreak: policy.getInt("memoryNormalStreak"),
+		lastCpuCapacityPercent: nullableObservedMetric(policy, "lastCpuCapacityPercent", "lastMetricsAt"),
+		lastMemoryPercent: nullableObservedMetric(policy, "lastMemoryPercent", "lastMetricsAt"),
+		lastLatencyMs: nullableObservedMetric(policy, "lastLatencyMs", "lastCheckAt"),
+		lastStatusCode: policy.getString("lastCheckAt") && policy.getInt("lastStatusCode") > 0 ? policy.getInt("lastStatusCode") : null,
+		lastError: policy.getString("lastError"),
+		created: policy.getString("created"),
+		updated: policy.getString("updated")
+	};
+};
+const monitoringResponse = (instance, policy) => {
+	const serialized = serializePolicy(instance, policy);
+	let emailAddress = "";
+	try {
+		emailAddress = $app.findRecordById("users", instance.getString("uid")).email();
+	} catch {}
+	return {
+		policy: serialized,
+		capabilities: {
+			emailAddress,
+			targetUrl: monitoringTargetUrl(instance, serialized.healthPath),
+			requestIntervalSeconds: 60,
+			requestTimeoutSeconds: MONITORING_DEFAULTS.requestTimeoutSeconds,
+			retentionDays: 30
+		}
+	};
+};
+const clampNumber = (value, fallback, min, max, integer = false) => {
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed)) return fallback;
+	const clamped = Math.max(min, Math.min(max, parsed));
+	return integer ? Math.round(clamped) : clamped;
+};
+const findOpenIncident = (instanceId, type, sourceId = "") => {
+	const sourceFilter = sourceId ? " && sourceId = {:sourceId}" : "";
+	return $app.findRecordsByFilter(INCIDENT_COLLECTION, `instance = {:instance} && type = {:type} && status = "open"${sourceFilter}`, "-openedAt", 1, 0, {
+		instance: instanceId,
+		type,
+		sourceId
+	})[0] || null;
+};
+const incidentLabel = (type) => {
+	if (type === "health") return "Instance indisponible";
+	if (type === "cpu") return "CPU élevé";
+	if (type === "memory") return "Mémoire élevée";
+	return "Sauvegarde en échec";
+};
+const queueDelivery = (instance, incident, phase, channel, payload) => {
+	const delivery = new Record($app.findCollectionByNameOrId(DELIVERY_COLLECTION));
+	delivery.set("user", instance.getString("uid"));
+	delivery.set("instance", instance.id);
+	delivery.set("incident", incident?.id || "");
+	delivery.set("phase", phase);
+	delivery.set("channel", channel);
+	delivery.set("status", "pending");
+	delivery.set("attempts", 0);
+	delivery.set("nextAttemptAt", nowIso());
+	delivery.set("lastAttemptAt", "");
+	delivery.set("deliveredAt", "");
+	delivery.set("lastError", "");
+	delivery.set("payload", payload);
+	$app.save(delivery);
+	return delivery;
+};
+const queueIncidentNotifications = (policy, instance, incident, phase) => {
+	const type = incident.getString("type");
+	const payload = {
+		title: `${phase === "opened" ? "ALERTE" : "RÉTABLI"} · ${incidentLabel(type)} · ${instance.getString("subdomain")}`,
+		message: incident.getString("message"),
+		instanceId: instance.id,
+		instanceName: instance.getString("subdomain"),
+		type,
+		phase,
+		occurredAt: phase === "opened" ? incident.getString("openedAt") : incident.getString("resolvedAt")
+	};
+	if (policy.getBool("emailEnabled")) queueDelivery(instance, incident, phase, "email", payload);
+	if (policy.getBool("discordEnabled") && policy.getString("discordWebhook")) queueDelivery(instance, incident, phase, "discord", payload);
+	if (policy.getBool("slackEnabled") && policy.getString("slackWebhook")) queueDelivery(instance, incident, phase, "slack", payload);
+};
+const openIncident = (policy, instance, type, message, value = 0, threshold = 0, details = {}, sourceId = "") => {
+	const existing = findOpenIncident(instance.id, type, sourceId);
+	if (existing) return existing;
+	const incident = new Record($app.findCollectionByNameOrId(INCIDENT_COLLECTION));
+	incident.set("user", instance.getString("uid"));
+	incident.set("instance", instance.id);
+	incident.set("type", type);
+	incident.set("status", "open");
+	incident.set("openedAt", nowIso());
+	incident.set("resolvedAt", "");
+	incident.set("value", value);
+	incident.set("threshold", threshold);
+	incident.set("message", message);
+	incident.set("details", details);
+	incident.set("sourceId", sourceId);
+	$app.save(incident);
+	queueIncidentNotifications(policy, instance, incident, "opened");
+	return incident;
+};
+const resolveIncident = (policy, instance, incident, message, notify = true, value) => {
+	if (!incident || incident.getString("status") !== "open") return null;
+	incident.set("status", "resolved");
+	incident.set("resolvedAt", nowIso());
+	incident.set("message", message);
+	if (value !== void 0) incident.set("value", value);
+	$app.save(incident);
+	if (notify) queueIncidentNotifications(policy, instance, incident, "resolved");
+	return incident;
+};
+const resetRuntimeStreaks = (policy) => {
+	policy.set("healthFailureStreak", 0);
+	policy.set("healthSuccessStreak", 0);
+	policy.set("cpuHighStreak", 0);
+	policy.set("cpuNormalStreak", 0);
+	policy.set("memoryHighStreak", 0);
+	policy.set("memoryNormalStreak", 0);
+};
+const pauseRuntimeMonitoring = (policy, instance, includeBackups = false) => {
+	const types = includeBackups ? [
+		"health",
+		"cpu",
+		"memory",
+		"backup"
+	] : [
+		"health",
+		"cpu",
+		"memory"
+	];
+	for (const type of types) resolveIncident(policy, instance, findOpenIncident(instance.id, type), "Surveillance mise en pause.", false);
+	policy.set("lastHealthStatus", "paused");
+	policy.set("graceUntil", "");
+	resetRuntimeStreaks(policy);
+	$app.save(policy);
+};
+const runHealthProbe = (instance, path) => {
+	const startedAt = Date.now();
+	try {
+		const response = $http.send({
+			url: monitoringTargetUrl(instance, path),
+			method: "GET",
+			timeout: MONITORING_DEFAULTS.requestTimeoutSeconds,
+			headers: {
+				Accept: "application/json",
+				"User-Agent": "PocketHost-Monitor/1.0"
+			}
+		});
+		const healthy = response.statusCode >= 200 && response.statusCode < 400;
+		return {
+			healthy,
+			latencyMs: Math.max(0, Date.now() - startedAt),
+			statusCode: response.statusCode,
+			errorKind: healthy ? "none" : "http",
+			error: healthy ? "" : `Réponse HTTP ${response.statusCode}`
+		};
+	} catch (error) {
+		return {
+			healthy: false,
+			latencyMs: Math.max(0, Date.now() - startedAt),
+			statusCode: 0,
+			errorKind: classifyHealthError(error),
+			error: `${error}`.slice(0, 300)
+		};
+	}
+};
+const saveHealthCheck = (instance, probe, checkedAt) => {
+	const record = new Record($app.findCollectionByNameOrId(CHECK_COLLECTION));
+	record.set("user", instance.getString("uid"));
+	record.set("instance", instance.id);
+	record.set("checkedAt", checkedAt);
+	record.set("result", probe.healthy ? "healthy" : "unhealthy");
+	record.set("latencyMs", probe.latencyMs);
+	record.set("statusCode", probe.statusCode);
+	record.set("errorKind", probe.errorKind);
+	record.set("error", probe.error);
+	$app.save(record);
+};
+const evaluateHealth = (policy, instance) => {
+	if (!policy.getBool("healthEnabled")) return;
+	const checkedAt = nowIso();
+	const probe = runHealthProbe(instance, normalizeHealthPath(policy.getString("healthPath")));
+	saveHealthCheck(instance, probe, checkedAt);
+	policy.set("lastCheckAt", checkedAt);
+	policy.set("lastHealthStatus", probe.healthy ? "healthy" : "unhealthy");
+	policy.set("lastLatencyMs", probe.latencyMs);
+	policy.set("lastStatusCode", probe.statusCode);
+	policy.set("lastError", probe.error);
+	const incident = findOpenIncident(instance.id, "health");
+	if (Date.parse(policy.getString("graceUntil")) > Date.now()) {
+		policy.set("healthFailureStreak", 0);
+		policy.set("healthSuccessStreak", 0);
+		return;
+	}
+	const evaluation = evaluateHealthSignal({
+		failureStreak: policy.getInt("healthFailureStreak"),
+		successStreak: policy.getInt("healthSuccessStreak"),
+		incidentOpen: !!incident
+	}, probe.healthy, policy.getInt("healthFailureCount") || MONITORING_DEFAULTS.healthFailureCount);
+	policy.set("healthFailureStreak", evaluation.state.failureStreak);
+	policy.set("healthSuccessStreak", evaluation.state.successStreak);
+	if (evaluation.transition === "open") openIncident(policy, instance, "health", `${instance.getString("subdomain")} ne répond plus correctement (${probe.error || `HTTP ${probe.statusCode}`}).`, probe.statusCode, 0, {
+		latencyMs: probe.latencyMs,
+		errorKind: probe.errorKind,
+		healthPath: policy.getString("healthPath")
+	});
+	else if (evaluation.transition === "resolve") resolveIncident(policy, instance, incident, `${instance.getString("subdomain")} répond de nouveau normalement en ${probe.latencyMs} ms.`, true, probe.statusCode);
+};
+const evaluateResource = (policy, instance, type, value) => {
+	const prefix = type === "cpu" ? "cpu" : "memory";
+	if (!policy.getBool(`${prefix}Enabled`) || value === null || !Number.isFinite(value)) return;
+	const threshold = policy.getFloat(`${prefix}ThresholdPercent`) || MONITORING_DEFAULTS[`${prefix}ThresholdPercent`];
+	const sustain = policy.getInt(`${prefix}SustainMinutes`) || MONITORING_DEFAULTS[`${prefix}SustainMinutes`];
+	const highField = type === "cpu" ? "cpuHighStreak" : "memoryHighStreak";
+	const normalField = type === "cpu" ? "cpuNormalStreak" : "memoryNormalStreak";
+	const lastField = type === "cpu" ? "lastCpuCapacityPercent" : "lastMemoryPercent";
+	const incident = findOpenIncident(instance.id, type);
+	const evaluation = evaluateThresholdSignal({
+		highStreak: policy.getInt(highField),
+		normalStreak: policy.getInt(normalField),
+		incidentOpen: !!incident
+	}, value, threshold, sustain);
+	policy.set(highField, evaluation.state.highStreak);
+	policy.set(normalField, evaluation.state.normalStreak);
+	policy.set(lastField, value);
+	const formatted = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(value);
+	if (evaluation.transition === "open") openIncident(policy, instance, type, `${type === "cpu" ? "Le CPU" : "La mémoire"} de ${instance.getString("subdomain")} atteint ${formatted} % depuis ${sustain} minutes.`, value, threshold, { sustainMinutes: sustain });
+	else if (evaluation.transition === "resolve") resolveIncident(policy, instance, incident, `${type === "cpu" ? "Le CPU" : "La mémoire"} de ${instance.getString("subdomain")} est revenu à ${formatted} %.`, true, value);
+};
+const collectMonitoringPolicy = (policy, snapshot) => {
+	let instance;
+	try {
+		instance = findInstance(policy.getString("instance"));
+	} catch {
+		return false;
+	}
+	if (!instance.getBool("power")) {
+		pauseRuntimeMonitoring(policy, instance);
+		return true;
+	}
+	if (policy.getString("lastHealthStatus") === "paused" || !policy.getString("graceUntil")) {
+		policy.set("graceUntil", new Date(Date.now() + MONITORING_DEFAULTS.startupGraceMs).toISOString());
+		resetRuntimeStreaks(policy);
+	}
+	evaluateHealth(policy, instance);
+	const metric = serializeInstanceRuntimeMetrics(instance, snapshot);
+	if (metric.cpuCapacityPercent !== null) policy.set("lastCpuCapacityPercent", metric.cpuCapacityPercent);
+	if (metric.memoryPercent !== null) policy.set("lastMemoryPercent", metric.memoryPercent);
+	if (metric.cpuCapacityPercent !== null || metric.memoryPercent !== null) policy.set("lastMetricsAt", nowIso());
+	evaluateResource(policy, instance, "cpu", metric.cpuCapacityPercent);
+	evaluateResource(policy, instance, "memory", metric.memoryPercent);
+	$app.save(policy);
+	return true;
+};
+const CollectInstanceMonitoring = (snapshot) => {
+	const policies = $app.findRecordsByFilter(POLICY_COLLECTION, "enabled = true", "", 500, 0);
+	let checked = 0;
+	let failed = 0;
+	for (const policy of policies) try {
+		if (collectMonitoringPolicy(policy, snapshot)) checked += 1;
+	} catch (error) {
+		failed += 1;
+		console.warn(`Surveillance impossible pour l'instance ${policy.getString("instance")}: ${error}`);
+	}
+	return {
+		checked,
+		failed
+	};
+};
+const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => ({
+	"&": "&amp;",
+	"<": "&lt;",
+	">": "&gt;",
+	"\"": "&quot;",
+	"'": "&#039;"
+})[character]);
+const deliveryPayload = (delivery) => {
+	const value = delivery.get("payload");
+	if (value && typeof value === "object") return value;
+	try {
+		return JSON.parse(delivery.getString("payload"));
+	} catch {
+		throw new Error("Payload de notification invalide.");
+	}
+};
+const sendEmailDelivery = (delivery, payload) => {
+	const user = $app.findRecordById("users", delivery.getString("user"));
+	const skipReason = mailRecipientSkipReason(user);
+	if (skipReason) throw new Error(`Email non envoyé : compte ${skipReason}.`);
+	const settings = $app.settings();
+	const html = `<h2>${escapeHtml(payload.title)}</h2><p>${escapeHtml(payload.message)}</p><p><strong>Instance :</strong> ${escapeHtml(payload.instanceName)}</p><p><small>${escapeHtml(payload.occurredAt)}</small></p>`;
+	const message = new MailerMessage({
+		from: {
+			address: settings.meta.senderAddress,
+			name: settings.meta.senderName
+		},
+		to: [{ address: user.email() }],
+		subject: `[PocketHost] ${payload.title}`,
+		html
+	});
+	$app.newMailClient().send(message);
+};
+const sendWebhookDelivery = (delivery, payload) => {
+	const policy = findPolicy(delivery.getString("instance"));
+	if (!policy) throw new Error("Configuration de surveillance introuvable.");
+	const channel = delivery.getString("channel");
+	const content = `**${payload.title}**\n${payload.message}\nInstance : \`${payload.instanceName}\`\n${payload.occurredAt}`;
+	const slackText = content.replace(/\*\*/g, "*").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	const url = channel === "discord" ? normalizeDiscordWebhook(policy.getString("discordWebhook")) : normalizeSlackWebhook(policy.getString("slackWebhook"));
+	if (!url) throw new Error(`Webhook ${channel} non configuré.`);
+	const response = $http.send({
+		url,
+		method: "POST",
+		timeout: 5,
+		headers: {
+			"Content-Type": "application/json",
+			"User-Agent": "PocketHost-Monitor/1.0"
+		},
+		body: JSON.stringify(channel === "discord" ? {
+			content,
+			allowed_mentions: { parse: [] }
+		} : { text: slackText })
+	});
+	if (response.statusCode < 200 || response.statusCode >= 300) throw new Error(`Webhook ${channel} : HTTP ${response.statusCode}`);
+};
+const processDelivery = (delivery) => {
+	if (delivery.getString("status") !== "pending") return delivery;
+	const attempts = delivery.getInt("attempts") + 1;
+	delivery.set("attempts", attempts);
+	delivery.set("lastAttemptAt", nowIso());
+	try {
+		const payload = deliveryPayload(delivery);
+		if (delivery.getString("channel") === "email") sendEmailDelivery(delivery, payload);
+		else sendWebhookDelivery(delivery, payload);
+		delivery.set("status", "sent");
+		delivery.set("deliveredAt", nowIso());
+		delivery.set("lastError", "");
+	} catch (error) {
+		delivery.set("lastError", `${error}`.slice(0, 1e3));
+		if (attempts >= 5) {
+			delivery.set("status", "abandoned");
+			delivery.set("nextAttemptAt", "");
+		} else delivery.set("nextAttemptAt", new Date(Date.now() + monitoringRetryDelayMs(attempts)).toISOString());
+	}
+	$app.save(delivery);
+	return delivery;
+};
+const ProcessInstanceMonitoringDeliveries = () => {
+	const deliveries = $app.findRecordsByFilter(DELIVERY_COLLECTION, "status = \"pending\" && nextAttemptAt <= {:now}", "nextAttemptAt", 100, 0, { now: formatPocketBaseDate(Date.now()) });
+	for (const delivery of deliveries) processDelivery(delivery);
+	return { processed: deliveries.length };
+};
+const CollectInstanceMetricsAndMonitoring = () => {
+	const snapshot = readDockerMetricsSnapshot();
+	return {
+		metrics: CollectInstanceResourceMetrics(snapshot),
+		monitoring: CollectInstanceMonitoring(snapshot),
+		deliveries: ProcessInstanceMonitoringDeliveries()
+	};
+};
+const PurgeExpiredInstanceHealthChecks = () => {
+	const cutoff = formatPocketBaseDate(Date.now() - HEALTH_RETENTION_MS);
+	let deleted = 0;
+	for (;;) {
+		const records = $app.findRecordsByFilter(CHECK_COLLECTION, "checkedAt < {:cutoff}", "checkedAt", 1e3, 0, { cutoff });
+		if (records.length === 0) break;
+		for (const record of records) {
+			$app.delete(record);
+			deleted += 1;
+		}
+	}
+	return { deleted };
+};
+const readMonitoringHistoryRange = (e) => {
+	const requested = `${e.request.url.query().get("range") || "24h"}`;
+	return requested in monitoringHistoryRanges ? requested : "24h";
+};
+const queryMonitoringHistory = (instanceId, range) => {
+	const config = monitoringHistoryRanges[range];
+	const rows = arrayOf(new DynamicModel({
+		periodStartUnix: 0,
+		totalChecks: 0,
+		successfulChecks: 0,
+		averageLatencyMs: 0,
+		maxLatencyMs: 0
+	}));
+	$app.db().newQuery(`SELECT
+        CAST(strftime('%s', checkedAt) / {:bucketSeconds} AS INTEGER) * {:bucketSeconds} AS periodStartUnix,
+        COUNT(*) AS totalChecks,
+        SUM(CASE WHEN result = 'healthy' THEN 1 ELSE 0 END) AS successfulChecks,
+        AVG(latencyMs) AS averageLatencyMs,
+        MAX(latencyMs) AS maxLatencyMs
+      FROM instance_health_checks
+      WHERE instance = {:instance} AND checkedAt >= {:cutoff}
+      GROUP BY periodStartUnix
+      ORDER BY periodStartUnix`).bind({
+		bucketSeconds: config.bucketSeconds,
+		instance: instanceId,
+		cutoff: formatPocketBaseDate(Date.now() - config.durationMs)
+	}).all(rows);
+	return rows.map((row) => {
+		const totalChecks = Number(row.totalChecks || 0);
+		const successfulChecks = Number(row.successfulChecks || 0);
+		return {
+			collectedAt: (/* @__PURE__ */ new Date(Number(row.periodStartUnix) * 1e3)).toISOString(),
+			totalChecks,
+			successfulChecks,
+			availabilityPercent: totalChecks > 0 ? successfulChecks / totalChecks * 100 : null,
+			averageLatencyMs: Math.round(Number(row.averageLatencyMs || 0)),
+			maxLatencyMs: Math.round(Number(row.maxLatencyMs || 0))
+		};
+	});
+};
+const serializeIncident = (incident) => ({
+	id: incident.id,
+	type: incident.getString("type"),
+	status: incident.getString("status"),
+	openedAt: incident.getString("openedAt"),
+	resolvedAt: incident.getString("resolvedAt"),
+	value: Number(incident.get("value") || 0),
+	threshold: Number(incident.get("threshold") || 0),
+	message: incident.getString("message"),
+	details: incident.get("details") || {},
+	sourceId: incident.getString("sourceId"),
+	created: incident.getString("created"),
+	updated: incident.getString("updated")
+});
+const HandleInstanceMonitoringGet = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	return e.json(200, monitoringResponse(instance, findPolicy(instance.id)));
+};
+const HandleInstanceMonitoringUpdate = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	let data = new DynamicModel({
+		enabled: false,
+		healthEnabled: true,
+		healthPath: MONITORING_DEFAULTS.healthPath,
+		healthFailureCount: MONITORING_DEFAULTS.healthFailureCount,
+		cpuEnabled: true,
+		cpuThresholdPercent: MONITORING_DEFAULTS.cpuThresholdPercent,
+		cpuSustainMinutes: MONITORING_DEFAULTS.cpuSustainMinutes,
+		memoryEnabled: true,
+		memoryThresholdPercent: MONITORING_DEFAULTS.memoryThresholdPercent,
+		memorySustainMinutes: MONITORING_DEFAULTS.memorySustainMinutes,
+		backupAlertsEnabled: true,
+		emailEnabled: true,
+		discordEnabled: false,
+		discordWebhook: "",
+		clearDiscordWebhook: false,
+		slackEnabled: false,
+		slackWebhook: "",
+		clearSlackWebhook: false
+	});
+	e.bindBody(data);
+	data = JSON.parse(JSON.stringify(data));
+	const policy = findPolicy(instance.id) || createPolicy(instance);
+	const wasEnabled = policy.getBool("enabled");
+	const wasHealthEnabled = policy.getBool("healthEnabled");
+	const healthPath = normalizeHealthPath(data.healthPath);
+	const submittedDiscord = `${data.discordWebhook || ""}`.trim();
+	const submittedSlack = `${data.slackWebhook || ""}`.trim();
+	if (data.clearDiscordWebhook) policy.set("discordWebhook", "");
+	else if (submittedDiscord) policy.set("discordWebhook", normalizeDiscordWebhook(submittedDiscord));
+	if (data.clearSlackWebhook) policy.set("slackWebhook", "");
+	else if (submittedSlack) policy.set("slackWebhook", normalizeSlackWebhook(submittedSlack));
+	if (data.discordEnabled && !policy.getString("discordWebhook")) throw new BadRequestError("Ajoutez une URL Discord valide.");
+	if (data.slackEnabled && !policy.getString("slackWebhook")) throw new BadRequestError("Ajoutez une URL Slack valide.");
+	policy.set("user", instance.getString("uid"));
+	policy.set("enabled", !!data.enabled);
+	policy.set("healthEnabled", !!data.healthEnabled);
+	policy.set("healthPath", healthPath);
+	policy.set("healthFailureCount", clampNumber(data.healthFailureCount, MONITORING_DEFAULTS.healthFailureCount, 1, 10, true));
+	policy.set("cpuEnabled", !!data.cpuEnabled);
+	policy.set("cpuThresholdPercent", clampNumber(data.cpuThresholdPercent, MONITORING_DEFAULTS.cpuThresholdPercent, 1, 100));
+	policy.set("cpuSustainMinutes", clampNumber(data.cpuSustainMinutes, MONITORING_DEFAULTS.cpuSustainMinutes, 1, 60, true));
+	policy.set("memoryEnabled", !!data.memoryEnabled);
+	policy.set("memoryThresholdPercent", clampNumber(data.memoryThresholdPercent, MONITORING_DEFAULTS.memoryThresholdPercent, 1, 100));
+	policy.set("memorySustainMinutes", clampNumber(data.memorySustainMinutes, MONITORING_DEFAULTS.memorySustainMinutes, 1, 60, true));
+	policy.set("backupAlertsEnabled", !!data.backupAlertsEnabled);
+	policy.set("emailEnabled", !!data.emailEnabled);
+	policy.set("discordEnabled", !!data.discordEnabled);
+	policy.set("slackEnabled", !!data.slackEnabled);
+	if (!wasEnabled && data.enabled) {
+		policy.set("lastHealthStatus", "unknown");
+		policy.set("graceUntil", new Date(Date.now() + MONITORING_DEFAULTS.startupGraceMs).toISOString());
+		resetRuntimeStreaks(policy);
+	} else if (data.enabled && data.healthEnabled && !wasHealthEnabled) {
+		policy.set("lastHealthStatus", "unknown");
+		policy.set("graceUntil", new Date(Date.now() + MONITORING_DEFAULTS.startupGraceMs).toISOString());
+		policy.set("healthFailureStreak", 0);
+		policy.set("healthSuccessStreak", 0);
+	}
+	if (wasEnabled && !data.enabled) pauseRuntimeMonitoring(policy, instance, true);
+	else {
+		if (data.enabled && !data.healthEnabled) {
+			resolveIncident(policy, instance, findOpenIncident(instance.id, "health"), "Sonde HTTP désactivée.", false);
+			policy.set("lastHealthStatus", instance.getBool("power") ? "unknown" : "paused");
+			policy.set("lastError", "");
+			policy.set("healthFailureStreak", 0);
+			policy.set("healthSuccessStreak", 0);
+		}
+		if (data.enabled && !data.cpuEnabled) {
+			resolveIncident(policy, instance, findOpenIncident(instance.id, "cpu"), "Alerte CPU désactivée.", false);
+			policy.set("cpuHighStreak", 0);
+			policy.set("cpuNormalStreak", 0);
+		}
+		if (data.enabled && !data.memoryEnabled) {
+			resolveIncident(policy, instance, findOpenIncident(instance.id, "memory"), "Alerte mémoire désactivée.", false);
+			policy.set("memoryHighStreak", 0);
+			policy.set("memoryNormalStreak", 0);
+		}
+		if (data.enabled && !data.backupAlertsEnabled) {
+			const backupIncidents = $app.findRecordsByFilter(INCIDENT_COLLECTION, "instance = {:instance} && type = \"backup\" && status = \"open\"", "openedAt", 100, 0, { instance: instance.id });
+			for (const incident of backupIncidents) resolveIncident(policy, instance, incident, "Alerte de sauvegarde désactivée.", false);
+		}
+		$app.save(policy);
+	}
+	return e.json(200, monitoringResponse(instance, policy));
+};
+const HandleInstanceMonitoringHistory = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const range = readMonitoringHistoryRange(e);
+	const points = queryMonitoringHistory(instance.id, range);
+	const totalChecks = points.reduce((sum, point) => sum + point.totalChecks, 0);
+	const successfulChecks = points.reduce((sum, point) => sum + point.successfulChecks, 0);
+	const latencyWeightedSum = points.reduce((sum, point) => sum + point.averageLatencyMs * point.totalChecks, 0);
+	return e.json(200, {
+		range,
+		bucketSeconds: monitoringHistoryRanges[range].bucketSeconds,
+		summary: {
+			totalChecks,
+			successfulChecks,
+			availabilityPercent: totalChecks > 0 ? successfulChecks / totalChecks * 100 : null,
+			averageLatencyMs: totalChecks > 0 ? Math.round(latencyWeightedSum / totalChecks) : null
+		},
+		points,
+		collectedAt: nowIso()
+	});
+};
+const HandleInstanceMonitoringIncidents = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const rawCursor = `${e.request.url.query().get("cursor") || ""}`;
+	const cursor = rawCursor && Number.isFinite(Date.parse(rawCursor)) ? formatPocketBaseDate(Date.parse(rawCursor)) : "";
+	const cursorFilter = cursor ? " && created < {:cursor}" : "";
+	const records = $app.findRecordsByFilter(INCIDENT_COLLECTION, `instance = {:instance}${cursorFilter}`, "-created", 26, 0, {
+		instance: instance.id,
+		cursor
+	});
+	const hasMore = records.length > INCIDENT_PAGE_SIZE;
+	const incidents = records.slice(0, INCIDENT_PAGE_SIZE).map(serializeIncident);
+	return e.json(200, {
+		incidents,
+		nextCursor: hasMore ? incidents.at(-1)?.created || "" : ""
+	});
+};
+const HandleInstanceMonitoringTest = (e) => {
+	const authRecord = requireAuthRecord(e.auth);
+	const instance = findInstance(pathValue(e, "id"));
+	assertInstanceAccess(instance, authRecord);
+	const policy = findPolicy(instance.id);
+	if (!policy) throw new BadRequestError("Enregistrez la configuration avant le test.");
+	const payload = {
+		title: `TEST · Surveillance · ${instance.getString("subdomain")}`,
+		message: "Les notifications de surveillance PocketHost sont correctement configurées.",
+		instanceId: instance.id,
+		instanceName: instance.getString("subdomain"),
+		type: "test",
+		phase: "test",
+		occurredAt: nowIso()
+	};
+	const deliveries = [];
+	if (policy.getBool("emailEnabled")) deliveries.push(queueDelivery(instance, null, "test", "email", payload));
+	if (policy.getBool("discordEnabled") && policy.getString("discordWebhook")) deliveries.push(queueDelivery(instance, null, "test", "discord", payload));
+	if (policy.getBool("slackEnabled") && policy.getString("slackWebhook")) deliveries.push(queueDelivery(instance, null, "test", "slack", payload));
+	if (deliveries.length === 0) throw new BadRequestError("Activez au moins un canal de notification.");
+	const results = deliveries.map(processDelivery).map((delivery) => ({
+		channel: delivery.getString("channel"),
+		status: delivery.getString("status"),
+		error: delivery.getString("lastError")
+	}));
+	return e.json(200, { results });
+};
+const HandleInstanceBackupMonitoringUpdate = (e) => {
+	const status = e.record.getString("status");
+	if (status === e.record.original().getString("status") || status !== "failed" && status !== "ready") return;
+	const instance = findInstance(e.record.getString("instance"));
+	const policy = findPolicy(instance.id);
+	if (!policy?.getBool("enabled") || !policy.getBool("backupAlertsEnabled")) return;
+	if (status === "failed") {
+		openIncident(policy, instance, "backup", `La sauvegarde ${e.record.getString("name") || e.record.getString("filename") || e.record.id} a échoué : ${e.record.getString("error") || "erreur inconnue"}.`, 0, 0, {
+			backupId: e.record.id,
+			kind: e.record.getString("kind")
+		}, e.record.id);
+		return;
+	}
+	const openBackups = $app.findRecordsByFilter(INCIDENT_COLLECTION, "instance = {:instance} && type = \"backup\" && status = \"open\"", "openedAt", 100, 0, { instance: instance.id });
+	for (const incident of openBackups) resolveIncident(policy, instance, incident, `Une nouvelle sauvegarde de ${instance.getString("subdomain")} a réussi.`);
 };
 
 //#endregion
@@ -4336,20 +5227,6 @@ const HandleLemonSqueezySale = (e) => {
 			error: `${err}`
 		});
 	}
-};
-
-//#endregion
-//#region src/lib/util/mailRecipient.ts
-/** Reason a user must not receive platform email, or null if OK to send. */
-const mailRecipientSkipReason = (user) => {
-	if (!user.getBool("verified")) return "unverified";
-	if (user.getBool("unsubscribe")) return "unsubscribed";
-	return null;
-};
-/** Permanent bounce or complaint: stop all future platform email. */
-const suppressUserEmail = (user) => {
-	user.setVerified(false);
-	user.set("unsubscribe", true);
 };
 
 //#endregion
@@ -7292,6 +8169,8 @@ exports.BeforeCreate_ssh_keys = BeforeCreate_ssh_keys;
 exports.BeforeUpdate_cname = BeforeUpdate_cname;
 exports.BeforeUpdate_ssh_keys = BeforeUpdate_ssh_keys;
 exports.BeforeUpdate_version = BeforeUpdate_version;
+exports.CollectInstanceMetricsAndMonitoring = CollectInstanceMetricsAndMonitoring;
+exports.CollectInstanceMonitoring = CollectInstanceMonitoring;
 exports.CollectInstanceResourceMetrics = CollectInstanceResourceMetrics;
 exports.DEFAULT_BACKUP_S3_PREFIX = DEFAULT_BACKUP_S3_PREFIX;
 exports.DEFAULT_BACKUP_S3_REGION = DEFAULT_BACKUP_S3_REGION;
@@ -7305,6 +8184,7 @@ exports.HandleInstanceBackupCreate = HandleInstanceBackupCreate;
 exports.HandleInstanceBackupDelete = HandleInstanceBackupDelete;
 exports.HandleInstanceBackupDownload = HandleInstanceBackupDownload;
 exports.HandleInstanceBackupImport = HandleInstanceBackupImport;
+exports.HandleInstanceBackupMonitoringUpdate = HandleInstanceBackupMonitoringUpdate;
 exports.HandleInstanceBackupPoliciesBootstrap = HandleInstanceBackupPoliciesBootstrap;
 exports.HandleInstanceBackupPolicyCronDispatcher = HandleInstanceBackupPolicyCronDispatcher;
 exports.HandleInstanceBackupPolicyGet = HandleInstanceBackupPolicyGet;
@@ -7321,6 +8201,11 @@ exports.HandleInstanceLitestreamPolicyGet = HandleInstanceLitestreamPolicyGet;
 exports.HandleInstanceLitestreamPolicyUpdate = HandleInstanceLitestreamPolicyUpdate;
 exports.HandleInstanceMetrics = HandleInstanceMetrics;
 exports.HandleInstanceMetricsHistory = HandleInstanceMetricsHistory;
+exports.HandleInstanceMonitoringGet = HandleInstanceMonitoringGet;
+exports.HandleInstanceMonitoringHistory = HandleInstanceMonitoringHistory;
+exports.HandleInstanceMonitoringIncidents = HandleInstanceMonitoringIncidents;
+exports.HandleInstanceMonitoringTest = HandleInstanceMonitoringTest;
+exports.HandleInstanceMonitoringUpdate = HandleInstanceMonitoringUpdate;
 exports.HandleInstanceOverview = HandleInstanceOverview;
 exports.HandleInstanceUpdate = HandleInstanceUpdate;
 exports.HandleInstancesMetrics = HandleInstancesMetrics;
@@ -7356,6 +8241,8 @@ exports.HandleVersionsRequest = HandleVersionsRequest;
 exports.LIVE_PLATFORM_TOPIC = LIVE_PLATFORM_TOPIC;
 exports.LIVE_VIEW_STATS_TOPIC = LIVE_VIEW_STATS_TOPIC;
 exports.OPERATOR_SETTINGS_NAME = OPERATOR_SETTINGS_NAME;
+exports.ProcessInstanceMonitoringDeliveries = ProcessInstanceMonitoringDeliveries;
+exports.PurgeExpiredInstanceHealthChecks = PurgeExpiredInstanceHealthChecks;
 exports.PurgeExpiredInstanceResourceMetrics = PurgeExpiredInstanceResourceMetrics;
 exports.ReconcileBackupPolicyCrons = ReconcileBackupPolicyCrons;
 exports.TestBackupS3Config = TestBackupS3Config;
@@ -7382,6 +8269,7 @@ exports.normalizeInstanceStatus = normalizeInstanceStatus;
 exports.normalizeOperatorSettings = normalizeOperatorSettings;
 exports.normalizeSMTPSettings = normalizeSMTPSettings;
 exports.normalizeServerTimezone = normalizeServerTimezone;
+exports.readDockerMetricsSnapshot = readDockerMetricsSnapshot;
 exports.readOperatorSettings = readOperatorSettings;
 exports.recountLivePlatformStats = recountLivePlatformStats;
 exports.refreshAndBroadcastLivePlatformStats = refreshAndBroadcastLivePlatformStats;
@@ -7392,5 +8280,6 @@ exports.refreshPublicStats = refreshPublicStats;
 exports.sendLivePlatformStatsToClient = sendLivePlatformStatsToClient;
 exports.sendLiveViewStatsToClient = sendLiveViewStatsToClient;
 exports.serializeInstanceBackup = serializeInstanceBackup;
+exports.serializeInstanceRuntimeMetrics = serializeInstanceRuntimeMetrics;
 exports.serializeOperatorSettings = serializeOperatorSettings;
 exports.writeOperatorSettings = writeOperatorSettings;

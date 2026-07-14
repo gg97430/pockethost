@@ -16,7 +16,7 @@ type DockerCpuConfigRow = {
   cpusetCpus?: string
 }
 
-type DockerMetricsSnapshot = {
+export type DockerMetricsSnapshot = {
   statsByName: Map<string, DockerStatsRow>
   cpuConfigByName: Map<string, DockerCpuConfigRow>
   hostCpuCores: number | null
@@ -250,7 +250,7 @@ const readDockerCpuConfigByName = (containerNames: string[]) => {
   return rows
 }
 
-const readDockerMetricsSnapshot = (containerNames: string[] = []): DockerMetricsSnapshot => {
+export const readDockerMetricsSnapshot = (containerNames: string[] = []): DockerMetricsSnapshot => {
   const statsByName = readDockerStatsByName(containerNames)
   const measuredContainerNames = Array.from(statsByName.keys())
 
@@ -278,7 +278,7 @@ const resolveAvailableCpuCores = (config: DockerCpuConfigRow | undefined, hostCp
   return limits.length > 0 ? Math.min(...limits) : null
 }
 
-const serializeInstanceRuntimeMetrics = (instance: core.Record, snapshot: DockerMetricsSnapshot) => {
+export const serializeInstanceRuntimeMetrics = (instance: core.Record, snapshot: DockerMetricsSnapshot) => {
   const row = snapshot.statsByName.get(instance.id)
   const [memoryBytes, memoryLimitBytes] = parseDockerBytePair(row?.MemUsage)
   const [blockReadBytes, blockWriteBytes] = parseDockerBytePair(row?.BlockIO)
@@ -466,11 +466,11 @@ export const HandleInstanceMetricsHistory = (e: core.RequestEvent) => {
   })
 }
 
-export const CollectInstanceResourceMetrics = () => {
+export const CollectInstanceResourceMetrics = (providedSnapshot?: DockerMetricsSnapshot) => {
   const instances = $app.findRecordsByFilter('instances', 'metricsHistoryEnabled = true', '', 500, 0)
   if (instances.length === 0) return { saved: 0 }
 
-  const snapshot = readDockerMetricsSnapshot()
+  const snapshot = providedSnapshot || readDockerMetricsSnapshot()
   const collection = $app.findCollectionByNameOrId(INSTANCE_RESOURCE_METRICS_COLLECTION)
   let saved = 0
 

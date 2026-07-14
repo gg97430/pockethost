@@ -13,6 +13,14 @@ export type {
   InstanceMetricHistoryRange,
   InstanceMetricHistoryResponse,
   InstanceMetricResponse,
+  InstanceMonitoringHistoryPoint,
+  InstanceMonitoringHistoryRange,
+  InstanceMonitoringHistoryResponse,
+  InstanceMonitoringIncident,
+  InstanceMonitoringIncidentsResponse,
+  InstanceMonitoringPolicy,
+  InstanceMonitoringResponse,
+  InstanceMonitoringTestResponse,
   InstanceOverview,
   InstanceOverviewBackup,
   OperatorAdminOverview,
@@ -22,6 +30,7 @@ export type {
   OperatorUser,
   UpdateInstanceBackupPolicyInput,
   UpdateInstanceLitestreamPolicyInput,
+  UpdateInstanceMonitoringInput,
   UploadProgress,
 } from './PocketbaseClient'
 

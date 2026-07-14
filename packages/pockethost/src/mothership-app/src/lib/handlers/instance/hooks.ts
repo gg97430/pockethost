@@ -74,6 +74,46 @@ routerAdd(
   $apis.requireAuth()
 )
 routerAdd(
+  'GET',
+  '/api/instance/{id}/monitoring',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceMonitoringGet(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'PUT',
+  '/api/instance/{id}/monitoring',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceMonitoringUpdate(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/monitoring/history',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceMonitoringHistory(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/monitoring/incidents',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceMonitoringIncidents(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/monitoring/test',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceMonitoringTest(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
   'POST',
   '/api/instance/{id}/duplicate',
   (e) => {
@@ -245,6 +285,12 @@ onRecordUpdate((e) => {
   e.next()
 }, 'instances')
 
+/** Create or resolve backup monitoring incidents after terminal backup updates. */
+onRecordAfterUpdateSuccess((e) => {
+  e.next()
+  require(`${__hooks}/mothership`).HandleInstanceBackupMonitoringUpdate(e)
+}, 'instance_backups')
+
 /** Notify discord on instance create */
 // onRecordAfterCreateSuccess((e) => {
 //   e.next()
@@ -272,14 +318,19 @@ cronAdd('instance-backup-policy-dispatcher', '* * * * *', () => {
   require(`${__hooks}/mothership`).HandleInstanceBackupPolicyCronDispatcher()
 })
 
-/** Persist opt-in instance CPU/RAM samples once per minute. */
+/** Persist metrics and evaluate opt-in monitoring with a shared Docker snapshot. */
 cronAdd('instance-resource-metrics-sampler', '* * * * *', () => {
-  require(`${__hooks}/mothership`).CollectInstanceResourceMetrics()
+  require(`${__hooks}/mothership`).CollectInstanceMetricsAndMonitoring()
 })
 
 /** Keep the metrics collection bounded to seven days. */
 cronAdd('instance-resource-metrics-retention', '17 * * * *', () => {
   require(`${__hooks}/mothership`).PurgeExpiredInstanceResourceMetrics()
+})
+
+/** Keep detailed uptime checks for exactly thirty days. */
+cronAdd('instance-health-checks-retention', '29 * * * *', () => {
+  require(`${__hooks}/mothership`).PurgeExpiredInstanceHealthChecks()
 })
 
 /** Reconcile optional Litestream replication */

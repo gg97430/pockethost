@@ -4,7 +4,7 @@
   import FeatureTab from '$components/FeatureTab.svelte'
   import InstanceRuntimeBadge from '$components/InstanceRuntimeBadge.svelte'
   import { INSTANCE_ADMIN_URL, INSTANCE_URL } from '$lib/appEnv'
-  import { client, type InstanceOverview } from '$src/pocketbase-client'
+  import { client, type InstanceMonitoringPolicy, type InstanceOverview } from '$src/pocketbase-client'
   import { isInstanceFullyOff } from '$util/instancePower'
   import { patchGlobalInstance } from '$util/stores'
   import { StreamNames } from 'pockethost/common'
@@ -22,6 +22,7 @@
   }
 
   let overview: InstanceOverview | undefined
+  let monitoring: InstanceMonitoringPolicy | undefined
   let isLoadingOverview = true
   let errorMessage = ''
   let successMessage = ''
@@ -36,6 +37,19 @@
   $: latestBackup = overview?.backups.latest
   $: latestBackupFailed = latestBackup?.status === 'failed'
   $: canDuplicate = isInstanceFullyOff($instance)
+  $: monitoringLabel = !monitoring
+    ? 'Surveillance indisponible'
+    : !monitoring.enabled
+      ? 'Surveillance désactivée'
+      : !monitoring.healthEnabled
+        ? 'Surveillance active'
+        : !power || monitoring.lastHealthStatus === 'paused'
+          ? 'Surveillance en pause'
+          : monitoring.lastHealthStatus === 'unhealthy'
+            ? 'Incident détecté'
+            : monitoring.lastHealthStatus === 'healthy'
+              ? 'Instance surveillée'
+              : 'Initialisation en cours'
 
   const formatBytes = (bytes: number | null | undefined) => {
     if (bytes === null || bytes === undefined) return 'Indisponible'
@@ -44,6 +58,11 @@
     const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
     const value = bytes / 1024 ** index
     return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: value >= 10 ? 0 : 1 }).format(value)} ${units[index]}`
+  }
+
+  const formatMetricPercent = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+    return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(value)} %`
   }
 
   const formatDate = (value: string | undefined) => {
@@ -87,6 +106,14 @@
       errorMessage = parseError(error)
     } finally {
       isLoadingOverview = false
+    }
+  }
+
+  const loadMonitoring = async () => {
+    try {
+      monitoring = (await client().getInstanceMonitoring(id)).policy
+    } catch {
+      monitoring = undefined
     }
   }
 
@@ -166,6 +193,7 @@
 
   onMount(() => {
     void loadOverview()
+    void loadMonitoring()
 
     if (!power) return
 
@@ -234,6 +262,23 @@
   </section>
 
   <InstanceHealthCards instance={$instance} {overview} />
+
+  <a
+    class="overview-monitoring overview-monitoring--{monitoring?.enabled ? monitoring.lastHealthStatus : 'disabled'}"
+    href={`/instances/${id}/monitoring`}
+  >
+    <span class="overview-monitoring__pulse"><wa-icon name="heart-pulse"></wa-icon></span>
+    <span>
+      <small>Surveillance</small>
+      <strong>{monitoringLabel}</strong>
+    </span>
+    <span class="overview-monitoring__metrics">
+      <i>CPU {formatMetricPercent(monitoring?.lastCpuCapacityPercent)}</i>
+      <i>RAM {formatMetricPercent(monitoring?.lastMemoryPercent)}</i>
+      <i>{monitoring?.lastLatencyMs ?? '—'} ms</i>
+    </span>
+    <wa-icon name="arrow-right"></wa-icon>
+  </a>
 
   <InstanceResourceChart
     instanceId={id}
@@ -455,6 +500,83 @@
     margin-top: 0.875rem;
   }
 
+  .overview-monitoring {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.7rem;
+    margin-top: 0.875rem;
+    border: 1px solid rgb(30 184 84 / 0.22);
+    border-radius: 0.7rem;
+    background: linear-gradient(90deg, rgb(30 184 84 / 0.075), var(--app-surface) 44%);
+    padding: 0.72rem 0.85rem;
+    color: var(--app-text);
+    text-decoration: none;
+    transition:
+      border-color 120ms ease,
+      transform 120ms ease;
+  }
+
+  .overview-monitoring:hover {
+    border-color: rgb(30 184 84 / 0.42);
+    transform: translateY(-1px);
+  }
+
+  .overview-monitoring--unhealthy {
+    border-color: rgb(239 68 68 / 0.35);
+    background: linear-gradient(90deg, rgb(239 68 68 / 0.085), var(--app-surface) 44%);
+  }
+
+  .overview-monitoring__pulse {
+    display: grid;
+    width: 2.2rem;
+    height: 2.2rem;
+    place-items: center;
+    border-radius: 50%;
+    background: rgb(30 184 84 / 0.13);
+    color: #4ade80;
+  }
+
+  .overview-monitoring--unhealthy .overview-monitoring__pulse {
+    background: rgb(239 68 68 / 0.13);
+    color: #f87171;
+  }
+
+  .overview-monitoring > span:nth-child(2) {
+    display: grid;
+  }
+
+  .overview-monitoring small {
+    color: var(--app-text-muted);
+    font-size: 0.66rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .overview-monitoring strong {
+    color: var(--app-text-strong);
+    font-size: 0.82rem;
+  }
+
+  .overview-monitoring__metrics {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
+  }
+
+  .overview-monitoring__metrics i {
+    border: 1px solid var(--app-border);
+    border-radius: 0.35rem;
+    background: var(--app-surface-soft);
+    padding: 0.25rem 0.38rem;
+    color: var(--app-text-muted);
+    font-size: 0.64rem;
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+  }
+
   .overview-panel {
     min-width: 0;
     border: 1px solid var(--app-border);
@@ -662,6 +784,14 @@
   }
 
   @media (max-width: 640px) {
+    .overview-monitoring {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .overview-monitoring__metrics {
+      display: none;
+    }
+
     .overview-backup dl {
       grid-template-columns: 1fr;
     }

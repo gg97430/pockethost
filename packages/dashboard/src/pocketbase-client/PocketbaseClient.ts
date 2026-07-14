@@ -295,7 +295,13 @@ export type InstanceOverview = {
 
 export type DashboardInstanceMetric = {
   instanceId: string
+  /** Docker semantics: 100% is one fully used logical CPU, so multi-core values can exceed 100%. */
   cpuPercent: number | null
+  /** Average logical CPU equivalents used during Docker's sampling window. */
+  cpuCoresUsed: number | null
+  cpuAvailableCores: number | null
+  cpuHostCores: number | null
+  cpuCapacityPercent: number | null
   memoryBytes: number | null
   memoryLimitBytes: number | null
   memoryPercent: number | null

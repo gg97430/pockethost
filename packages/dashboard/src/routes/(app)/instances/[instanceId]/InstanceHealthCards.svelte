@@ -11,7 +11,14 @@
 
   const formatPercent = (value: number | null | undefined) => {
     if (value === null || value === undefined || !Number.isFinite(value)) return 'Indispo.'
-    return `${nf.format(Math.max(0, Math.min(100, value)))} %`
+    return `${nf.format(Math.max(0, value))} %`
+  }
+
+  const formatCores = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return 'Indispo.'
+    return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(
+      Math.max(0, value)
+    )
   }
 
   const formatBytes = (bytes: number | null | undefined) => {
@@ -33,6 +40,7 @@
 
   $: latestBackup = overview?.backups.latest
   $: runtime = overview?.runtime
+  $: cpuCoresUsed = runtime?.cpuCoresUsed ?? (runtime?.cpuPercent == null ? null : runtime.cpuPercent / 100)
   $: domainLabel = INSTANCE_HOST(instance)
   $: backupLabel = latestBackup ? formatDate(latestBackup.created) : 'Aucune'
   $: backupTone = latestBackup?.status === 'failed' ? 'danger' : latestBackup?.status === 'running' ? 'warning' : 'good'
@@ -49,7 +57,11 @@
   <article class="instance-health-card">
     <span class="instance-health-label">CPU instance</span>
     <strong>{formatPercent(runtime?.cpuPercent)}</strong>
-    <small>{runtime?.containerName ? `Conteneur ${runtime.containerName}` : 'Conteneur non mesuré'}</small>
+    <small>
+      {runtime?.containerName
+        ? `${formatCores(cpuCoresUsed)} / ${runtime.cpuAvailableCores ?? '?'} cœurs · ${formatPercent(runtime.cpuCapacityPercent)} capacité`
+        : 'Conteneur non mesuré'}
+    </small>
   </article>
 
   <article class="instance-health-card">

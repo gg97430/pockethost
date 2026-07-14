@@ -11,7 +11,14 @@
 
   const formatPercent = (value: number | null | undefined) => {
     if (value === null || value === undefined || !Number.isFinite(value)) return '-'
-    return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(clampPercent(value))} %`
+    return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(Math.max(0, value))} %`
+  }
+
+  const formatCores = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '-'
+    return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(
+      Math.max(0, value)
+    )
   }
 
   const formatBytes = (bytes: number | null | undefined) => {
@@ -29,7 +36,14 @@
     }).format(value)} ${units[unit]}`
   }
 
-  $: cpuPercent = clampPercent(metrics?.cpuPercent)
+  $: cpuCoresUsed = metrics?.cpuCoresUsed ?? (metrics?.cpuPercent == null ? null : metrics.cpuPercent / 100)
+  $: cpuCapacityPercent = clampPercent(metrics?.cpuCapacityPercent ?? metrics?.cpuPercent)
+  $: cpuLabel =
+    metrics?.cpuPercent == null ? '-' : `${formatPercent(metrics.cpuPercent)} · ${formatCores(cpuCoresUsed)} c.`
+  $: cpuCapacityLabel =
+    metrics?.cpuAvailableCores == null
+      ? formatPercent(metrics?.cpuCapacityPercent)
+      : `${formatPercent(metrics.cpuCapacityPercent)} des ${metrics.cpuAvailableCores} cœurs disponibles`
   $: memoryPercent = clampPercent(metrics?.memoryPercent)
   $: memoryShortLabel = formatBytes(metrics?.memoryBytes)
   $: memoryLabel =
@@ -45,10 +59,10 @@
   <div class="resource-meter">
     <div class="resource-meter-head">
       <span>CPU</span>
-      <strong>{formatPercent(metrics?.cpuPercent)}</strong>
+      <strong title={cpuCapacityLabel}>{cpuLabel}</strong>
     </div>
-    <div class="resource-track">
-      <span class="resource-fill resource-fill--cpu" style={`width: ${cpuPercent}%`}></span>
+    <div class="resource-track" title={cpuCapacityLabel}>
+      <span class="resource-fill resource-fill--cpu" style={`width: ${cpuCapacityPercent}%`}></span>
     </div>
   </div>
 

@@ -30,8 +30,10 @@
     '7d': { label: '7 jours', durationMs: 7 * 24 * 60 * 60 * 1000 },
   }
   const ranges = Object.keys(rangeConfigs) as InstanceMetricHistoryRange[]
-  const chart = { left: 42, top: 16, width: 662, height: 166 }
+  const chart = { left: 50, top: 16, width: 620, height: 166 }
+  const axisFractions = [1, 0.75, 0.5, 0.25, 0]
   const nf = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 })
+  const coreNf = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const timeFormatter = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' })
   const dateFormatter = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short' })
   const preciseTimeFormatter = new Intl.DateTimeFormat('fr-FR', {
@@ -60,8 +62,9 @@
   $: history = mergeDisplayedHistory(persistedHistory, liveHistory, selectedRange, now, rangeConfig.durationMs)
   $: latest = liveHistory.at(-1) || persistedHistory.at(-1)
   $: maxGapMs = Math.max(serverBucketSeconds * 2500, selectedRange === '30m' ? 90_000 : 0)
-  $: cpuPath = buildPath(history, now, rangeConfig.durationMs, maxGapMs, 'cpuPercent')
-  $: memoryPath = buildPath(history, now, rangeConfig.durationMs, maxGapMs, 'memoryPercent')
+  $: cpuAxisMax = calculateCpuAxisMax(history)
+  $: cpuPath = buildPath(history, now, rangeConfig.durationMs, maxGapMs, 'cpuPercent', cpuAxisMax)
+  $: memoryPath = buildPath(history, now, rangeConfig.durationMs, maxGapMs, 'memoryPercent', 100)
   $: axisTimes = [
     now - rangeConfig.durationMs,
     now - (rangeConfig.durationMs * 2) / 3,
@@ -75,9 +78,18 @@
     addLiveMetric(initialMetric, initialCollectedAt)
   }
 
-  const clampPercent = (value: number | null | undefined) => {
+  const normalizeMetricPercent = (value: number | null | undefined, key: MetricKey) => {
     if (value === null || value === undefined || !Number.isFinite(value)) return null
-    return Math.max(0, Math.min(100, value))
+    const normalized = Math.max(0, value)
+    return key === 'memoryPercent' ? Math.min(100, normalized) : normalized
+  }
+
+  const calculateCpuAxisMax = (points: InstanceMetricHistoryPoint[]) => {
+    const maximum = points.reduce(
+      (max, point) => Math.max(max, normalizeMetricPercent(point.cpuPercent, 'cpuPercent') ?? 0),
+      0
+    )
+    return Math.max(100, Math.ceil(maximum / 100) * 100)
   }
 
   const xFor = (timestamp: number, referenceNow: number, durationMs: number) => {
@@ -85,7 +97,7 @@
     return chart.left + ((timestamp - start) / durationMs) * chart.width
   }
 
-  const yFor = (value: number) => chart.top + chart.height - (value / 100) * chart.height
+  const yFor = (value: number, scaleMax: number) => chart.top + chart.height - (value / scaleMax) * chart.height
 
   function mergeDisplayedHistory(
     stored: InstanceMetricHistoryPoint[],
@@ -110,14 +122,15 @@
     referenceNow: number,
     durationMs: number,
     allowedGapMs: number,
-    key: MetricKey
+    key: MetricKey,
+    scaleMax: number
   ) {
     let path = ''
     let hasOpenSegment = false
     let previousTimestamp: number | undefined
 
     for (const point of points) {
-      const value = clampPercent(point[key])
+      const value = normalizeMetricPercent(point[key], key)
       if (value === null || (previousTimestamp !== undefined && point.timestamp - previousTimestamp > allowedGapMs)) {
         hasOpenSegment = false
       }
@@ -127,7 +140,7 @@
       }
 
       const command = hasOpenSegment ? 'L' : 'M'
-      path += `${command}${xFor(point.timestamp, referenceNow, durationMs).toFixed(2)},${yFor(value).toFixed(2)} `
+      path += `${command}${xFor(point.timestamp, referenceNow, durationMs).toFixed(2)},${yFor(value, scaleMax).toFixed(2)} `
       hasOpenSegment = true
       previousTimestamp = point.timestamp
     }
@@ -136,8 +149,28 @@
   }
 
   const formatPercent = (value: number | null | undefined) => {
-    const percent = clampPercent(value)
-    return percent === null ? 'Indispo.' : `${nf.format(percent)} %`
+    if (value === null || value === undefined || !Number.isFinite(value)) return 'Indispo.'
+    return `${nf.format(Math.max(0, value))} %`
+  }
+
+  const formatAxisPercent = (value: number) => `${nf.format(value)}%`
+
+  const formatCpuCores = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return 'Indispo.'
+    return coreNf.format(Math.max(0, value))
+  }
+
+  const formatCpuDetail = (point: InstanceMetricHistoryPoint | undefined) => {
+    if (!point) return 'Mesure indisponible'
+    const coresUsed = point.cpuCoresUsed ?? (point.cpuPercent === null ? null : point.cpuPercent / 100)
+    if (coresUsed === null) return 'Mesure indisponible'
+    if (point.cpuAvailableCores == null || point.cpuAvailableCores <= 0) {
+      return `${formatCpuCores(coresUsed)} cœurs équivalents utilisés`
+    }
+
+    const capacityPercent =
+      point.cpuCapacityPercent ?? (point.cpuPercent === null ? null : point.cpuPercent / point.cpuAvailableCores)
+    return `${formatCpuCores(coresUsed)} / ${nf.format(point.cpuAvailableCores)} cœurs · ${formatPercent(capacityPercent)} capacité`
   }
 
   const formatBytes = (bytes: number | null | undefined) => {
@@ -178,6 +211,10 @@
       {
         timestamp: now,
         cpuPercent: null,
+        cpuCoresUsed: null,
+        cpuAvailableCores: null,
+        cpuHostCores: null,
+        cpuCapacityPercent: null,
         memoryBytes: null,
         memoryLimitBytes: null,
         memoryPercent: null,
@@ -190,6 +227,10 @@
   const toStoredPoint = (point: ApiMetricHistoryPoint): InstanceMetricHistoryPoint => ({
     timestamp: new Date(point.collectedAt).getTime(),
     cpuPercent: point.cpuPercent,
+    cpuCoresUsed: point.cpuPercent / 100,
+    cpuAvailableCores: null,
+    cpuHostCores: null,
+    cpuCapacityPercent: null,
     memoryBytes: point.memoryBytes,
     memoryLimitBytes: point.memoryLimitBytes,
     memoryPercent: point.memoryPercent,
@@ -347,8 +388,9 @@
 
   <div class="resource-chart-summary" aria-label="Dernières mesures">
     <div class="resource-chart-metric resource-chart-metric--cpu">
-      <span><i></i> CPU</span>
+      <span><i></i> CPU Docker · 100 % = 1 cœur</span>
       <strong>{formatPercent(latest?.cpuPercent)}</strong>
+      <small>{formatCpuDetail(latest)}</small>
     </div>
     <div class="resource-chart-metric resource-chart-metric--memory">
       <span><i></i> RAM</span>
@@ -370,7 +412,8 @@
     <svg viewBox="0 0 720 220" role="img" aria-labelledby="resource-chart-svg-title resource-chart-svg-desc">
       <title id="resource-chart-svg-title">Historique CPU et RAM sur {rangeConfig.label}</title>
       <desc id="resource-chart-svg-desc">
-        CPU à {formatPercent(latest?.cpuPercent)} et mémoire à {formatPercent(latest?.memoryPercent)}.
+        CPU Docker à {formatPercent(latest?.cpuPercent)}, soit {formatCpuDetail(latest)}, et mémoire à
+        {formatPercent(latest?.memoryPercent)}.
       </desc>
 
       <defs>
@@ -397,16 +440,38 @@
         fill="url(#resource-chart-glow)"
       />
 
-      {#each [100, 75, 50, 25, 0] as tick}
+      {#each axisFractions as fraction}
         <line
           x1={chart.left}
           x2={chart.left + chart.width}
-          y1={yFor(tick)}
-          y2={yFor(tick)}
+          y1={yFor(cpuAxisMax * fraction, cpuAxisMax)}
+          y2={yFor(cpuAxisMax * fraction, cpuAxisMax)}
           class="resource-chart-gridline"
         />
-        <text x={chart.left - 8} y={yFor(tick) + 4} class="resource-chart-y-label">{tick}%</text>
+        <text
+          x={chart.left - 8}
+          y={yFor(cpuAxisMax * fraction, cpuAxisMax) + 4}
+          class="resource-chart-y-label resource-chart-y-label--cpu"
+        >
+          {formatAxisPercent(cpuAxisMax * fraction)}
+        </text>
+        <text
+          x={chart.left + chart.width + 8}
+          y={yFor(100 * fraction, 100) + 4}
+          class="resource-chart-y-label resource-chart-y-label--memory"
+        >
+          {formatAxisPercent(100 * fraction)}
+        </text>
       {/each}
+
+      <text x={chart.left - 8} y={chart.top - 7} class="resource-chart-axis-caption resource-chart-axis-caption--cpu"
+        >CPU</text
+      >
+      <text
+        x={chart.left + chart.width + 8}
+        y={chart.top - 7}
+        class="resource-chart-axis-caption resource-chart-axis-caption--memory">RAM</text
+      >
 
       {#each axisTimes as timestamp}
         <line
@@ -438,20 +503,24 @@
 
       {#if showPoints}
         {#each history as point (point.timestamp)}
-          {#if clampPercent(point.cpuPercent) !== null}
+          {#if normalizeMetricPercent(point.cpuPercent, 'cpuPercent') !== null}
             <circle
               cx={xFor(point.timestamp, now, rangeConfig.durationMs)}
-              cy={yFor(clampPercent(point.cpuPercent) ?? 0)}
+              cy={yFor(normalizeMetricPercent(point.cpuPercent, 'cpuPercent') ?? 0, cpuAxisMax)}
               r="2.4"
               class="resource-chart-point resource-chart-point--cpu"
             >
-              <title>{timeFormatter.format(point.timestamp)} · CPU {formatPercent(point.cpuPercent)}</title>
+              <title
+                >{timeFormatter.format(point.timestamp)} · CPU {formatPercent(point.cpuPercent)} · {formatCpuCores(
+                  point.cpuCoresUsed ?? (point.cpuPercent === null ? null : point.cpuPercent / 100)
+                )} cœur(s)</title
+              >
             </circle>
           {/if}
-          {#if clampPercent(point.memoryPercent) !== null}
+          {#if normalizeMetricPercent(point.memoryPercent, 'memoryPercent') !== null}
             <circle
               cx={xFor(point.timestamp, now, rangeConfig.durationMs)}
-              cy={yFor(clampPercent(point.memoryPercent) ?? 0)}
+              cy={yFor(normalizeMetricPercent(point.memoryPercent, 'memoryPercent') ?? 0, 100)}
               r="2.1"
               class="resource-chart-point resource-chart-point--memory"
             >
@@ -792,13 +861,36 @@
   }
 
   :global(.resource-chart-y-label),
-  :global(.resource-chart-x-label) {
+  :global(.resource-chart-x-label),
+  :global(.resource-chart-axis-caption) {
     fill: var(--app-text-faint);
     font-size: 10px;
     font-weight: 700;
   }
 
   :global(.resource-chart-y-label) {
+    text-anchor: end;
+  }
+
+  :global(.resource-chart-y-label--cpu),
+  :global(.resource-chart-axis-caption--cpu) {
+    fill: #22c55e;
+  }
+
+  :global(.resource-chart-y-label--memory),
+  :global(.resource-chart-axis-caption--memory) {
+    fill: #38bdf8;
+    text-anchor: start;
+  }
+
+  :global(.resource-chart-axis-caption) {
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  :global(.resource-chart-axis-caption--cpu) {
     text-anchor: end;
   }
 

@@ -13,6 +13,10 @@ import {
 const metric: DashboardInstanceMetric = {
   instanceId: 'instance1',
   cpuPercent: 12.5,
+  cpuCoresUsed: 0.125,
+  cpuAvailableCores: 8,
+  cpuHostCores: 8,
+  cpuCapacityPercent: 1.5625,
   memoryBytes: 256,
   memoryLimitBytes: 1024,
   memoryPercent: 25,
@@ -27,6 +31,10 @@ describe('instance metric history', () => {
     expect(toMetricHistoryPoint(metric, '2026-07-12T10:00:00.000Z')).toEqual({
       timestamp: Date.parse('2026-07-12T10:00:00.000Z'),
       cpuPercent: 12.5,
+      cpuCoresUsed: 0.125,
+      cpuAvailableCores: 8,
+      cpuHostCores: 8,
+      cpuCapacityPercent: 1.5625,
       memoryBytes: 256,
       memoryLimitBytes: 1024,
       memoryPercent: 25,
@@ -41,6 +49,21 @@ describe('instance metric history', () => {
     ]
 
     expect(pruneMetricHistory(points, now)).toHaveLength(1)
+  })
+
+  it('preserves CPU percentages above one core without capping them at 100%', () => {
+    const multiCoreMetric: DashboardInstanceMetric = {
+      ...metric,
+      cpuPercent: 598.45,
+      cpuCoresUsed: 5.9845,
+      cpuCapacityPercent: 74.80625,
+    }
+
+    const point = toMetricHistoryPoint(multiCoreMetric, '2026-07-12T10:00:00.000Z')
+
+    expect(point.cpuPercent).toBe(598.45)
+    expect(point.cpuCoresUsed).toBe(5.9845)
+    expect(point.cpuCapacityPercent).toBe(74.80625)
   })
 
   it('replaces duplicate timestamps and caps the number of samples', () => {

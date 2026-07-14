@@ -6,7 +6,14 @@ export const INSTANCE_METRIC_MAX_POINTS = INSTANCE_METRIC_HISTORY_WINDOW_MS / IN
 
 export type InstanceMetricHistoryPoint = Pick<
   DashboardInstanceMetric,
-  'cpuPercent' | 'memoryBytes' | 'memoryLimitBytes' | 'memoryPercent'
+  | 'cpuPercent'
+  | 'cpuCoresUsed'
+  | 'cpuAvailableCores'
+  | 'cpuHostCores'
+  | 'cpuCapacityPercent'
+  | 'memoryBytes'
+  | 'memoryLimitBytes'
+  | 'memoryPercent'
 > & {
   timestamp: number
 }
@@ -22,6 +29,10 @@ export const toMetricHistoryPoint = (
   return {
     timestamp: Number.isFinite(parsedTimestamp) ? parsedTimestamp : fallbackTimestamp,
     cpuPercent: finiteOrNull(metric.cpuPercent),
+    cpuCoresUsed: finiteOrNull(metric.cpuCoresUsed),
+    cpuAvailableCores: finiteOrNull(metric.cpuAvailableCores),
+    cpuHostCores: finiteOrNull(metric.cpuHostCores),
+    cpuCapacityPercent: finiteOrNull(metric.cpuCapacityPercent),
     memoryBytes: finiteOrNull(metric.memoryBytes),
     memoryLimitBytes: finiteOrNull(metric.memoryLimitBytes),
     memoryPercent: finiteOrNull(metric.memoryPercent),
@@ -60,6 +71,10 @@ export const parseMetricHistory = (value: string | null, now = Date.now()): Inst
     return pruneMetricHistory(parsed.filter(isHistoryPoint), now).map((point) => ({
       timestamp: point.timestamp,
       cpuPercent: finiteOrNull(point.cpuPercent),
+      cpuCoresUsed: finiteOrNull(point.cpuCoresUsed),
+      cpuAvailableCores: finiteOrNull(point.cpuAvailableCores),
+      cpuHostCores: finiteOrNull(point.cpuHostCores),
+      cpuCapacityPercent: finiteOrNull(point.cpuCapacityPercent),
       memoryBytes: finiteOrNull(point.memoryBytes),
       memoryLimitBytes: finiteOrNull(point.memoryLimitBytes),
       memoryPercent: finiteOrNull(point.memoryPercent),

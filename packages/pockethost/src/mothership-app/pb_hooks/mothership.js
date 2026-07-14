@@ -3496,6 +3496,39 @@ const parseDockerPercent = (value) => {
 	const number = Number(normalized);
 	return Number.isFinite(number) ? Math.max(0, number) : null;
 };
+const parsePositiveNumber = (value) => {
+	const number = Number(value);
+	return Number.isFinite(number) && number > 0 ? number : null;
+};
+const countCpuSet = (value) => {
+	const cpuIds = /* @__PURE__ */ new Set();
+	for (const part of `${value || ""}`.split(",")) {
+		const normalized = part.trim();
+		if (!normalized) continue;
+		const range = normalized.match(/^(\d+)-(\d+)$/);
+		if (range) {
+			const start = Number(range[1]);
+			const end = Number(range[2]);
+			if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start || end - start > 4096) continue;
+			for (let cpu = start; cpu <= end; cpu += 1) cpuIds.add(cpu);
+			continue;
+		}
+		const cpu = Number(normalized);
+		if (Number.isSafeInteger(cpu) && cpu >= 0) cpuIds.add(cpu);
+	}
+	return cpuIds.size > 0 ? cpuIds.size : null;
+};
+const readDockerHostCpuCores = () => {
+	try {
+		const dockerCpuCores = parsePositiveNumber(toString($os.cmd("docker", "info", "--format", "{{.NCPU}}").combinedOutput()).trim());
+		if (dockerCpuCores !== null) return dockerCpuCores;
+	} catch {}
+	try {
+		return parsePositiveNumber(toString($os.cmd("nproc").combinedOutput()).trim());
+	} catch {
+		return null;
+	}
+};
 const dockerByteUnits = {
 	b: 1,
 	kb: 1e3,
@@ -3538,13 +3571,55 @@ const readDockerStatsByName = (containerNames = []) => {
 	}
 	return rows;
 };
-const serializeInstanceRuntimeMetrics = (instance, dockerStatsByName) => {
-	const row = dockerStatsByName.get(instance.id);
+const readDockerCpuConfigByName = (containerNames) => {
+	const rows = /* @__PURE__ */ new Map();
+	if (containerNames.length === 0) return rows;
+	try {
+		const output = toString($os.cmd("docker", "inspect", "--format", "{\"name\":{{json .Name}},\"nanoCpus\":{{json .HostConfig.NanoCpus}},\"cpuQuota\":{{json .HostConfig.CpuQuota}},\"cpuPeriod\":{{json .HostConfig.CpuPeriod}},\"cpusetCpus\":{{json .HostConfig.CpusetCpus}}}", ...containerNames).combinedOutput()).trim();
+		if (!output) return rows;
+		for (const line of output.split("\n")) try {
+			const row = JSON.parse(line.trim());
+			const name = `${row.name || ""}`.replace(/^\//, "");
+			if (name) rows.set(name, row);
+		} catch {}
+	} catch {
+		return rows;
+	}
+	return rows;
+};
+const readDockerMetricsSnapshot = (containerNames = []) => {
+	const statsByName = readDockerStatsByName(containerNames);
+	return {
+		statsByName,
+		cpuConfigByName: readDockerCpuConfigByName(Array.from(statsByName.keys())),
+		hostCpuCores: readDockerHostCpuCores()
+	};
+};
+const resolveAvailableCpuCores = (config, hostCpuCores) => {
+	const limits = [];
+	if (hostCpuCores !== null) limits.push(hostCpuCores);
+	const nanoCpuLimit = parsePositiveNumber(config?.nanoCpus);
+	if (nanoCpuLimit !== null) limits.push(nanoCpuLimit / 1e9);
+	const cpuQuota = parsePositiveNumber(config?.cpuQuota);
+	const cpuPeriod = parsePositiveNumber(config?.cpuPeriod);
+	if (cpuQuota !== null) limits.push(cpuQuota / (cpuPeriod ?? 1e5));
+	const cpuSetLimit = countCpuSet(config?.cpusetCpus);
+	if (cpuSetLimit !== null) limits.push(cpuSetLimit);
+	return limits.length > 0 ? Math.min(...limits) : null;
+};
+const serializeInstanceRuntimeMetrics = (instance, snapshot) => {
+	const row = snapshot.statsByName.get(instance.id);
 	const [memoryBytes, memoryLimitBytes] = parseDockerBytePair(row?.MemUsage);
 	const [blockReadBytes, blockWriteBytes] = parseDockerBytePair(row?.BlockIO);
+	const cpuPercent = parseDockerPercent(row?.CPUPerc);
+	const cpuAvailableCores = row ? resolveAvailableCpuCores(snapshot.cpuConfigByName.get(instance.id), snapshot.hostCpuCores) : null;
 	return {
 		instanceId: instance.id,
-		cpuPercent: parseDockerPercent(row?.CPUPerc),
+		cpuPercent,
+		cpuCoresUsed: cpuPercent === null ? null : cpuPercent / 100,
+		cpuAvailableCores,
+		cpuHostCores: row ? snapshot.hostCpuCores : null,
+		cpuCapacityPercent: cpuPercent === null || cpuAvailableCores === null ? null : cpuPercent / cpuAvailableCores,
 		memoryBytes,
 		memoryLimitBytes,
 		memoryPercent: parseDockerPercent(row?.MemPerc),
@@ -3554,8 +3629,8 @@ const serializeInstanceRuntimeMetrics = (instance, dockerStatsByName) => {
 		containerName: row?.Name || ""
 	};
 };
-const serializeInstanceResourceMetrics = (instance, dockerStatsByName) => ({
-	...serializeInstanceRuntimeMetrics(instance, dockerStatsByName),
+const serializeInstanceResourceMetrics = (instance, snapshot) => ({
+	...serializeInstanceRuntimeMetrics(instance, snapshot),
 	diskBytes: getDirectorySizeBytes(instanceRoot(instance.id))
 });
 const findMetricsHistoryRange = (e) => {
@@ -3614,7 +3689,7 @@ const HandleInstanceOverview = (e) => {
 	assertInstanceAccess(instance, authRecord);
 	const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
 	const totalCompressedBytes = backups.reduce((total, backup) => total + backup.compressedBytes, 0);
-	const runtime = serializeInstanceResourceMetrics(instance, readDockerStatsByName());
+	const runtime = serializeInstanceResourceMetrics(instance, readDockerMetricsSnapshot([instance.id]));
 	return e.json(200, {
 		instance,
 		backups: {
@@ -3631,10 +3706,10 @@ const HandleInstanceOverview = (e) => {
 	});
 };
 const HandleInstancesMetrics = (e) => {
-	const authRecord = requireAuthRecord(e.auth);
-	const dockerStatsByName = readDockerStatsByName();
+	const instances = findAccessibleInstances(requireAuthRecord(e.auth));
+	const snapshot = readDockerMetricsSnapshot();
 	const metrics = {};
-	for (const instance of findAccessibleInstances(authRecord)) metrics[instance.id] = serializeInstanceResourceMetrics(instance, dockerStatsByName);
+	for (const instance of instances) metrics[instance.id] = serializeInstanceResourceMetrics(instance, snapshot);
 	return e.json(200, {
 		instances: metrics,
 		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -3645,7 +3720,7 @@ const HandleInstanceMetrics = (e) => {
 	const instance = findInstance(pathValue(e, "id"));
 	assertInstanceAccess(instance, authRecord);
 	return e.json(200, {
-		metric: serializeInstanceRuntimeMetrics(instance, readDockerStatsByName([instance.id])),
+		metric: serializeInstanceRuntimeMetrics(instance, readDockerMetricsSnapshot([instance.id])),
 		collectedAt: (/* @__PURE__ */ new Date()).toISOString()
 	});
 };
@@ -3671,11 +3746,11 @@ const HandleInstanceMetricsHistory = (e) => {
 const CollectInstanceResourceMetrics = () => {
 	const instances = $app.findRecordsByFilter("instances", "metricsHistoryEnabled = true", "", 500, 0);
 	if (instances.length === 0) return { saved: 0 };
-	const dockerStatsByName = readDockerStatsByName();
+	const snapshot = readDockerMetricsSnapshot();
 	const collection = $app.findCollectionByNameOrId(INSTANCE_RESOURCE_METRICS_COLLECTION);
 	let saved = 0;
 	for (const instance of instances) {
-		const metric = serializeInstanceRuntimeMetrics(instance, dockerStatsByName);
+		const metric = serializeInstanceRuntimeMetrics(instance, snapshot);
 		if (metric.cpuPercent === null || metric.memoryBytes === null || metric.memoryLimitBytes === null || metric.memoryPercent === null) continue;
 		try {
 			const record = new Record(collection);

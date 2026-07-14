@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   evaluateHealthSignal,
   evaluateThresholdSignal,
+  formatMonitoringPercent,
   monitoringRetryDelayMs,
   normalizeDiscordWebhook,
   normalizeHealthPath,
@@ -55,6 +56,11 @@ describe('instance monitoring input validation', () => {
 
   it('uses bounded retry delays', () => {
     expect([0, 1, 2, 3, 4, 9].map(monitoringRetryDelayMs)).toEqual([0, 60_000, 300_000, 900_000, 3_600_000, 3_600_000])
+  })
+
+  it('formats percentages without Intl, which is unavailable in PocketBase hooks', () => {
+    expect(formatMonitoringPercent(92.34)).toBe('92,3')
+    expect(formatMonitoringPercent(100)).toBe('100')
   })
 
   it('normalizes serialized notification payloads before delivery', () => {

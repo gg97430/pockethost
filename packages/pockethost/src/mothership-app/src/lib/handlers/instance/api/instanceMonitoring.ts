@@ -191,6 +191,8 @@ export const monitoringRetryDelayMs = (attempts: number) => {
 
 export const MONITORING_MAX_DELIVERY_ATTEMPTS = 5
 
+export const formatMonitoringPercent = (value: number) => `${Math.round(value * 10) / 10}`.replace('.', ',')
+
 export const monitoringHistoryRanges = {
   '24h': { durationMs: 24 * 60 * 60 * 1000, bucketSeconds: 60 },
   '7d': { durationMs: 7 * 24 * 60 * 60 * 1000, bucketSeconds: 10 * 60 },

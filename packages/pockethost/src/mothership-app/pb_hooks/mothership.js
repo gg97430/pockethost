@@ -3954,6 +3954,7 @@ const monitoringRetryDelayMs = (attempts) => {
 	];
 	return delayMinutes[Math.min(Math.max(0, attempts), delayMinutes.length - 1)] * 60 * 1e3;
 };
+const formatMonitoringPercent = (value) => `${Math.round(value * 10) / 10}`.replace(".", ",");
 const monitoringHistoryRanges = {
 	"24h": {
 		durationMs: 1440 * 60 * 1e3,
@@ -4347,7 +4348,7 @@ const evaluateResource = (policy, instance, type, value) => {
 	policy.set(highField, evaluation.state.highStreak);
 	policy.set(normalField, evaluation.state.normalStreak);
 	policy.set(lastField, value);
-	const formatted = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(value);
+	const formatted = formatMonitoringPercent(value);
 	if (evaluation.transition === "open") openIncident(policy, instance, type, `${type === "cpu" ? "Le CPU" : "La mémoire"} de ${instance.getString("subdomain")} atteint ${formatted} % depuis ${sustain} minutes.`, value, threshold, { sustainMinutes: sustain });
 	else if (evaluation.transition === "resolve") resolveIncident(policy, instance, incident, `${type === "cpu" ? "Le CPU" : "La mémoire"} de ${instance.getString("subdomain")} est revenu à ${formatted} %.`, true, value);
 };
@@ -4417,6 +4418,8 @@ const sendEmailDelivery = (delivery, payload) => {
 	const senderAddress = `${settings.meta?.senderAddress || ""}`.trim();
 	const senderName = `${settings.meta?.senderName || "Gestion PocketBase"}`.trim();
 	const recipientAddress = `${user.email() || ""}`.trim();
+	if (!settings.smtp?.enabled) throw new Error("Email non envoyé : SMTP est désactivé dans l'administration du serveur.");
+	if (!`${settings.smtp.host || ""}`.trim()) throw new Error("Email non envoyé : l'hôte SMTP n'est pas configuré.");
 	if (!senderAddress) throw new Error("Email non envoyé : l'adresse expéditeur SMTP n'est pas configurée.");
 	if (!recipientAddress) throw new Error("Email non envoyé : l'utilisateur n'a pas d'adresse email.");
 	const html = `<h2>${escapeHtml(payload.title)}</h2><p>${escapeHtml(payload.message)}</p><p><strong>Instance :</strong> ${escapeHtml(payload.instanceName)}</p><p><small>${escapeHtml(payload.occurredAt)}</small></p>`;

@@ -93,6 +93,7 @@
   let action = ''
   let errorMessage = ''
   let successMessage = ''
+  let backupName = ''
   let archiveFile: File | null = null
   let serverPath = ''
   let fileInput: HTMLInputElement | undefined
@@ -208,6 +209,8 @@
     const value = bytes / 1024 ** index
     return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: value >= 10 ? 0 : 1 }).format(value)} ${units[index]}`
   }
+
+  const backupDisplayName = (backup: InstanceBackup) => backup.name || backup.filename || backup.id
 
   function formatDuration(durationMs: number) {
     const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
@@ -716,8 +719,9 @@
   const createBackup = async () => {
     if (isBusy) return
 
+    const name = backupName.trim()
     const confirmed = window.confirm(
-      `Créer une sauvegarde complète de ${displayName} ?${power ? "\n\nL'instance sera arrêtée puis redémarrée automatiquement." : ''}`
+      `Créer ${name ? `la sauvegarde « ${name} »` : 'une sauvegarde complète'} de ${displayName} ?${power ? "\n\nL'instance sera arrêtée puis redémarrée automatiquement." : ''}`
     )
     if (!confirmed) return
 
@@ -727,9 +731,10 @@
     successMessage = ''
     try {
       setTimeout(() => void refreshBackupsSilently(), 1200)
-      const result = await client().createInstanceBackup(id)
+      const result = await client().createInstanceBackup(id, { name })
       backups = [result.backup, ...backups.filter((backup) => backup.id !== result.backup.id)]
-      successMessage = 'Sauvegarde créée'
+      backupName = ''
+      successMessage = name ? `Sauvegarde « ${name} » créée` : 'Sauvegarde créée'
     } catch (error) {
       errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
       await loadBackups()
@@ -929,7 +934,7 @@
     if (isBusy || backup.status !== 'ready') return
 
     const subdomain = window.prompt(
-      `Nom de la nouvelle instance à créer depuis ${backup.filename || backup.id} ?\n\nElle sera créée éteinte, sans écraser ${displayName}.`,
+      `Nom de la nouvelle instance à créer depuis ${backupDisplayName(backup)} ?\n\nElle sera créée éteinte, sans écraser ${displayName}.`,
       suggestedRestoreSubdomain()
     )
     if (subdomain === null) return
@@ -965,7 +970,7 @@
   const deleteBackup = async (backup: InstanceBackup) => {
     if (isBusy) return
 
-    const confirmed = window.confirm(`Supprimer définitivement la sauvegarde ${backup.filename || backup.id} ?`)
+    const confirmed = window.confirm(`Supprimer définitivement la sauvegarde ${backupDisplayName(backup)} ?`)
     if (!confirmed) return
 
     action = `delete:${backup.id}`
@@ -998,10 +1003,30 @@
           <wa-icon name="file-zipper"></wa-icon>
           Importer ZIP à restaurer
         </button>
-        <button type="button" class="backup-create-btn" disabled={isBusy} onclick={createBackup}>
-          <wa-icon name={action === 'create' ? 'rotate' : 'floppy-disk'}></wa-icon>
-          {action === 'create' ? 'Sauvegarde...' : 'Créer une sauvegarde'}
-        </button>
+        <form
+          class="backup-create-form"
+          onsubmit={(event) => {
+            event.preventDefault()
+            void createBackup()
+          }}
+        >
+          <label class="backup-name-field">
+            <wa-icon name="tag"></wa-icon>
+            <span class="backup-name-field__label">Nom</span>
+            <input
+              type="text"
+              bind:value={backupName}
+              maxlength="120"
+              placeholder="Avant mise à jour…"
+              aria-label="Nom de la sauvegarde (optionnel)"
+              disabled={isBusy}
+            />
+          </label>
+          <button type="submit" class="backup-create-btn" disabled={isBusy}>
+            <wa-icon name={action === 'create' ? 'rotate' : 'floppy-disk'}></wa-icon>
+            {action === 'create' ? 'Sauvegarde...' : 'Créer une sauvegarde'}
+          </button>
+        </form>
       </div>
     {/if}
   </svelte:fragment>
@@ -1630,7 +1655,7 @@
           >
             <div class="backup-main">
               <div class="backup-title-row">
-                <span class="backup-title">{backup.filename || backup.id}</span>
+                <span class="backup-title">{backupDisplayName(backup)}</span>
                 <span class="backup-status backup-status--{backup.status}">{statusLabel(backup.status)}</span>
                 {#if restoreTagLabel(backup)}
                   <span class="backup-restore-tag" title={restoreTagTitle(backup)}>
@@ -1644,6 +1669,9 @@
                 <span>{kindLabel(backup.kind)}</span>
                 <span>{formatBytes(backup.compressedBytes)} compressés</span>
                 <span>{formatBytes(backup.sizeBytes)} source</span>
+                {#if backup.name && backup.filename}
+                  <span class="backup-filename" title={backup.filename}>Archive : {backup.filename}</span>
+                {/if}
               </div>
               {#if originalName}
                 <p class="backup-source-file">
@@ -1746,6 +1774,68 @@
     flex-wrap: wrap;
     gap: 0.6rem;
     justify-content: flex-end;
+  }
+
+  .backup-create-form {
+    display: flex;
+    min-width: min(100%, 31rem);
+    gap: 0.45rem;
+  }
+
+  .backup-name-field {
+    display: grid;
+    min-width: 0;
+    flex: 1 1 14rem;
+    grid-template-columns: auto auto minmax(7rem, 1fr);
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2.5rem;
+    border: 1px solid var(--app-border);
+    border-radius: 0.5rem;
+    background: var(--app-surface);
+    padding: 0 0.7rem;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+    transition:
+      border-color 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .backup-name-field:focus-within {
+    border-color: rgb(30 184 84 / 0.65);
+    box-shadow: 0 0 0 3px rgb(30 184 84 / 0.12);
+  }
+
+  .backup-name-field wa-icon {
+    color: #1eb854;
+  }
+
+  .backup-name-field__label {
+    color: var(--app-text-muted);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .backup-name-field input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--app-text-strong);
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 700;
+  }
+
+  .backup-name-field input::placeholder {
+    color: var(--app-text-faint);
+    font-weight: 600;
+  }
+
+  .backup-name-field:has(input:disabled) {
+    opacity: 0.6;
   }
 
   .backup-import-zip-cta {
@@ -2635,6 +2725,15 @@
     font-weight: 600;
   }
 
+  .backup-filename {
+    max-width: min(100%, 38rem);
+    overflow: hidden;
+    color: var(--app-text-faint);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .backup-source-file {
     display: inline-flex;
     max-width: 100%;
@@ -2829,6 +2928,21 @@
   }
 
   @media (max-width: 720px) {
+    .backup-cta,
+    .backup-create-form {
+      width: 100%;
+    }
+
+    .backup-create-form {
+      flex-wrap: wrap;
+    }
+
+    .backup-name-field,
+    .backup-create-btn,
+    .backup-import-zip-cta {
+      width: 100%;
+    }
+
     .backup-page-tabs__nav {
       grid-template-columns: 1fr;
     }

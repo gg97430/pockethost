@@ -13,6 +13,7 @@ const PRIVATE_FILE_MODE = 0o600 as any
 const DEFAULT_IMPORT_CHUNK_SIZE_BYTES = 32 * 1024 * 1024
 const MIN_IMPORT_CHUNK_SIZE_BYTES = 1024 * 1024
 const MAX_IMPORT_CHUNKS = 20_000
+const MAX_BACKUP_NAME_LENGTH = 120
 const DEFAULT_BACKUP_GZIP_LEVEL = 1
 const DEFAULT_BACKUP_NICE_LEVEL = 19
 const DEFAULT_BACKUP_IONICE_CLASS = 3
@@ -114,6 +115,9 @@ type BackupStorageOptions = {
   uploadRemote?: boolean
   localEnabled?: boolean
   policyId?: string
+}
+type BackupCreationOptions = BackupStorageOptions & {
+  name?: string
 }
 type ImportedArchive = {
   filename: string
@@ -394,6 +398,19 @@ const normalizeBool = (value: unknown, fallback: boolean) => {
   return fallback
 }
 
+const normalizeBackupName = (value: unknown) => {
+  const normalized = `${typeof value === 'string' ? value : ''}`
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (Array.from(normalized).length > MAX_BACKUP_NAME_LENGTH) {
+    throw new BadRequestError(`Le nom de la sauvegarde est limite a ${MAX_BACKUP_NAME_LENGTH} caracteres.`)
+  }
+
+  return normalized
+}
+
 const isValidBackupPolicyCron = (cron: string) => {
   const expression = cron.trim()
   if (!expression) return false
@@ -640,6 +657,7 @@ export const serializeInstanceBackup = (backup: core.Record) => ({
   instance: backup.getString('instance'),
   kind: backup.getString('kind'),
   status: backup.getString('status'),
+  name: backup.getString('name'),
   filename: backup.getString('filename'),
   remoteKey: backup.getString('remoteKey'),
   sizeBytes: Number(backup.get('sizeBytes') || 0),
@@ -782,7 +800,7 @@ const restartIfNeeded = (instanceId: string, managedPower: ManagedPower) => {
   } catch {}
 }
 
-const createBackupRecord = (instance: core.Record, authRecord: core.Record, kind: BackupKind) => {
+const createBackupRecord = (instance: core.Record, authRecord: core.Record, kind: BackupKind, name = '') => {
   const collection = $app.findCollectionByNameOrId('instance_backups')
   const backup = new Record(collection)
   const now = new Date().toISOString()
@@ -790,6 +808,7 @@ const createBackupRecord = (instance: core.Record, authRecord: core.Record, kind
   backup.set('instance', instance.id)
   backup.set('kind', kind)
   backup.set('status', 'running')
+  backup.set('name', normalizeBackupName(name))
   backup.set('filename', '')
   backup.set('sizeBytes', 0)
   backup.set('compressedBytes', 0)
@@ -1192,11 +1211,11 @@ const createBackupForInstance = (
   kind: BackupKind,
   managePower: boolean,
   skipRunningCheck = false,
-  storage: BackupStorageOptions = {}
+  options: BackupCreationOptions = {}
 ) => {
   if (!skipRunningCheck) assertNoRunningOperation(instance.id)
 
-  const backup = createBackupRecord(instance, authRecord, kind)
+  const backup = createBackupRecord(instance, authRecord, kind, options.name)
   let power: ManagedPower = { shouldRestart: false }
 
   try {
@@ -1220,7 +1239,7 @@ const createBackupForInstance = (
     })
     const stoppedInstance = findInstance(instance.id)
     const details = createArchive(stoppedInstance, backup, kind)
-    markBackupReady(backup, details, storage)
+    markBackupReady(backup, details, options)
     return backup
   } catch (error) {
     markBackupFailed(backup, error)
@@ -3146,13 +3165,28 @@ const cancelChunkSession = (instance: core.Record, authRecord: core.Record, uplo
   $os.removeAll(chunkSessionDir(instance.id, uploadId))
 }
 
+const readBackupCreateName = (e: core.RequestEvent) => {
+  let data = new DynamicModel({ name: '' }) as { name?: string }
+
+  try {
+    e.bindBody(data)
+    data = JSON.parse(JSON.stringify(data))
+  } catch {
+    data = {}
+  }
+
+  return normalizeBackupName(data.name)
+}
+
 export const HandleInstanceBackupCreate = (e: core.RequestEvent) => {
   const log = mkLog('POST:instance:backup')
   const authRecord = requireAuthRecord(e.auth)
   const instance = findInstance(pathValue(e, 'id'))
   assertInstanceAccess(instance, authRecord)
 
-  const backup = createBackupForInstance(instance, authRecord, 'manual', true)
+  const backup = createBackupForInstance(instance, authRecord, 'manual', true, false, {
+    name: readBackupCreateName(e),
+  })
   log(`created ${backup.id} for ${instance.id}`)
 
   return e.json(200, { backup: serializeInstanceBackup(backup) })

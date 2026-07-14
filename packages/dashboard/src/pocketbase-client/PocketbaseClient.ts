@@ -138,6 +138,7 @@ export type InstanceBackup = {
   instance: string
   kind: 'manual' | 'pre-restore' | 'import' | 'scheduled'
   status: 'running' | 'ready' | 'failed'
+  name: string
   filename: string
   remoteKey: string
   sizeBytes: number
@@ -266,6 +267,7 @@ export type InstanceOverviewBackup = Pick<
   | 'id'
   | 'kind'
   | 'status'
+  | 'name'
   | 'filename'
   | 'remoteKey'
   | 'sizeBytes'
@@ -473,9 +475,10 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       method: 'GET',
     })
 
-  const createInstanceBackup = (id: InstanceId) =>
+  const createInstanceBackup = (id: InstanceId, input: { name?: string } = {}) =>
     client.send<{ backup: InstanceBackup }>(`/api/instance/${id}/backups`, {
       method: 'POST',
+      body: input,
     })
 
   const uploadBackupChunk = async (input: {

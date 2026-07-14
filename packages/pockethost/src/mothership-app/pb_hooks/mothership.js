@@ -662,6 +662,7 @@ const PRIVATE_FILE_MODE = 384;
 const DEFAULT_IMPORT_CHUNK_SIZE_BYTES = 32 * 1024 * 1024;
 const MIN_IMPORT_CHUNK_SIZE_BYTES = 1024 * 1024;
 const MAX_IMPORT_CHUNKS = 2e4;
+const MAX_BACKUP_NAME_LENGTH = 120;
 const DEFAULT_BACKUP_GZIP_LEVEL = 1;
 const DEFAULT_BACKUP_NICE_LEVEL = 19;
 const DEFAULT_BACKUP_IONICE_CLASS = 3;
@@ -918,6 +919,11 @@ const normalizeBool = (value, fallback) => {
 	}
 	return fallback;
 };
+const normalizeBackupName = (value) => {
+	const normalized = `${typeof value === "string" ? value : ""}`.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+	if (Array.from(normalized).length > MAX_BACKUP_NAME_LENGTH) throw new BadRequestError(`Le nom de la sauvegarde est limite a ${MAX_BACKUP_NAME_LENGTH} caracteres.`);
+	return normalized;
+};
 const isValidBackupPolicyCron = (cron) => {
 	const expression = cron.trim();
 	if (!expression) return false;
@@ -1081,6 +1087,7 @@ const serializeInstanceBackup = (backup) => ({
 	instance: backup.getString("instance"),
 	kind: backup.getString("kind"),
 	status: backup.getString("status"),
+	name: backup.getString("name"),
 	filename: backup.getString("filename"),
 	remoteKey: backup.getString("remoteKey"),
 	sizeBytes: Number(backup.get("sizeBytes") || 0),
@@ -1175,7 +1182,7 @@ const restartIfNeeded = (instanceId, managedPower) => {
 		setInstancePower(instanceId, true);
 	} catch {}
 };
-const createBackupRecord = (instance, authRecord, kind) => {
+const createBackupRecord = (instance, authRecord, kind, name = "") => {
 	const collection = $app.findCollectionByNameOrId("instance_backups");
 	const backup = new Record(collection);
 	const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -1183,6 +1190,7 @@ const createBackupRecord = (instance, authRecord, kind) => {
 	backup.set("instance", instance.id);
 	backup.set("kind", kind);
 	backup.set("status", "running");
+	backup.set("name", normalizeBackupName(name));
 	backup.set("filename", "");
 	backup.set("sizeBytes", 0);
 	backup.set("compressedBytes", 0);
@@ -1450,9 +1458,9 @@ const markBackupFailed = (backup, error) => {
 	backup.set("error", errorMessage(error));
 	$app.save(backup);
 };
-const createBackupForInstance = (instance, authRecord, kind, managePower, skipRunningCheck = false, storage = {}) => {
+const createBackupForInstance = (instance, authRecord, kind, managePower, skipRunningCheck = false, options = {}) => {
 	if (!skipRunningCheck) assertNoRunningOperation(instance.id);
-	const backup = createBackupRecord(instance, authRecord, kind);
+	const backup = createBackupRecord(instance, authRecord, kind, options.name);
 	let power = { shouldRestart: false };
 	try {
 		if (managePower) {
@@ -1472,7 +1480,7 @@ const createBackupForInstance = (instance, authRecord, kind, managePower, skipRu
 			label: "Instance arretee, preparation des fichiers",
 			percent: 14
 		});
-		markBackupReady(backup, createArchive(findInstance$1(instance.id), backup, kind), storage);
+		markBackupReady(backup, createArchive(findInstance$1(instance.id), backup, kind), options);
 		return backup;
 	} catch (error) {
 		markBackupFailed(backup, error);
@@ -2891,12 +2899,22 @@ const cancelChunkSession = (instance, authRecord, uploadId) => {
 	assertBackupImportAllowed(authRecord);
 	$os.removeAll(chunkSessionDir(instance.id, uploadId));
 };
+const readBackupCreateName = (e) => {
+	let data = new DynamicModel({ name: "" });
+	try {
+		e.bindBody(data);
+		data = JSON.parse(JSON.stringify(data));
+	} catch {
+		data = {};
+	}
+	return normalizeBackupName(data.name);
+};
 const HandleInstanceBackupCreate = (e) => {
 	const log = mkLog("POST:instance:backup");
 	const authRecord = requireAuthRecord$1(e.auth);
 	const instance = findInstance$1(pathValue$1(e, "id"));
 	assertInstanceAccess$1(instance, authRecord);
-	const backup = createBackupForInstance(instance, authRecord, "manual", true);
+	const backup = createBackupForInstance(instance, authRecord, "manual", true, false, { name: readBackupCreateName(e) });
 	log(`created ${backup.id} for ${instance.id}`);
 	return e.json(200, { backup: serializeInstanceBackup(backup) });
 };

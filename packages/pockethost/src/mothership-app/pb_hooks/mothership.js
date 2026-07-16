@@ -1037,6 +1037,9 @@ const serializeInstanceBackup = (backup) => ({
 	checksum: backup.getString("checksum"),
 	error: backup.getString("error"),
 	remoteError: backup.getString("remoteError"),
+	restoreState: backup.getString("restoreState"),
+	restoreUpdatedAt: backup.getString("restoreUpdatedAt"),
+	restoreError: backup.getString("restoreError"),
 	manifest: backup.get("manifest"),
 	created: backup.getString("created"),
 	updated: backup.getString("updated")
@@ -1209,6 +1212,9 @@ const updateRestoreOperation = (backup, phase, input = {}) => {
 			updatedAt: now
 		}
 	});
+	record.set("restoreState", isComplete ? phase : "running");
+	record.set("restoreUpdatedAt", now);
+	record.set("restoreError", phase === "failed" ? input.error || currentOperation.error || "" : "");
 	$app.save(record);
 	backup.set("manifest", record.get("manifest"));
 };
@@ -2908,7 +2914,11 @@ const HandleInstanceBackupsList = (e) => {
 	const instance = findInstance$2(pathValue$2(e, "id"));
 	assertInstanceAccess$2(instance, authRecord);
 	const backups = findInstanceBackups$1(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup);
-	return e.json(200, { backups });
+	const activeRestoreIds = backups.filter((backup) => backup.restoreState === "running").map((backup) => backup.id);
+	return e.json(200, {
+		backups,
+		activeRestoreIds
+	});
 };
 const HandleInstanceBackupPolicyGet = (e) => {
 	const authRecord = requireAuthRecord$2(e.auth);

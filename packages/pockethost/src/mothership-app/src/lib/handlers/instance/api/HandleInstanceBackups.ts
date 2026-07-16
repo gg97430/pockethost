@@ -665,6 +665,9 @@ export const serializeInstanceBackup = (backup: core.Record) => ({
   checksum: backup.getString('checksum'),
   error: backup.getString('error'),
   remoteError: backup.getString('remoteError'),
+  restoreState: backup.getString('restoreState'),
+  restoreUpdatedAt: backup.getString('restoreUpdatedAt'),
+  restoreError: backup.getString('restoreError'),
   manifest: backup.get('manifest'),
   created: backup.getString('created'),
   updated: backup.getString('updated'),
@@ -923,6 +926,9 @@ const updateRestoreOperation = (backup: core.Record, phase: string, input: Resto
       updatedAt: now,
     },
   })
+  record.set('restoreState', isComplete ? phase : 'running')
+  record.set('restoreUpdatedAt', now)
+  record.set('restoreError', phase === 'failed' ? input.error || currentOperation.error || '' : '')
   $app.save(record)
   backup.set('manifest', record.get('manifest'))
 }
@@ -3253,8 +3259,9 @@ export const HandleInstanceBackupsList = (e: core.RequestEvent) => {
   assertInstanceAccess(instance, authRecord)
 
   const backups = findInstanceBackups(instance.id).map(refreshImportedBackupSizeMetadata).map(serializeInstanceBackup)
+  const activeRestoreIds = backups.filter((backup) => backup.restoreState === 'running').map((backup) => backup.id)
 
-  return e.json(200, { backups })
+  return e.json(200, { backups, activeRestoreIds })
 }
 
 export const HandleInstanceBackupPolicyGet = (e: core.RequestEvent) => {

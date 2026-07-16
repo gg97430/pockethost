@@ -146,9 +146,17 @@ export type InstanceBackup = {
   checksum: string
   error: string
   remoteError: string
+  restoreState: '' | 'running' | 'ready' | 'failed'
+  restoreUpdatedAt: string
+  restoreError: string
   manifest: unknown
   created: string
   updated: string
+}
+
+export type InstanceBackupsResponse = {
+  backups: InstanceBackup[]
+  activeRestoreIds: string[]
 }
 
 export type InstanceBackupPolicy = {
@@ -878,7 +886,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   }
 
   const listInstanceBackups = (id: InstanceId) =>
-    client.send<{ backups: InstanceBackup[] }>(`/api/instance/${id}/backups`, {
+    client.send<InstanceBackupsResponse>(`/api/instance/${id}/backups`, {
       method: 'GET',
     })
 

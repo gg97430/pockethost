@@ -3,6 +3,7 @@
   import { onDestroy, onMount } from 'svelte'
   import CronSchedulePicker from '$components/CronSchedulePicker.svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
+  import { restoreActivityState } from '$lib/backupRestoreActivity'
   import { validateCronExpression } from '$lib/cronExpression'
   import { NATURAL_CRON_EXAMPLES, parseNaturalCron } from '$lib/naturalCron'
   import {
@@ -67,6 +68,8 @@
   })
 
   let backups: InstanceBackup[] = []
+  let activeRestoreIds: string[] = []
+  let restoreActivityObservedAt = 0
   let backupPolicy: InstanceBackupPolicy | null = null
   let backupPolicyDraft = defaultPolicyDraft()
   let backupPolicyS3Enabled = false
@@ -104,6 +107,7 @@
   let pollTimer: ReturnType<typeof setInterval> | undefined
   let clockTimer: ReturnType<typeof setInterval> | undefined
   let lastSilentRefreshAt = 0
+  let isSilentRefreshRunning = false
 
   $: ({ id, subdomain, cname, power } = $instance)
   $: displayName = cname || subdomain
@@ -469,9 +473,26 @@
   function restoreOperationPayload(backup: InstanceBackup) {
     const manifest = manifestObject(backup.manifest)
     const rawOperation = manifest.restoreOperation
-    return rawOperation && typeof rawOperation === 'object' && !Array.isArray(rawOperation)
-      ? (rawOperation as Record<string, unknown>)
-      : {}
+    const operation =
+      rawOperation && typeof rawOperation === 'object' && !Array.isArray(rawOperation)
+        ? (rawOperation as Record<string, unknown>)
+        : {}
+    if (!backup.restoreState) return operation
+    return {
+      ...operation,
+      phase: backup.restoreState,
+      label:
+        backup.restoreState === 'ready'
+          ? 'Restauration terminée'
+          : backup.restoreState === 'failed'
+            ? 'Restauration échouée'
+            : typeof operation.label === 'string' && operation.label
+              ? operation.label
+              : 'Restauration en cours',
+      percent: backup.restoreState === 'running' ? operation.percent || 8 : 100,
+      updatedAt: backup.restoreUpdatedAt || operation.updatedAt,
+      error: backup.restoreError,
+    }
   }
 
   function restoreOperation(backup: InstanceBackup): BackupOperation {
@@ -523,6 +544,14 @@
   }
 
   function isRestoreOperationActive(backup: InstanceBackup) {
+    const serverActivity = restoreActivityState(
+      backup.id,
+      activeRestoreIds,
+      restoreActivityObservedAt,
+      operationStartedAt
+    )
+    if (serverActivity !== null) return serverActivity
+
     const operation = restoreOperationPayload(backup)
     const phase = typeof operation.phase === 'string' ? operation.phase : ''
     if (!phase || phase === 'ready' || phase === 'failed') return false
@@ -596,6 +625,28 @@
     const backup = backups.find((item) => item.id === restoreActionBackupId())
     if (!backup || backup.status === 'running' || isRestoreOperationActive(backup)) return
 
+    const serverActivity = restoreActivityState(
+      backup.id,
+      activeRestoreIds,
+      restoreActivityObservedAt,
+      operationStartedAt
+    )
+    if (serverActivity === false) {
+      const currentAction = action
+      action = ''
+      operationStartedAt = 0
+      if (backup.restoreState === 'failed') {
+        successMessage = ''
+        errorMessage = backup.restoreError || 'Restauration échouée'
+      } else {
+        errorMessage = ''
+        successMessage = currentAction.startsWith('restore-new:')
+          ? 'Restauration terminée, nouvelle instance à vérifier dans le dashboard'
+          : 'Instance restaurée'
+      }
+      return
+    }
+
     const phase = restoreOperationPayload(backup).phase
     if (phase && phase !== 'ready' && phase !== 'failed') return
 
@@ -639,7 +690,15 @@
       errorMessage = ''
     }
     try {
-      backups = (await client().listInstanceBackups(id)).backups
+      const result = await client().listInstanceBackups(id)
+      backups = result.backups
+      if (Array.isArray(result.activeRestoreIds)) {
+        activeRestoreIds = result.activeRestoreIds
+        restoreActivityObservedAt = Date.now()
+      } else {
+        activeRestoreIds = []
+        restoreActivityObservedAt = 0
+      }
       resyncPendingRestoreAction()
     } catch (error) {
       if (!silent) {
@@ -691,10 +750,15 @@
 
   const refreshBackupsSilently = async () => {
     const current = Date.now()
-    if (current - lastSilentRefreshAt < 1200) return
+    if (isSilentRefreshRunning || current - lastSilentRefreshAt < 1200) return
 
     lastSilentRefreshAt = current
-    await loadBackups({ silent: true })
+    isSilentRefreshRunning = true
+    try {
+      await loadBackups({ silent: true })
+    } finally {
+      isSilentRefreshRunning = false
+    }
   }
 
   onMount(() => {

@@ -1520,11 +1520,13 @@ const preserveTargetSettingsForExternalImport = (
 const restoreExtractedDirs = (instance: core.Record, extractDir: string) => {
   const root = instanceRoot(instance.id)
   const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`
+  const failedInstallDir = `${root}/.restore-failed-${Date.now()}-${instance.id}`
+  const movedCurrentDirs: string[] = []
+  const installedDirs: string[] = []
+  const log = mkLog('instance:backup:restore:filesystem')
 
   $os.mkdirAll(root, DIR_MODE)
   $os.mkdirAll(rollbackDir, PRIVATE_DIR_MODE)
-
-  let movedOldDirs = false
 
   try {
     for (const dir of BACKUP_DIRS) {
@@ -1536,33 +1538,90 @@ const restoreExtractedDirs = (instance: core.Record, extractDir: string) => {
       const current = `${root}/${dir}`
       if (pathExists(current)) {
         $os.rename(current, `${rollbackDir}/${dir}`)
+        movedCurrentDirs.push(dir)
       }
     }
-
-    movedOldDirs = true
 
     for (const dir of BACKUP_DIRS) {
       $os.rename(`${extractDir}/${dir}`, `${root}/${dir}`)
+      installedDirs.push(dir)
     }
-
-    $os.removeAll(rollbackDir)
   } catch (error) {
-    if (movedOldDirs) {
-      for (const dir of BACKUP_DIRS) {
+    const rollbackErrors: string[] = []
+
+    if (installedDirs.length > 0) {
+      try {
+        $os.mkdirAll(failedInstallDir, PRIVATE_DIR_MODE)
+      } catch (rollbackError) {
+        rollbackErrors.push(`creation du dossier d'echec: ${errorMessage(rollbackError)}`)
+      }
+
+      for (const dir of [...installedDirs].reverse()) {
+        const current = `${root}/${dir}`
+        if (!pathExists(current)) continue
         try {
-          $os.removeAll(`${root}/${dir}`)
-        } catch {}
-        try {
-          if (pathExists(`${rollbackDir}/${dir}`)) {
-            $os.rename(`${rollbackDir}/${dir}`, `${root}/${dir}`)
-          }
-        } catch {}
+          $os.rename(current, `${failedInstallDir}/${dir}`)
+        } catch (rollbackError) {
+          rollbackErrors.push(`mise a l'ecart de ${dir}: ${errorMessage(rollbackError)}`)
+        }
       }
     }
+
+    for (const dir of movedCurrentDirs) {
+      const previous = `${rollbackDir}/${dir}`
+      if (!pathExists(previous)) continue
+
+      const current = `${root}/${dir}`
+      if (pathExists(current)) {
+        rollbackErrors.push(`restauration de ${dir}: le dossier cible existe encore`)
+        continue
+      }
+
+      try {
+        $os.rename(previous, current)
+      } catch (rollbackError) {
+        rollbackErrors.push(`restauration de ${dir}: ${errorMessage(rollbackError)}`)
+      }
+    }
+
+    if (rollbackErrors.length > 0) {
+      throw new Error(
+        `La restauration a echoue (${errorMessage(error)}). Le rollback automatique est incomplet: ${rollbackErrors.join(
+          '; '
+        )}. Les fichiers de secours sont conserves dans ${rollbackDir}.`
+      )
+    }
+
+    try {
+      $os.removeAll(failedInstallDir)
+    } catch (cleanupError) {
+      log(`cleanup deferred for failed install ${failedInstallDir}: ${errorMessage(cleanupError)}`)
+    }
+
     try {
       $os.removeAll(rollbackDir)
-    } catch {}
+    } catch (cleanupError) {
+      log(`cleanup deferred for restored rollback ${rollbackDir}: ${errorMessage(cleanupError)}`)
+    }
+
     throw error
+  }
+
+  // The replacement is committed once every new directory has been renamed in place.
+  // Cleanup may fail on files created by the root-owned PocketBase container; keeping
+  // the rollback directory is safer than undoing a successful restore.
+  try {
+    $os.removeAll(rollbackDir)
+  } catch (cleanupError) {
+    log(`restore committed; cleanup deferred for ${rollbackDir}: ${errorMessage(cleanupError)}`)
+  }
+
+  try {
+    if (pathExists(failedInstallDir)) {
+      $os.removeAll(failedInstallDir)
+    }
+  } catch (cleanupError) {
+    log(`cleanup deferred for ${failedInstallDir}: ${errorMessage(cleanupError)}`)
   }
 }
 

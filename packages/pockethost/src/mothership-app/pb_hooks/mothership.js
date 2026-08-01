@@ -1626,31 +1626,79 @@ const preserveTargetSettingsForExternalImport = (instance, sourceRoot, backup, m
 const restoreExtractedDirs = (instance, extractDir) => {
 	const root = instanceRoot$3(instance.id);
 	const rollbackDir = `${root}/.restore-rollback-${Date.now()}-${instance.id}`;
+	const failedInstallDir = `${root}/.restore-failed-${Date.now()}-${instance.id}`;
+	const movedCurrentDirs = [];
+	const installedDirs = [];
+	const log = mkLog("instance:backup:restore:filesystem");
 	$os.mkdirAll(root, DIR_MODE);
 	$os.mkdirAll(rollbackDir, PRIVATE_DIR_MODE);
-	let movedOldDirs = false;
 	try {
 		for (const dir of BACKUP_DIRS) if (!pathExists$2(`${extractDir}/${dir}`)) throw new BadRequestError(`Archive incomplete: ${dir} manquant.`);
 		for (const dir of BACKUP_DIRS) {
 			const current = `${root}/${dir}`;
-			if (pathExists$2(current)) $os.rename(current, `${rollbackDir}/${dir}`);
+			if (pathExists$2(current)) {
+				$os.rename(current, `${rollbackDir}/${dir}`);
+				movedCurrentDirs.push(dir);
+			}
 		}
-		movedOldDirs = true;
-		for (const dir of BACKUP_DIRS) $os.rename(`${extractDir}/${dir}`, `${root}/${dir}`);
-		$os.removeAll(rollbackDir);
+		for (const dir of BACKUP_DIRS) {
+			$os.rename(`${extractDir}/${dir}`, `${root}/${dir}`);
+			installedDirs.push(dir);
+		}
 	} catch (error) {
-		if (movedOldDirs) for (const dir of BACKUP_DIRS) {
+		const rollbackErrors = [];
+		if (installedDirs.length > 0) {
 			try {
-				$os.removeAll(`${root}/${dir}`);
-			} catch {}
+				$os.mkdirAll(failedInstallDir, PRIVATE_DIR_MODE);
+			} catch (rollbackError) {
+				rollbackErrors.push(`creation du dossier d'echec: ${errorMessage(rollbackError)}`);
+			}
+			for (const dir of [...installedDirs].reverse()) {
+				const current = `${root}/${dir}`;
+				if (!pathExists$2(current)) continue;
+				try {
+					$os.rename(current, `${failedInstallDir}/${dir}`);
+				} catch (rollbackError) {
+					rollbackErrors.push(`mise a l'ecart de ${dir}: ${errorMessage(rollbackError)}`);
+				}
+			}
+		}
+		for (const dir of movedCurrentDirs) {
+			const previous = `${rollbackDir}/${dir}`;
+			if (!pathExists$2(previous)) continue;
+			const current = `${root}/${dir}`;
+			if (pathExists$2(current)) {
+				rollbackErrors.push(`restauration de ${dir}: le dossier cible existe encore`);
+				continue;
+			}
 			try {
-				if (pathExists$2(`${rollbackDir}/${dir}`)) $os.rename(`${rollbackDir}/${dir}`, `${root}/${dir}`);
-			} catch {}
+				$os.rename(previous, current);
+			} catch (rollbackError) {
+				rollbackErrors.push(`restauration de ${dir}: ${errorMessage(rollbackError)}`);
+			}
+		}
+		if (rollbackErrors.length > 0) throw new Error(`La restauration a echoue (${errorMessage(error)}). Le rollback automatique est incomplet: ${rollbackErrors.join("; ")}. Les fichiers de secours sont conserves dans ${rollbackDir}.`);
+		try {
+			$os.removeAll(failedInstallDir);
+		} catch (cleanupError) {
+			log(`cleanup deferred for failed install ${failedInstallDir}: ${errorMessage(cleanupError)}`);
 		}
 		try {
 			$os.removeAll(rollbackDir);
-		} catch {}
+		} catch (cleanupError) {
+			log(`cleanup deferred for restored rollback ${rollbackDir}: ${errorMessage(cleanupError)}`);
+		}
 		throw error;
+	}
+	try {
+		$os.removeAll(rollbackDir);
+	} catch (cleanupError) {
+		log(`restore committed; cleanup deferred for ${rollbackDir}: ${errorMessage(cleanupError)}`);
+	}
+	try {
+		if (pathExists$2(failedInstallDir)) $os.removeAll(failedInstallDir);
+	} catch (cleanupError) {
+		log(`cleanup deferred for ${failedInstallDir}: ${errorMessage(cleanupError)}`);
 	}
 };
 const restoreArchive = (instance, backup, archiveInstance = instance, options = { mode: "in-place" }) => {

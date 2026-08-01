@@ -1100,6 +1100,15 @@ const assertNoRunningOperation = (instanceId) => {
 		running = null;
 	}
 	if (running) throw new BadRequestError("Une operation de sauvegarde est deja en cours pour cette instance.");
+	let restoring = [];
+	try {
+		restoring = $app.findRecordsByFilter("instance_backups", "restoreState = \"running\"", "", 500, 0);
+	} catch {
+		restoring = [];
+	}
+	if (restoring.some((backup) => {
+		return (`${recordObject(recordObject(backup.get("manifest")).restoreOperation).targetInstanceId || ""}` || backup.getString("instance")) === instanceId;
+	})) throw new BadRequestError("Une restauration est deja en cours pour cette instance.");
 };
 const setInstancePower = (instanceId, power) => {
 	const record = findInstance$2(instanceId);
@@ -1908,6 +1917,18 @@ const readRestoreNewInput = (e, source) => {
 	assertValidSubdomain(subdomain);
 	if (subdomainExists$1(subdomain)) throw new BadRequestError("Ce nom de nouvelle instance est deja utilise.");
 	return { subdomain };
+};
+const readRestoreInput = (e, source) => {
+	let data = new DynamicModel({ targetInstanceId: "" });
+	try {
+		e.bindBody(data);
+		data = JSON.parse(JSON.stringify(data));
+	} catch {
+		data = { targetInstanceId: "" };
+	}
+	const targetInstanceId = `${data.targetInstanceId || source.id}`.trim();
+	assertSafeInstanceId$4(targetInstanceId);
+	return { targetInstanceId };
 };
 const backupManifestObject = (backup) => {
 	return recordObject(backup.get("manifest"));
@@ -3036,66 +3057,64 @@ const HandleInstanceBackupDelete = (e) => {
 const HandleInstanceBackupRestore = (e) => {
 	const log = mkLog("POST:instance:backup:restore");
 	const authRecord = requireAuthRecord$2(e.auth);
-	const instance = findInstance$2(pathValue$2(e, "id"));
-	assertInstanceAccess$2(instance, authRecord);
-	assertNoRunningOperation(instance.id);
-	const backup = getBackupRecord(instance, pathValue$2(e, "backupId"));
+	const source = findInstance$2(pathValue$2(e, "id"));
+	assertInstanceAccess$2(source, authRecord);
+	const backup = getBackupRecord(source, pathValue$2(e, "backupId"));
 	if (backup.getString("status") !== "ready") throw new BadRequestError("Cette sauvegarde n'est pas prete.");
+	if (backup.getString("restoreState") === "running") throw new BadRequestError("Cette sauvegarde est deja en cours de restauration.");
+	const { targetInstanceId } = readRestoreInput(e, source);
+	const target = targetInstanceId === source.id ? source : findInstance$2(targetInstanceId);
+	assertInstanceAccess$2(target, authRecord);
+	assertNoRunningOperation(source.id);
+	if (target.id !== source.id) assertNoRunningOperation(target.id);
+	const restoreTarget = {
+		mode: target.id === source.id ? "in-place" : "existing-instance",
+		targetInstanceId: target.id,
+		targetSubdomain: target.getString("subdomain")
+	};
 	let power = { shouldRestart: false };
 	try {
 		updateRestoreOperation(backup, "stopping", {
-			mode: "in-place",
-			targetInstanceId: instance.id,
-			targetSubdomain: instance.getString("subdomain"),
-			label: instance.getBool("power") ? "Arrêt de l'instance avant restauration" : "Vérification de l'instance",
+			...restoreTarget,
+			label: target.getBool("power") ? "Arrêt de l'instance cible avant restauration" : "Vérification de l'instance cible",
 			percent: 4,
 			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
 			compressedBytes: Number(backup.get("compressedBytes") || 0)
 		});
-		power = stopForFilesystemOperation(instance);
+		power = stopForFilesystemOperation(target);
 		updateRestoreOperation(backup, "safety-backup", {
-			mode: "in-place",
-			targetInstanceId: instance.id,
-			targetSubdomain: instance.getString("subdomain"),
-			label: "Sauvegarde de sécurité avant restauration",
+			...restoreTarget,
+			label: "Sauvegarde de sécurité de l'instance cible",
 			percent: 8,
 			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
 			compressedBytes: Number(backup.get("compressedBytes") || 0)
 		});
-		createBackupForInstance(findInstance$2(instance.id), authRecord, "pre-restore", false, true);
-		restoreArchive(findInstance$2(instance.id), backup, instance, {
-			mode: "in-place",
-			targetInstanceId: instance.id,
-			targetSubdomain: instance.getString("subdomain"),
+		createBackupForInstance(findInstance$2(target.id), authRecord, "pre-restore", false, true);
+		restoreArchive(findInstance$2(target.id), backup, source, {
+			...restoreTarget,
 			markReady: !power.shouldRestart
 		});
 		if (power.shouldRestart) {
 			updateRestoreOperation(backup, "restarting", {
-				mode: "in-place",
-				targetInstanceId: instance.id,
-				targetSubdomain: instance.getString("subdomain"),
-				label: "Redémarrage de l'instance",
+				...restoreTarget,
+				label: "Redémarrage de l'instance cible",
 				percent: 96,
 				sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
 				compressedBytes: Number(backup.get("compressedBytes") || 0)
 			});
-			restartIfNeeded(instance.id, power);
+			restartIfNeeded(target.id, power);
 			updateRestoreOperation(backup, "ready", {
-				mode: "in-place",
-				targetInstanceId: instance.id,
-				targetSubdomain: instance.getString("subdomain"),
+				...restoreTarget,
 				label: "Restauration terminée",
 				percent: 100,
 				sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
 				compressedBytes: Number(backup.get("compressedBytes") || 0)
 			});
 		}
-		log(`restored ${backup.id} into ${instance.id}`);
+		log(`restored ${backup.id} from ${source.id} into ${target.id}`);
 	} catch (error) {
 		updateRestoreOperation(backup, "failed", {
-			mode: "in-place",
-			targetInstanceId: instance.id,
-			targetSubdomain: instance.getString("subdomain"),
+			...restoreTarget,
 			label: "Restauration échouée",
 			percent: 100,
 			sourceSizeBytes: Number(backup.get("sizeBytes") || 0),
@@ -3104,7 +3123,10 @@ const HandleInstanceBackupRestore = (e) => {
 		});
 		throw error;
 	}
-	return e.json(200, { status: "ok" });
+	return e.json(200, {
+		status: "ok",
+		targetInstanceId: target.id
+	});
 };
 const HandleInstanceBackupRestoreNew = (e) => {
 	const log = mkLog("POST:instance:backup:restore:new");

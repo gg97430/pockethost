@@ -920,9 +920,10 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       body: input,
     })
 
-  const restoreInstanceBackup = (id: InstanceId, backupId: string) =>
-    client.send<{ status: 'ok' }>(`/api/instance/${id}/backups/${backupId}/restore`, {
+  const restoreInstanceBackup = (id: InstanceId, backupId: string, input: { targetInstanceId?: InstanceId } = {}) =>
+    client.send<{ status: 'ok'; targetInstanceId: InstanceId }>(`/api/instance/${id}/backups/${backupId}/restore`, {
       method: 'POST',
+      body: input,
     })
 
   const restoreInstanceBackupToNewInstance = (id: InstanceId, backupId: string, input: { subdomain?: string }) =>

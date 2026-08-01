@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { goto } from '$app/navigation'
   import { onDestroy, onMount } from 'svelte'
   import CronSchedulePicker from '$components/CronSchedulePicker.svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
@@ -16,6 +15,8 @@
     type UpdateInstanceLitestreamPolicyInput,
     type UploadProgress,
   } from '$src/pocketbase-client'
+  import { globalInstancesStore } from '$util/stores'
+  import type { InstanceFields } from 'pockethost/common'
   import { instance } from '../store'
 
   type BackupOperation = {
@@ -27,7 +28,7 @@
     updatedAt: number
     sourceSizeBytes: number
     compressedBytes: number
-    mode?: 'in-place' | 'new-instance'
+    mode?: 'in-place' | 'existing-instance' | 'new-instance'
     targetInstanceId?: string
     targetSubdomain?: string
     error?: string
@@ -96,6 +97,9 @@
   let action = ''
   let errorMessage = ''
   let successMessage = ''
+  let restoreBackupSelection: InstanceBackup | null = null
+  let restoreDestinationMode: 'current' | 'other' = 'current'
+  let restoreTargetInstanceId = ''
   let backupName = ''
   let archiveFile: File | null = null
   let serverPath = ''
@@ -111,6 +115,14 @@
 
   $: ({ id, subdomain, cname, power } = $instance)
   $: displayName = cname || subdomain
+  $: otherRestoreInstances = Object.values($globalInstancesStore)
+    .filter((candidate) => candidate.id !== id)
+    .sort((left, right) => instanceDisplayName(left).localeCompare(instanceDisplayName(right), 'fr'))
+  $: selectedRestoreTarget =
+    restoreDestinationMode === 'current'
+      ? $instance
+      : otherRestoreInstances.find((candidate) => candidate.id === restoreTargetInstanceId)
+  $: canConfirmRestore = !!restoreBackupSelection && !!selectedRestoreTarget && !isBusy
   $: runningBackups = backups.filter((backup) => backup.status === 'running')
   $: hasRunningBackup = runningBackups.length > 0
   $: activeRunningBackup = runningBackups[0] || null
@@ -215,6 +227,8 @@
   }
 
   const backupDisplayName = (backup: InstanceBackup) => backup.name || backup.filename || backup.id
+  const instanceDisplayName = (candidate: InstanceFields) => candidate.cname || candidate.subdomain || candidate.id
+  const instancePowerLabel = (candidate: InstanceFields) => (candidate.power ? 'Active' : 'Arrêtée')
 
   function formatDuration(durationMs: number) {
     const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
@@ -507,7 +521,12 @@
     const rawPercent = Number(operation.percent || 0)
     const phase =
       typeof operation.phase === 'string' && operation.phase ? operation.phase : hasPendingAction ? 'queued' : ''
-    const mode = operation.mode === 'new-instance' ? 'new-instance' : 'in-place'
+    const mode =
+      operation.mode === 'new-instance'
+        ? 'new-instance'
+        : operation.mode === 'existing-instance'
+          ? 'existing-instance'
+          : 'in-place'
 
     return {
       kind: 'restore',
@@ -518,7 +537,9 @@
           : hasPendingAction
             ? mode === 'new-instance'
               ? 'Restauration vers une nouvelle instance'
-              : 'Restauration en cours'
+              : mode === 'existing-instance'
+                ? "Restauration vers l'instance cible"
+                : 'Restauration en cours'
             : phase === 'ready'
               ? 'Restauration terminée'
               : phase === 'failed'
@@ -590,6 +611,14 @@
     return terminalRestoreOperationForBackupId(restoreActionBackupId())
   }
 
+  function restoreCompletionMessage(operation: BackupOperation) {
+    if (operation.mode === 'new-instance') return 'Nouvelle instance restaurée'
+    if (operation.mode === 'existing-instance') {
+      return `Instance ${operation.targetSubdomain || 'cible'} restaurée`
+    }
+    return 'Instance restaurée'
+  }
+
   function clearTerminalRestoreAction(terminal: TerminalRestoreOperation) {
     const currentAction = action
     if (!currentAction.startsWith('restore:') && !currentAction.startsWith('restore-new:')) return
@@ -599,11 +628,7 @@
 
     if (terminal.operation.phase === 'ready') {
       errorMessage = ''
-      successMessage = terminal.operation.mode === 'new-instance' ? 'Nouvelle instance restaurée' : 'Instance restaurée'
-
-      if (currentAction.startsWith('restore-new:') && terminal.operation.targetInstanceId) {
-        void goto(`/instances/${terminal.operation.targetInstanceId}`)
-      }
+      successMessage = restoreCompletionMessage(terminal.operation)
       return
     }
 
@@ -632,7 +657,6 @@
       operationStartedAt
     )
     if (serverActivity === false) {
-      const currentAction = action
       action = ''
       operationStartedAt = 0
       if (backup.restoreState === 'failed') {
@@ -640,9 +664,7 @@
         errorMessage = backup.restoreError || 'Restauration échouée'
       } else {
         errorMessage = ''
-        successMessage = currentAction.startsWith('restore-new:')
-          ? 'Restauration terminée, nouvelle instance à vérifier dans le dashboard'
-          : 'Instance restaurée'
+        successMessage = restoreCompletionMessage(restoreOperation(backup))
       }
       return
     }
@@ -650,13 +672,10 @@
     const phase = restoreOperationPayload(backup).phase
     if (phase && phase !== 'ready' && phase !== 'failed') return
 
-    const currentAction = action
     action = ''
     operationStartedAt = 0
     errorMessage = ''
-    successMessage = currentAction.startsWith('restore-new:')
-      ? 'Restauration terminée, nouvelle instance à vérifier dans le dashboard'
-      : 'Instance restaurée'
+    successMessage = restoreCompletionMessage(restoreOperation(backup))
   }
 
   function restoreTagLabel(backup: InstanceBackup) {
@@ -665,6 +684,9 @@
     if (operation.mode === 'new-instance') {
       return `Restaurée vers ${operation.targetSubdomain || 'nouvelle instance'}`
     }
+    if (operation.mode === 'existing-instance') {
+      return `Restaurée vers ${operation.targetSubdomain || 'une autre instance'}`
+    }
     return 'Restaurée sur cette instance'
   }
 
@@ -672,16 +694,6 @@
     const operation = completedRestoreOperation(backup)
     if (!operation) return ''
     return `Restauration terminée le ${formatDate(new Date(operation.updatedAt).toISOString())}`
-  }
-
-  const suggestedRestoreSubdomain = () => {
-    const base = (subdomain || displayName || 'instance')
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-+|-+$/g, '')
-    const normalized = base.match(/^[a-z]/) ? base : `base-${base}`
-    return `${normalized.slice(0, 31).replace(/-+$/g, '')}-restore`
   }
 
   const loadBackups = async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -959,66 +971,54 @@
     }
   }
 
-  const restoreBackup = async (backup: InstanceBackup) => {
+  const openRestoreDestination = (backup: InstanceBackup) => {
     if (isBusy || backup.status !== 'ready') return
+    restoreBackupSelection = backup
+    restoreDestinationMode = 'current'
+    restoreTargetInstanceId = ''
+  }
 
-    const confirmed = window.confirm(
-      `Restaurer ${displayName} depuis cette sauvegarde ?\n\nUne sauvegarde de sécurité sera créée avant restauration. Si l'instance est active, elle sera arrêtée puis redémarrée après succès.`
-    )
-    if (!confirmed) return
+  const closeRestoreDestination = () => {
+    if (action.startsWith('restore:')) return
+    restoreBackupSelection = null
+    restoreDestinationMode = 'current'
+    restoreTargetInstanceId = ''
+  }
 
-    action = `restore:${backup.id}`
-    operationStartedAt = Date.now()
-    errorMessage = ''
-    successMessage = ''
-    try {
-      setTimeout(() => void refreshBackupsSilently(), 1200)
-      await client().restoreInstanceBackup(id, backup.id)
-      successMessage = 'Instance restaurée'
-      await loadBackups()
-    } catch (error) {
-      await loadBackups()
-      const terminal = terminalRestoreOperationForBackupId(backup.id)
-      if (terminal?.operation.phase === 'ready') {
-        errorMessage = ''
-        successMessage = 'Instance restaurée'
-      } else if (terminal?.operation.phase === 'failed') {
-        successMessage = ''
-        errorMessage = terminal.operation.error || 'Restauration échouée'
-      } else {
-        errorMessage = error instanceof Error ? client().parseError(error)[0] || error.message : `${error}`
-      }
-    } finally {
-      action = ''
-      operationStartedAt = 0
+  const selectOtherRestoreDestination = () => {
+    restoreDestinationMode = 'other'
+    const firstInstance = otherRestoreInstances[0]
+    if (!restoreTargetInstanceId && firstInstance) {
+      restoreTargetInstanceId = firstInstance.id
     }
   }
 
-  const restoreBackupToNewInstance = async (backup: InstanceBackup) => {
-    if (isBusy || backup.status !== 'ready') return
+  const handleRestoreModalKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && restoreBackupSelection) closeRestoreDestination()
+  }
 
-    const subdomain = window.prompt(
-      `Nom de la nouvelle instance à créer depuis ${backupDisplayName(backup)} ?\n\nElle sera créée éteinte, sans écraser ${displayName}.`,
-      suggestedRestoreSubdomain()
-    )
-    if (subdomain === null) return
+  const restoreBackup = async () => {
+    const backup = restoreBackupSelection
+    const target = selectedRestoreTarget
+    if (isBusy || !backup || backup.status !== 'ready' || !target) return
 
-    action = `restore-new:${backup.id}`
+    restoreBackupSelection = null
+    restoreTargetInstanceId = ''
     operationStartedAt = Date.now()
+    action = `restore:${backup.id}`
     errorMessage = ''
     successMessage = ''
     try {
       setTimeout(() => void refreshBackupsSilently(), 1200)
-      const result = await client().restoreInstanceBackupToNewInstance(id, backup.id, { subdomain: subdomain.trim() })
-      successMessage = 'Nouvelle instance restaurée'
-      await goto(`/instances/${result.instance.id}`)
+      await client().restoreInstanceBackup(id, backup.id, { targetInstanceId: target.id })
+      successMessage = target.id === id ? 'Instance restaurée' : `Instance ${instanceDisplayName(target)} restaurée`
+      await loadBackups()
     } catch (error) {
       await loadBackups()
       const terminal = terminalRestoreOperationForBackupId(backup.id)
       if (terminal?.operation.phase === 'ready') {
         errorMessage = ''
-        successMessage = 'Nouvelle instance restaurée'
-        if (terminal.operation.targetInstanceId) await goto(`/instances/${terminal.operation.targetInstanceId}`)
+        successMessage = restoreCompletionMessage(terminal.operation)
       } else if (terminal?.operation.phase === 'failed') {
         successMessage = ''
         errorMessage = terminal.operation.error || 'Restauration échouée'
@@ -1028,6 +1028,7 @@
     } finally {
       action = ''
       operationStartedAt = 0
+      restoreDestinationMode = 'current'
     }
   }
 
@@ -1051,6 +1052,116 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={handleRestoreModalKeydown} />
+
+{#if restoreBackupSelection}
+  <div
+    class="restore-modal-backdrop"
+    role="presentation"
+    onclick={(event) => {
+      if (event.target === event.currentTarget) closeRestoreDestination()
+    }}
+  >
+    <div class="restore-modal" role="dialog" aria-modal="true" aria-labelledby="restore-modal-title">
+      <header class="restore-modal__header">
+        <div class="restore-modal__icon"><wa-icon name="rotate-left"></wa-icon></div>
+        <div>
+          <span class="restore-modal__eyebrow">Destination de restauration</span>
+          <h2 id="restore-modal-title">Où restaurer cette sauvegarde&nbsp;?</h2>
+          <p>{backupDisplayName(restoreBackupSelection)}</p>
+        </div>
+        <button
+          type="button"
+          class="restore-modal__close"
+          onclick={closeRestoreDestination}
+          aria-label="Fermer le choix de destination"
+        >
+          <wa-icon name="xmark"></wa-icon>
+        </button>
+      </header>
+
+      <div class="restore-destination-options" role="radiogroup" aria-label="Destination de la restauration">
+        <button
+          type="button"
+          class:active={restoreDestinationMode === 'current'}
+          role="radio"
+          aria-checked={restoreDestinationMode === 'current'}
+          onclick={() => (restoreDestinationMode = 'current')}
+        >
+          <span class="restore-destination-options__icon"><wa-icon name="location-dot"></wa-icon></span>
+          <span>
+            <strong>Cette instance</strong>
+            <small>{displayName} · {power ? 'active' : 'arrêtée'}</small>
+          </span>
+          <wa-icon class="restore-destination-options__check" name="circle-check"></wa-icon>
+        </button>
+        <button
+          type="button"
+          class:active={restoreDestinationMode === 'other'}
+          role="radio"
+          aria-checked={restoreDestinationMode === 'other'}
+          disabled={otherRestoreInstances.length === 0}
+          onclick={selectOtherRestoreDestination}
+        >
+          <span class="restore-destination-options__icon"><wa-icon name="server"></wa-icon></span>
+          <span>
+            <strong>Une autre instance</strong>
+            <small>
+              {otherRestoreInstances.length > 0
+                ? `${otherRestoreInstances.length} disponible${otherRestoreInstances.length > 1 ? 's' : ''} sur le serveur`
+                : 'Aucune autre instance disponible'}
+            </small>
+          </span>
+          <wa-icon class="restore-destination-options__check" name="circle-check"></wa-icon>
+        </button>
+      </div>
+
+      {#if restoreDestinationMode === 'other'}
+        <div class="restore-instance-picker">
+          <span class="restore-instance-picker__label">Choisir l’instance cible</span>
+          <div class="restore-instance-list">
+            {#each otherRestoreInstances as candidate (candidate.id)}
+              <label class:active={restoreTargetInstanceId === candidate.id} class="restore-instance-option">
+                <input type="radio" bind:group={restoreTargetInstanceId} value={candidate.id} />
+                <span class="restore-instance-option__status" class:online={candidate.power}></span>
+                <span class="restore-instance-option__copy">
+                  <strong>{instanceDisplayName(candidate)}</strong>
+                  <small>{candidate.subdomain} · {instancePowerLabel(candidate)}</small>
+                </span>
+                <wa-icon name="chevron-right"></wa-icon>
+              </label>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <div class="restore-modal__warning">
+        <wa-icon name="triangle-exclamation"></wa-icon>
+        <p>
+          <strong
+            >Les données de {selectedRestoreTarget ? instanceDisplayName(selectedRestoreTarget) : 'la cible'} seront remplacées.</strong
+          >
+          Une sauvegarde de sécurité sera créée avant la restauration. Si la cible est active, elle sera arrêtée puis redémarrée
+          après succès.
+        </p>
+      </div>
+
+      <footer class="restore-modal__footer">
+        <button type="button" class="restore-modal__cancel" onclick={closeRestoreDestination}>Annuler</button>
+        <button
+          type="button"
+          class="restore-modal__confirm"
+          disabled={!canConfirmRestore}
+          onclick={() => void restoreBackup()}
+        >
+          <wa-icon name="rotate-left"></wa-icon>
+          Restaurer {selectedRestoreTarget ? instanceDisplayName(selectedRestoreTarget) : ''}
+        </button>
+      </footer>
+    </div>
+  </div>
+{/if}
 
 <FeatureTab title="Sauvegardes" bind:errorMessage {successMessage} successFlash>
   <svelte:fragment slot="summary">
@@ -1795,23 +1906,12 @@
                 type="button"
                 class="backup-action backup-action--restore"
                 disabled={isBusy || backup.status !== 'ready'}
-                onclick={() => restoreBackup(backup)}
+                onclick={() => openRestoreDestination(backup)}
                 title="Restaurer"
                 aria-label="Restaurer cette sauvegarde"
               >
                 <wa-icon name={action === `restore:${backup.id}` ? 'rotate' : 'rotate-left'}></wa-icon>
                 <span>Restaurer</span>
-              </button>
-              <button
-                type="button"
-                class="backup-action backup-action--restore-new"
-                disabled={isBusy || backup.status !== 'ready'}
-                onclick={() => restoreBackupToNewInstance(backup)}
-                title="Restaurer dans une nouvelle instance"
-                aria-label="Restaurer cette sauvegarde dans une nouvelle instance"
-              >
-                <wa-icon name={action === `restore-new:${backup.id}` ? 'rotate' : 'copy'}></wa-icon>
-                <span>Nouvelle instance</span>
               </button>
               <button
                 type="button"
@@ -1833,6 +1933,347 @@
 </FeatureTab>
 
 <style>
+  .restore-modal-backdrop {
+    position: fixed;
+    z-index: 1200;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    overflow-y: auto;
+    background: rgb(3 7 18 / 0.72);
+    padding: 1.25rem;
+    backdrop-filter: blur(7px);
+  }
+
+  .restore-modal {
+    width: min(100%, 46rem);
+    max-height: calc(100vh - 2.5rem);
+    overflow-y: auto;
+    border: 1px solid rgb(96 165 250 / 0.32);
+    border-radius: 0.85rem;
+    background: linear-gradient(145deg, rgb(59 130 246 / 0.08), transparent 38%), var(--app-surface);
+    box-shadow: 0 30px 90px rgb(0 0 0 / 0.45);
+    animation: restore-modal-enter 150ms ease-out;
+  }
+
+  .restore-modal__header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.9rem;
+    align-items: start;
+    border-bottom: 1px solid var(--app-border);
+    padding: 1.2rem 1.25rem 1rem;
+  }
+
+  .restore-modal__icon,
+  .restore-destination-options__icon {
+    display: inline-grid;
+    flex-shrink: 0;
+    place-items: center;
+    border: 1px solid rgb(59 130 246 / 0.3);
+    background: rgb(59 130 246 / 0.12);
+    color: #60a5fa;
+  }
+
+  .restore-modal__icon {
+    width: 2.7rem;
+    height: 2.7rem;
+    border-radius: 0.7rem;
+    font-size: 1.05rem;
+  }
+
+  .restore-modal__eyebrow {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: #60a5fa;
+    font-size: 0.68rem;
+    font-weight: 900;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .restore-modal__header h2 {
+    margin: 0;
+    color: var(--app-text-strong);
+    font-size: clamp(1.05rem, 2vw, 1.3rem);
+    font-weight: 900;
+    letter-spacing: -0.02em;
+  }
+
+  .restore-modal__header p {
+    margin: 0.28rem 0 0;
+    overflow-wrap: anywhere;
+    color: var(--app-text-muted);
+    font-size: 0.78rem;
+    font-weight: 650;
+  }
+
+  .restore-modal__close {
+    display: inline-grid;
+    width: 2.25rem;
+    height: 2.25rem;
+    place-items: center;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--app-text-muted);
+    cursor: pointer;
+  }
+
+  .restore-modal__close:hover {
+    border-color: var(--app-border);
+    background: var(--app-surface-soft);
+    color: var(--app-text-strong);
+  }
+
+  .restore-destination-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    padding: 1.1rem 1.25rem 0;
+  }
+
+  .restore-destination-options > button {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.7rem;
+    align-items: center;
+    border: 1px solid var(--app-border);
+    border-radius: 0.68rem;
+    background: var(--app-surface-soft);
+    padding: 0.85rem;
+    color: var(--app-text-strong);
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .restore-destination-options > button:hover:not(:disabled),
+  .restore-destination-options > button.active {
+    border-color: rgb(59 130 246 / 0.58);
+    background: rgb(59 130 246 / 0.1);
+    box-shadow: inset 0 0 0 1px rgb(59 130 246 / 0.12);
+  }
+
+  .restore-destination-options > button:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
+  }
+
+  .restore-destination-options__icon {
+    width: 2.15rem;
+    height: 2.15rem;
+    border-radius: 0.55rem;
+  }
+
+  .restore-destination-options strong,
+  .restore-destination-options small {
+    display: block;
+  }
+
+  .restore-destination-options strong {
+    font-size: 0.85rem;
+    font-weight: 900;
+  }
+
+  .restore-destination-options small {
+    margin-top: 0.18rem;
+    color: var(--app-text-muted);
+    font-size: 0.7rem;
+    font-weight: 650;
+  }
+
+  .restore-destination-options__check {
+    color: #60a5fa;
+    opacity: 0;
+    transform: scale(0.75);
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease;
+  }
+
+  .restore-destination-options > button.active .restore-destination-options__check {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .restore-instance-picker {
+    padding: 1rem 1.25rem 0;
+  }
+
+  .restore-instance-picker__label {
+    display: block;
+    margin-bottom: 0.45rem;
+    color: var(--app-text-muted);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .restore-instance-list {
+    display: grid;
+    max-height: 15rem;
+    overflow-y: auto;
+    gap: 0.42rem;
+    border: 1px solid var(--app-border);
+    border-radius: 0.65rem;
+    background: rgb(0 0 0 / 0.08);
+    padding: 0.45rem;
+  }
+
+  .restore-instance-option {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    gap: 0.65rem;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    padding: 0.65rem 0.7rem;
+    color: var(--app-text-strong);
+    cursor: pointer;
+  }
+
+  .restore-instance-option:hover,
+  .restore-instance-option.active {
+    border-color: rgb(59 130 246 / 0.42);
+    background: rgb(59 130 246 / 0.09);
+  }
+
+  .restore-instance-option input {
+    margin: 0;
+    accent-color: #3b82f6;
+  }
+
+  .restore-instance-option__status {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: #64748b;
+    box-shadow: 0 0 0 3px rgb(100 116 139 / 0.14);
+  }
+
+  .restore-instance-option__status.online {
+    background: #22c55e;
+    box-shadow: 0 0 0 3px rgb(34 197 94 / 0.14);
+  }
+
+  .restore-instance-option__copy {
+    min-width: 0;
+  }
+
+  .restore-instance-option__copy strong,
+  .restore-instance-option__copy small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .restore-instance-option__copy strong {
+    font-size: 0.82rem;
+    font-weight: 850;
+  }
+
+  .restore-instance-option__copy small {
+    margin-top: 0.12rem;
+    color: var(--app-text-muted);
+    font-size: 0.7rem;
+    font-weight: 650;
+  }
+
+  .restore-instance-option > wa-icon {
+    color: var(--app-text-faint);
+    font-size: 0.72rem;
+  }
+
+  .restore-modal__warning {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.65rem;
+    margin: 1rem 1.25rem 0;
+    border: 1px solid rgb(245 158 11 / 0.32);
+    border-radius: 0.62rem;
+    background: rgb(245 158 11 / 0.08);
+    padding: 0.75rem 0.85rem;
+    color: #d97706;
+  }
+
+  .restore-modal__warning p {
+    margin: 0;
+    color: var(--app-text-muted);
+    font-size: 0.76rem;
+    font-weight: 650;
+    line-height: 1.5;
+  }
+
+  .restore-modal__warning strong {
+    color: var(--app-text-strong);
+    font-weight: 900;
+  }
+
+  .restore-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    margin-top: 1.1rem;
+    border-top: 1px solid var(--app-border);
+    padding: 0.9rem 1.25rem 1.1rem;
+  }
+
+  .restore-modal__cancel,
+  .restore-modal__confirm {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: 0.52rem;
+    padding: 0 0.95rem;
+    font-size: 0.8rem;
+    font-weight: 850;
+    cursor: pointer;
+  }
+
+  .restore-modal__cancel {
+    border: 1px solid var(--app-border);
+    background: var(--app-surface-soft);
+    color: var(--app-text-strong);
+  }
+
+  .restore-modal__confirm {
+    border: 1px solid #2563eb;
+    background: #2563eb;
+    color: white;
+    box-shadow: 0 10px 24px rgb(37 99 235 / 0.24);
+  }
+
+  .restore-modal__confirm:hover:not(:disabled) {
+    border-color: #1d4ed8;
+    background: #1d4ed8;
+  }
+
+  .restore-modal__confirm:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
+  }
+
+  @keyframes restore-modal-enter {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
   .backup-cta {
     display: flex;
     flex-wrap: wrap;
@@ -2935,18 +3376,6 @@
     color: #2563eb;
   }
 
-  .backup-action--restore-new {
-    border-color: rgb(14 165 233 / 0.42);
-    background: rgb(14 165 233 / 0.1);
-    color: #0284c7;
-  }
-
-  .backup-action--restore-new:hover:not(:disabled) {
-    border-color: rgb(14 165 233 / 0.58);
-    background: rgb(14 165 233 / 0.16);
-    color: #0369a1;
-  }
-
   .backup-action--danger:hover:not(:disabled) {
     border-color: rgb(239 68 68 / 0.45);
     background: rgb(239 68 68 / 0.1);
@@ -2992,6 +3421,42 @@
   }
 
   @media (max-width: 720px) {
+    .restore-modal-backdrop {
+      place-items: end center;
+      padding: 0;
+    }
+
+    .restore-modal {
+      width: 100%;
+      max-height: 92vh;
+      border-right: 0;
+      border-bottom: 0;
+      border-left: 0;
+      border-radius: 0.9rem 0.9rem 0 0;
+    }
+
+    .restore-modal__header,
+    .restore-destination-options,
+    .restore-instance-picker,
+    .restore-modal__footer {
+      padding-right: 1rem;
+      padding-left: 1rem;
+    }
+
+    .restore-destination-options {
+      grid-template-columns: 1fr;
+    }
+
+    .restore-modal__warning {
+      margin-right: 1rem;
+      margin-left: 1rem;
+    }
+
+    .restore-modal__footer {
+      display: grid;
+      grid-template-columns: 0.72fr 1.28fr;
+    }
+
     .backup-cta,
     .backup-create-form {
       width: 100%;

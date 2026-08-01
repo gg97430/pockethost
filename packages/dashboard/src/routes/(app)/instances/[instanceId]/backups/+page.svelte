@@ -1090,7 +1090,7 @@
           onclick={() => (restoreDestinationMode = 'current')}
         >
           <span class="restore-destination-options__icon"><wa-icon name="location-dot"></wa-icon></span>
-          <span>
+          <span class="restore-destination-options__copy">
             <strong>Cette instance</strong>
             <small>{displayName} · {power ? 'active' : 'arrêtée'}</small>
           </span>
@@ -1105,7 +1105,7 @@
           onclick={selectOtherRestoreDestination}
         >
           <span class="restore-destination-options__icon"><wa-icon name="server"></wa-icon></span>
-          <span>
+          <span class="restore-destination-options__copy">
             <strong>Une autre instance</strong>
             <small>
               {otherRestoreInstances.length > 0
@@ -1138,12 +1138,14 @@
 
       <div class="restore-modal__warning">
         <wa-icon name="triangle-exclamation"></wa-icon>
-        <p>
+        <p class="restore-modal__warning-copy">
           <strong
             >Les données de {selectedRestoreTarget ? instanceDisplayName(selectedRestoreTarget) : 'la cible'} seront remplacées.</strong
           >
-          Une sauvegarde de sécurité sera créée avant la restauration. Si la cible est active, elle sera arrêtée puis redémarrée
-          après succès.
+          <span>
+            Une sauvegarde de sécurité sera créée avant la restauration. Si la cible est active, elle sera arrêtée puis
+            redémarrée après succès.
+          </span>
         </p>
       </div>
 
@@ -2035,7 +2037,9 @@
 
   .restore-destination-options > button {
     display: grid;
+    box-sizing: border-box;
     min-width: 0;
+    min-height: 4.25rem;
     grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 0.7rem;
     align-items: center;
@@ -2068,6 +2072,14 @@
     width: 2.15rem;
     height: 2.15rem;
     border-radius: 0.55rem;
+    line-height: 1;
+  }
+
+  .restore-destination-options__copy {
+    display: grid;
+    min-width: 0;
+    gap: 0.16rem;
+    align-content: center;
   }
 
   .restore-destination-options strong,
@@ -2078,17 +2090,22 @@
   .restore-destination-options strong {
     font-size: 0.85rem;
     font-weight: 900;
+    line-height: 1.2;
   }
 
   .restore-destination-options small {
-    margin-top: 0.18rem;
+    overflow-wrap: anywhere;
     color: var(--app-text-muted);
     font-size: 0.7rem;
     font-weight: 650;
+    line-height: 1.35;
   }
 
   .restore-destination-options__check {
+    justify-self: end;
     color: #60a5fa;
+    font-size: 0.9rem;
+    line-height: 1;
     opacity: 0;
     transform: scale(0.75);
     transition:
@@ -2195,6 +2212,7 @@
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     gap: 0.65rem;
+    align-items: start;
     margin: 1rem 1.25rem 0;
     border: 1px solid rgb(245 158 11 / 0.32);
     border-radius: 0.62rem;
@@ -2203,7 +2221,15 @@
     color: #d97706;
   }
 
-  .restore-modal__warning p {
+  .restore-modal__warning > wa-icon {
+    margin-top: 0.13rem;
+    line-height: 1;
+  }
+
+  .restore-modal__warning-copy {
+    display: grid;
+    min-width: 0;
+    gap: 0.16rem;
     margin: 0;
     color: var(--app-text-muted);
     font-size: 0.76rem;
@@ -2212,8 +2238,10 @@
   }
 
   .restore-modal__warning strong {
+    display: block;
     color: var(--app-text-strong);
     font-weight: 900;
+    line-height: 1.35;
   }
 
   .restore-modal__footer {

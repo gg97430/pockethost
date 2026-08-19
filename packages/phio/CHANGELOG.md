@@ -1,5 +1,12 @@
 # phio
 
+## Unreleased
+
+### Minor Changes
+
+- Allow self-hosted installations to override the SFTP endpoint with
+  `PHIO_SFTP_HOST` and `PHIO_SFTP_PORT`.
+
 ## 1.0.0
 
 ### Major Changes

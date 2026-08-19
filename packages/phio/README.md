@@ -58,18 +58,34 @@ Legacy `package.json` (`pockethost.instanceName`) and `pockethost.json` are migr
 
 ## Deploy key
 
-`phio dev` and `phio deploy` sync over **SFTP** (`ftp.pockethost.io:2222`) using an Ed25519 deploy key stored under `PHIO_HOME` (default `~/.config/phio/`). phio auto-registers a **`Phio`** key under Account → Keys on first use. Run `phio info` to inspect key status.
+`phio dev` and `phio deploy` sync over **SFTP** (`ftp.pockethost.io:2222` by default) using an Ed25519 deploy key stored under `PHIO_HOME` (default `~/.config/phio/`). phio auto-registers a **`Phio`** key under Account → Keys on first use. Run `phio info` to inspect key status.
 
 Customer docs: https://pockethost.io/docs/phio
 
 ## Environment variables
 
-| Variable | Purpose |
-| -------- | ------- |
-| `PHIO_USERNAME` | Override saved email (non-interactive login) |
-| `PHIO_PASSWORD` | Override saved password |
-| `PHIO_INSTANCE_NAME` | Override linked instance name |
-| `PHIO_MOTHERSHIP_URL` | Override mothership API URL |
-| `PHIO_HOME` | Override phio config directory |
+| Variable              | Purpose                                               |
+| --------------------- | ----------------------------------------------------- |
+| `PHIO_USERNAME`       | Override saved email (non-interactive login)          |
+| `PHIO_PASSWORD`       | Override saved password                               |
+| `PHIO_INSTANCE_NAME`  | Override linked instance name                         |
+| `PHIO_MOTHERSHIP_URL` | Override mothership API URL                           |
+| `PHIO_SFTP_HOST`      | Override the SFTP host (default: `ftp.pockethost.io`) |
+| `PHIO_SFTP_PORT`      | Override the SFTP port (default: `2222`)              |
+| `PHIO_HOME`           | Override phio config directory                        |
 
 Environment variables take precedence over `.phioconfig`.
+Run `phio info` to confirm the active SFTP endpoint.
+
+For a self-hosted PocketHost installation, configure both the mothership and
+SFTP endpoints:
+
+```bash
+export PHIO_MOTHERSHIP_URL=https://app2.monappli.re
+export PHIO_SFTP_HOST=ftp.app2.monappli.re
+export PHIO_SFTP_PORT=2222
+
+phio login
+phio link dekrosh-booking
+phio deploy
+```

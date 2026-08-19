@@ -2,6 +2,7 @@
 title: phio CLI
 description: Installer et utiliser le CLI phio pour lier, surveiller, déployer, parcourir les fichiers et suivre les logs des instances PocketHost via SFTP
 ---
+
 # phio CLI
 
 **phio** est l'outil en ligne de commande PocketHost pour synchroniser les fichiers locaux d'un projet PocketBase vers votre instance et suivre ses logs.
@@ -49,17 +50,17 @@ phio logs my-instance
 
 ## Commandes
 
-| Commande | Rôle |
-| ------- | ------- |
-| `phio login` | Connexion à PocketHost |
-| `phio logout` | Efface la session enregistrée |
-| `phio info` (`whoami`) | Affiche la connexion, l'instance liée et l'état de la clé de déploiement |
-| `phio list` | Liste les instances du compte |
-| `phio link [instance]` | Lie ce dossier à une instance (écrit `.phioconfig`) |
-| `phio dev [instance]` | Surveille les fichiers locaux et synchronise à chaque changement |
-| `phio deploy [instance]` | Synchronisation ponctuelle vers le distant |
-| `phio sftp [instance]` | Session SFTP interactive vers les fichiers de l'instance |
-| `phio logs [instance]` | Suit les logs d'instance via SSE |
+| Commande                 | Rôle                                                                     |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `phio login`             | Connexion à PocketHost                                                   |
+| `phio logout`            | Efface la session enregistrée                                            |
+| `phio info` (`whoami`)   | Affiche la connexion, l'instance liée et l'état de la clé de déploiement |
+| `phio list`              | Liste les instances du compte                                            |
+| `phio link [instance]`   | Lie ce dossier à une instance (écrit `.phioconfig`)                      |
+| `phio dev [instance]`    | Surveille les fichiers locaux et synchronise à chaque changement         |
+| `phio deploy [instance]` | Synchronisation ponctuelle vers le distant                               |
+| `phio sftp [instance]`   | Session SFTP interactive vers les fichiers de l'instance                 |
+| `phio logs [instance]`   | Suit les logs d'instance via SSE                                         |
 
 `dev` et `deploy` acceptent :
 
@@ -130,14 +131,14 @@ Si la clé distante **`Phio`** ne correspond pas à votre clé locale, supprimez
 
 phio se connecte à :
 
-| Paramètre | Valeur |
-| ------- | ----- |
-| Hôte | `ftp.pockethost.io` |
-| Port | `2222` |
-| Protocole | SFTP |
-| Nom d'utilisateur | Votre email PocketHost |
-| Auth | Clé de déploiement locale **`Phio`** |
-| Dossier distant | `{instanceName}/` (racine de l'instance) |
+| Paramètre         | Valeur                                   |
+| ----------------- | ---------------------------------------- |
+| Hôte              | `ftp.pockethost.io`                      |
+| Port              | `2222`                                   |
+| Protocole         | SFTP                                     |
+| Nom d'utilisateur | Votre email PocketHost                   |
+| Auth              | Clé de déploiement locale **`Phio`**     |
+| Dossier distant   | `{instanceName}/` (racine de l'instance) |
 
 La synchronisation est incrémentale. phio écrit `.ftp-deploy-sync-state.json` à la racine de l'instance pour suivre les changements. Ne supprimez ce fichier que si vous voulez une resynchronisation complète.
 
@@ -147,15 +148,31 @@ Utilisez **`phio sftp`** pour une session interactive avec les mêmes identifian
 
 Remplacez la config enregistrée sans modifier de fichiers :
 
-| Variable | Rôle |
-| -------- | ------- |
-| `PHIO_USERNAME` | Email PocketHost (connexion non interactive) |
-| `PHIO_PASSWORD` | Mot de passe PocketHost (avec `PHIO_USERNAME`) |
-| `PHIO_INSTANCE_NAME` | Nom d'instance par défaut |
-| `PHIO_MOTHERSHIP_URL` | URL API Mothership (production par défaut) |
-| `PHIO_HOME` | Dossier de config phio (chemin OS par défaut pour `phio`) |
+| Variable              | Rôle                                                      |
+| --------------------- | --------------------------------------------------------- |
+| `PHIO_USERNAME`       | Email PocketHost (connexion non interactive)              |
+| `PHIO_PASSWORD`       | Mot de passe PocketHost (avec `PHIO_USERNAME`)            |
+| `PHIO_INSTANCE_NAME`  | Nom d'instance par défaut                                 |
+| `PHIO_MOTHERSHIP_URL` | URL API Mothership (production par défaut)                |
+| `PHIO_SFTP_HOST`      | Hôte SFTP (`ftp.pockethost.io` par défaut)                |
+| `PHIO_SFTP_PORT`      | Port SFTP (`2222` par défaut)                             |
+| `PHIO_HOME`           | Dossier de config phio (chemin OS par défaut pour `phio`) |
 
 `PHIO_INSTANCE_NAME` est prioritaire sur `.phioconfig`.
+Lancez `phio info` pour vérifier l'endpoint SFTP actif.
+
+Pour une installation PocketHost auto-hébergée, configurez l'API et le
+serveur SFTP avant de lancer `phio` :
+
+```bash
+export PHIO_MOTHERSHIP_URL=https://app2.monappli.re
+export PHIO_SFTP_HOST=ftp.app2.monappli.re
+export PHIO_SFTP_PORT=2222
+
+phio login
+phio link dekrosh-booking
+phio deploy
+```
 
 ## Exemple CI
 

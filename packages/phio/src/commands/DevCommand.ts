@@ -100,9 +100,9 @@ export async function deployMyCode(
 
   console.log(`🚚 Deploy started for ${instanceName}`)
   const args: IFtpDeployArguments = {
-    server: PHIO_SFTP_HOST,
+    server: PHIO_SFTP_HOST(),
     protocol: 'sftp',
-    port: PHIO_SFTP_PORT,
+    port: PHIO_SFTP_PORT(),
     username: email,
     'private-key-path': privateKeyPath,
     'server-dir': `${instanceName}/`,

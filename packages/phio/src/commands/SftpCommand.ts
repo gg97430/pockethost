@@ -56,8 +56,8 @@ export const openSftpSession = async (
   }
 
   const connection: SftpConnection = {
-    host: PHIO_SFTP_HOST,
-    port: PHIO_SFTP_PORT,
+    host: PHIO_SFTP_HOST(),
+    port: PHIO_SFTP_PORT(),
     username: email,
     privateKeyPath,
     remoteDir: await resolveRemoteDir(instanceName),

@@ -1,5 +1,21 @@
-export const PHIO_SFTP_HOST = 'ftp.pockethost.io'
-export const PHIO_SFTP_PORT = 2222
+import env from 'env-var'
+
+export const DEFAULT_PHIO_SFTP_HOST = 'ftp.pockethost.io'
+export const DEFAULT_PHIO_SFTP_PORT = 2222
+
+export const PHIO_SFTP_HOST = () =>
+  env
+    .get('PHIO_SFTP_HOST')
+    .default(DEFAULT_PHIO_SFTP_HOST)
+    .required()
+    .asString()
+
+export const PHIO_SFTP_PORT = () =>
+  env
+    .get('PHIO_SFTP_PORT')
+    .default(DEFAULT_PHIO_SFTP_PORT)
+    .required()
+    .asPortNumber()
 
 export type SftpConnection = {
   host: string

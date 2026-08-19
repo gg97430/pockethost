@@ -8,6 +8,7 @@ import {
 import { PHIO_HOME } from '../lib/constants'
 import { savedInstanceName } from '../lib/defaultInstanceId'
 import { resolveAuthStatus } from '../lib/getClient'
+import { PHIO_SFTP_HOST, PHIO_SFTP_PORT } from '../lib/sftpConnection'
 
 export const showInfo = async () => {
   const auth = await resolveAuthStatus()
@@ -23,6 +24,7 @@ export const showInfo = async () => {
   console.log(`Config root: ${PHIO_HOME()}`)
   console.log(`Logged in as: ${auth.email}`)
   console.log(`Instance: ${savedInstanceName() || '(not linked)'}`)
+  console.log(`SFTP endpoint: ${PHIO_SFTP_HOST()}:${PHIO_SFTP_PORT()}`)
   console.log(`Deploy key label: ${DEPLOY_KEY_LABEL}`)
   console.log(`Deploy key private: ${status.privateKeyPath}`)
   console.log(`Deploy key public: ${status.publicKeyPath}`)

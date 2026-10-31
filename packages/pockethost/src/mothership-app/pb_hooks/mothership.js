@@ -352,6 +352,129 @@ const interpolateString = (template, dict) => {
 };
 
 //#endregion
+//#region src/lib/security/instanceAccess.ts
+/** Dashboard administrators may manage owned bases, explicitly attached bases, or every base as superadmin. */
+const canManageInstance = (instance, user) => !!user && user.collection().name === "users" && !user.getString("suspension") && (user.getBool("superAdmin") || instance.getString("uid") === user.id || (user.getStringSlice("managedInstances") || []).includes(instance.id));
+const instanceAccessQuery = (user, instanceField = "id", ownerField = "uid") => {
+	const params = { uid: user.id };
+	if (user.collection().name !== "users" || user.getString("suspension")) return {
+		filter: "1=0",
+		params
+	};
+	if (user.getBool("superAdmin")) return {
+		filter: "1=1",
+		params
+	};
+	const filters = [`${ownerField} = {:uid}`];
+	for (const [index, id] of Array.from(user.getStringSlice("managedInstances") || []).entries()) {
+		const key = `base${index}`;
+		params[key] = id;
+		filters.push(`${instanceField} = {:${key}}`);
+	}
+	return {
+		filter: `(${filters.join(" || ")})`,
+		params
+	};
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/settingsValidation.ts
+const email = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+const invalid$2 = (message) => {
+	throw new BadRequestError(message);
+};
+const validateOperatorSettingsInput = (input) => {
+	if (!input || typeof input !== "object" || Array.isArray(input)) invalid$2("Les paramètres doivent être un objet JSON.");
+	for (const key of [
+		"publicSignupEnabled",
+		"autoVerifyUsers",
+		"defaultInstancePower",
+		"defaultInstanceDevMode",
+		"defaultSyncAdmin",
+		"defaultAutoVacuum"
+	]) if (key in input && typeof input[key] !== "boolean") invalid$2(`Valeur oui/non attendue pour ${key}.`);
+	if ("defaultUserQuota" in input && (!Number.isSafeInteger(input.defaultUserQuota) || input.defaultUserQuota < 0)) invalid$2("Le quota doit être un entier positif ou nul.");
+	if ("defaultSubscription" in input && ![
+		"free",
+		"premium",
+		"founder",
+		"flounder",
+		"legacy"
+	].includes(input.defaultSubscription)) invalid$2("Offre par défaut invalide.");
+	if ("serverTimezone" in input) {
+		if (typeof input.serverTimezone !== "string" || !input.serverTimezone.trim()) invalid$2("Fuseau horaire obligatoire.");
+		const name = input.serverTimezone.trim();
+		const zone = new Timezone(name);
+		if (![
+			"UTC",
+			"Etc/UTC",
+			"Local"
+		].includes(name) && zone.string() === "UTC") invalid$2("Fuseau horaire invalide. Exemple : Indian/Reunion.");
+	}
+	for (const [key, max] of [
+		["supportEmail", 254],
+		["maintenanceMessage", 2e3],
+		["notes", 1e4]
+	]) if (key in input && (typeof input[key] !== "string" || input[key].length > max)) invalid$2(`Le champ ${key} est invalide ou trop long.`);
+	if (input.supportEmail && !email.test(input.supportEmail.trim())) invalid$2("Adresse email de support invalide.");
+	for (const group of ["smtp", "backupS3"]) if (group in input && (!input[group] || typeof input[group] !== "object" || Array.isArray(input[group]))) invalid$2(`Configuration ${group} invalide.`);
+	if (input.smtp) {
+		const s = input.smtp;
+		for (const key of ["enabled", "tls"]) if (key in s && typeof s[key] !== "boolean") invalid$2(`Valeur oui/non attendue pour SMTP ${key}.`);
+		if ("port" in s && (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535)) invalid$2("Le port SMTP doit être un entier entre 1 et 65535.");
+		if ("authMethod" in s && !["PLAIN", "LOGIN"].includes(s.authMethod)) invalid$2("Méthode SMTP attendue : PLAIN ou LOGIN.");
+		for (const key of [
+			"host",
+			"username",
+			"password",
+			"localName",
+			"senderName",
+			"senderAddress"
+		]) if (key in s && (typeof s[key] !== "string" || s[key].length > (key === "password" ? 1024 : 255) || /[\r\n\0]/.test(s[key]) && key !== "password")) invalid$2(`Champ SMTP ${key} invalide.`);
+		if (s.senderAddress && !email.test(s.senderAddress.trim())) invalid$2("Expéditeur email invalide : saisissez uniquement une adresse, par exemple contact@monappli.re. Le nom va dans « Expéditeur nom ».");
+		if (s.host && /[\s/\\@]/.test(s.host.trim())) invalid$2("L’hôte SMTP doit contenir uniquement un nom de serveur ou une adresse IP, sans https:// ni port.");
+	}
+	if (input.backupS3) {
+		const s = input.backupS3;
+		if ("enabled" in s && typeof s.enabled !== "boolean") invalid$2("Valeur oui/non attendue pour S3/R2.");
+		for (const key of [
+			"endpoint",
+			"bucket",
+			"prefix",
+			"region",
+			"accessKeyId",
+			"secretAccessKey"
+		]) if (key in s && (typeof s[key] !== "string" || s[key].length > (key === "secretAccessKey" ? 1024 : 500))) invalid$2(`Champ S3/R2 ${key} invalide.`);
+		if (s.endpoint && !/^https?:\/\/[^\s/?#@]+(?::\d+)?(?:\/[^\s?#]*)?$/.test(s.endpoint.trim())) invalid$2("Endpoint S3/R2 invalide : une URL http:// ou https:// est attendue, sans identifiants dans l’URL.");
+	}
+};
+const validateSMTPConfiguration = (smtp) => {
+	validateOperatorSettingsInput({ smtp });
+	if (smtp.enabled) {
+		if (!smtp.host) invalid$2("Hôte SMTP obligatoire lorsque SMTP est activé.");
+		if (!smtp.senderAddress || !email.test(smtp.senderAddress)) invalid$2("Adresse email expéditeur valide obligatoire lorsque SMTP est activé.");
+		if (smtp.username && !smtp.password) invalid$2("Mot de passe SMTP obligatoire pour cet utilisateur.");
+	}
+};
+const validateS3Configuration = (s) => {
+	validateOperatorSettingsInput({ backupS3: s });
+	if (s.enabled && (!s.endpoint || !s.bucket || !s.accessKeyId || !s.secretAccessKey)) invalid$2("S3/R2 activé : renseignez l’endpoint, le bucket, la clé d’accès et la clé secrète.");
+};
+const validateOperatorUserInput = (input) => {
+	if ("managedInstances" in input && (!Array.isArray(input.managedInstances) || input.managedInstances.length > 1e3 || input.managedInstances.some((id) => typeof id !== "string" || !/^[a-z0-9]{15}$/.test(id)))) invalid$2("Sélection de bases invalide (1000 bases maximum).");
+	for (const key of ["verified", "superAdmin"]) if (key in input && typeof input[key] !== "boolean") invalid$2(`Valeur oui/non attendue pour ${key}.`);
+	if ("subscription_quantity" in input && (!Number.isSafeInteger(input.subscription_quantity) || input.subscription_quantity < 0)) invalid$2("Le quota utilisateur doit être un entier positif ou nul.");
+	if ("subscription" in input && ![
+		"free",
+		"premium",
+		"founder",
+		"flounder",
+		"legacy"
+	].includes(input.subscription)) invalid$2("Offre utilisateur invalide.");
+	if ("suspension" in input && (typeof input.suspension !== "string" || input.suspension.length > 1e3)) invalid$2("Motif de suspension invalide ou trop long.");
+};
+
+//#endregion
 //#region src/lib/handlers/operatorAdmin/operatorSettings.ts
 const OPERATOR_SETTINGS_NAME = "operator_settings";
 const DEFAULT_SERVER_TIMEZONE = "Indian/Reunion";
@@ -368,6 +491,7 @@ const envBoolean = (name, fallback) => {
 	].includes(raw);
 };
 const envNumber = (name, fallback) => {
+	if (!envString(name).trim()) return fallback;
 	const value = Number(envString(name));
 	if (!Number.isFinite(value) || value < 0) return fallback;
 	return value;
@@ -401,6 +525,7 @@ const normalizeSMTPAuthMethod = (value) => {
 	return `${value || ""}`.trim().toUpperCase() === "LOGIN" ? "LOGIN" : "PLAIN";
 };
 const normalizeSMTPPort = (value, fallback = 587) => {
+	if (value === void 0 || value === null || `${value}`.trim() === "") return fallback;
 	const numeric = Number(value);
 	if (!Number.isFinite(numeric)) return fallback;
 	return Math.max(1, Math.min(65535, Math.floor(numeric)));
@@ -423,7 +548,7 @@ const normalizeBackupS3Settings = (value) => {
 		prefix: normalizeBackupS3Prefix(value?.prefix, defaults.prefix),
 		region: normalizeText(value?.region, defaults.region, 64) || "auto",
 		accessKeyId: normalizeText(value?.accessKeyId, defaults.accessKeyId, 255),
-		secretAccessKey: normalizeText(value?.secretAccessKey, defaults.secretAccessKey, 1024)
+		secretAccessKey: value?.secretAccessKey === void 0 ? defaults.secretAccessKey : `${value.secretAccessKey}`
 	};
 };
 const defaultSMTPSettings = () => {
@@ -436,7 +561,7 @@ const defaultSMTPSettings = () => {
 		host: normalizeText(envString("SMTP_HOST", smtp?.host || ""), "", 255),
 		port: normalizeSMTPPort(envString("SMTP_PORT"), smtp?.port || 587),
 		username: normalizeText(envString("SMTP_USERNAME", smtp?.username || ""), "", 255),
-		password: normalizeText(envString("SMTP_PASSWORD", smtp?.password || ""), "", 1024),
+		password: envString("SMTP_PASSWORD", smtp?.password || ""),
 		authMethod: normalizeSMTPAuthMethod(envString("SMTP_AUTH_METHOD", smtp?.authMethod || "PLAIN")),
 		tls: envBoolean("SMTP_TLS", smtp?.tls ?? false),
 		localName: normalizeText(envString("SMTP_LOCAL_NAME", smtp?.localName || ""), "", 255),
@@ -451,7 +576,7 @@ const normalizeSMTPSettings = (value) => {
 		host: normalizeText(value?.host, defaults.host, 255),
 		port: normalizeSMTPPort(value?.port, defaults.port),
 		username: normalizeText(value?.username, defaults.username, 255),
-		password: normalizeText(value?.password, defaults.password, 1024),
+		password: value?.password === void 0 ? defaults.password : `${value.password}`,
 		authMethod: normalizeSMTPAuthMethod(value?.authMethod || defaults.authMethod),
 		tls: !!(value?.tls ?? defaults.tls),
 		localName: normalizeText(value?.localName, defaults.localName, 255),
@@ -517,41 +642,39 @@ const readOperatorSettings = (app = $app) => {
 	}
 };
 const writeOperatorSettings = (settings, app = $app) => {
-	const collection = app.findCollectionByNameOrId("settings");
 	const normalized = normalizeOperatorSettings(settings);
-	const record = (() => {
+	validateSMTPConfiguration(normalized.smtp);
+	validateS3Configuration(normalized.backupS3);
+	app.runInTransaction((tx) => {
+		const collection = tx.findCollectionByNameOrId("settings");
+		let record;
 		try {
-			return app.findFirstRecordByData("settings", "name", OPERATOR_SETTINGS_NAME);
+			record = tx.findFirstRecordByData("settings", "name", OPERATOR_SETTINGS_NAME);
 		} catch {
-			const newRecord = new Record(collection);
-			newRecord.set("name", OPERATOR_SETTINGS_NAME);
-			return newRecord;
+			record = new Record(collection);
+			record.set("name", OPERATOR_SETTINGS_NAME);
 		}
-	})();
-	record.set("value", JSON.stringify(normalized));
-	app.save(record);
-	applyOperatorMailSettings(normalized, app);
+		record.set("value", JSON.stringify(normalized));
+		tx.save(record);
+		applyOperatorMailSettings(normalized, tx);
+	});
 	return normalized;
 };
 const applyOperatorMailSettings = (settings, app = $app) => {
-	const normalized = normalizeOperatorSettings(settings);
-	const appSettings = app.settings();
-	appSettings.smtp = {
-		...appSettings.smtp,
-		enabled: normalized.smtp.enabled,
-		host: normalized.smtp.host,
-		port: normalized.smtp.port,
-		username: normalized.smtp.username,
-		password: normalized.smtp.password,
-		authMethod: normalized.smtp.authMethod,
-		tls: normalized.smtp.tls,
-		localName: normalized.smtp.localName
-	};
-	appSettings.meta = {
-		...appSettings.meta,
-		senderName: normalized.smtp.senderName || appSettings.meta.senderName,
-		senderAddress: normalized.smtp.senderAddress || appSettings.meta.senderAddress
-	};
+	validateSMTPConfiguration(settings.smtp);
+	const appSettings = app.settings().clone();
+	for (const key of [
+		"enabled",
+		"host",
+		"port",
+		"username",
+		"password",
+		"authMethod",
+		"tls",
+		"localName"
+	]) appSettings.smtp[key] = settings.smtp[key];
+	if (settings.smtp.senderName) appSettings.meta.senderName = settings.smtp.senderName;
+	if (settings.smtp.senderAddress) appSettings.meta.senderAddress = settings.smtp.senderAddress;
 	app.save(appSettings);
 };
 const normalizeOperatorSettings = (value) => {
@@ -671,7 +794,7 @@ const pathExists$2 = (path) => {
 		return false;
 	}
 };
-const fileSize = (path) => {
+const fileSize$1 = (path) => {
 	try {
 		return Number($os.stat(path).size());
 	} catch {
@@ -1009,7 +1132,7 @@ const requireAuthRecord$2 = (authRecord) => {
 	return authRecord;
 };
 const assertInstanceAccess$2 = (instance, authRecord) => {
-	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
+	if (!canManageInstance(instance, authRecord)) throw new BadRequestError("Non autorise.");
 };
 const assertServerImportAllowed = (authRecord, requestedPath) => {
 	if (!authRecord.getBool("superAdmin")) throw new BadRequestError("L'import depuis un chemin serveur est reserve au superadmin.");
@@ -1287,6 +1410,8 @@ const createArchive = (instance, backup, kind) => {
 	const manifestPath = `${stagingDir}/manifest.json`;
 	const resourceSettings = backupResourceSettings();
 	assertSafeBackupFilename(filename);
+	backup.set("filename", filename);
+	$app.save(backup);
 	$os.mkdirAll(dir, DIR_MODE);
 	$os.removeAll(stagingDir);
 	$os.mkdirAll(stagingDir, PRIVATE_DIR_MODE);
@@ -1330,7 +1455,7 @@ const createArchive = (instance, backup, kind) => {
 		});
 		runBackupArchiveCommand(tmpPath, root, stagingDir);
 		$os.rename(tmpPath, finalPath);
-		const compressedBytes = fileSize(finalPath);
+		const compressedBytes = fileSize$1(finalPath);
 		updateBackupOperation(backup, "checksum", {
 			label: "Calcul de l'empreinte SHA-256",
 			percent: 86,
@@ -1420,6 +1545,7 @@ const createBackupForInstance = (instance, authRecord, kind, managePower, skipRu
 	const backup = createBackupRecord(instance, authRecord, kind, options.name);
 	let power = { shouldRestart: false };
 	try {
+		options.onCreated?.(backup);
 		if (managePower) {
 			updateBackupOperation(backup, "stopping", {
 				label: instance.getBool("power") ? "Arret de l'instance avant sauvegarde" : "Verification de l'instance",
@@ -1725,7 +1851,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: "Validation de l'archive",
 			percent: 18,
 			sourceSizeBytes: sourceBytes,
-			compressedBytes: compressedBytes || fileSize(archivePath)
+			compressedBytes: compressedBytes || fileSize$1(archivePath)
 		});
 		validateArchiveListing(archivePath, filename, true);
 	} catch (error) {
@@ -1734,7 +1860,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: "Restauration échouée",
 			percent: 100,
 			sourceSizeBytes: sourceBytes,
-			compressedBytes: compressedBytes || (archivePath ? fileSize(archivePath) : 0),
+			compressedBytes: compressedBytes || (archivePath ? fileSize$1(archivePath) : 0),
 			error: errorMessage(error)
 		});
 		throw error;
@@ -1752,7 +1878,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: resourceSettings.cpuLimitPercent > 0 ? `Extraction limitée à ${resourceSettings.cpuLimitPercent} % CPU` : "Extraction de l'archive",
 			percent: 32,
 			sourceSizeBytes: sourceBytes,
-			compressedBytes: compressedBytes || fileSize(archivePath)
+			compressedBytes: compressedBytes || fileSize$1(archivePath)
 		});
 		extractArchive(archivePath, filename, extractDir);
 		updateRestoreOperation(backup, "normalizing", {
@@ -1760,7 +1886,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: "Préparation des dossiers restaurés",
 			percent: 68,
 			sourceSizeBytes: sourceBytes,
-			compressedBytes: compressedBytes || fileSize(archivePath)
+			compressedBytes: compressedBytes || fileSize$1(archivePath)
 		});
 		const contentRoot = findArchiveContentRoot(extractDir, normalizedDir);
 		ensureRestorableDirs(contentRoot);
@@ -1772,7 +1898,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: "Remplacement des fichiers de l'instance",
 			percent: 78,
 			sourceSizeBytes: Number(manifest.sourceSizeBytes || sourceBytes || 0),
-			compressedBytes: compressedBytes || fileSize(archivePath)
+			compressedBytes: compressedBytes || fileSize$1(archivePath)
 		});
 		restoreExtractedDirs(instance, contentRoot);
 		updateRestoreOperation(backup, "finalizing", {
@@ -1780,7 +1906,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: "Finalisation de la restauration",
 			percent: 92,
 			sourceSizeBytes: Number(manifest.sourceSizeBytes || sourceBytes || 0),
-			compressedBytes: compressedBytes || fileSize(archivePath)
+			compressedBytes: compressedBytes || fileSize$1(archivePath)
 		});
 		if (manifest.instance?.version) {
 			const current = findInstance$2(instance.id);
@@ -1792,7 +1918,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: "Restauration terminée",
 			percent: 100,
 			sourceSizeBytes: Number(manifest.sourceSizeBytes || sourceBytes || 0),
-			compressedBytes: compressedBytes || fileSize(archivePath)
+			compressedBytes: compressedBytes || fileSize$1(archivePath)
 		});
 	} catch (error) {
 		updateRestoreOperation(backup, "failed", {
@@ -1800,7 +1926,7 @@ const restoreArchive = (instance, backup, archiveInstance = instance, options = 
 			label: "Restauration échouée",
 			percent: 100,
 			sourceSizeBytes: sourceBytes,
-			compressedBytes: compressedBytes || (archivePath ? fileSize(archivePath) : 0),
+			compressedBytes: compressedBytes || (archivePath ? fileSize$1(archivePath) : 0),
 			error: errorMessage(error)
 		});
 		throw error;
@@ -2324,8 +2450,11 @@ const buildLitestreamConfig = (policies) => {
 	const snapshotInterval = shortestDuration(validPolicies.map((policy) => policy.getString("snapshotInterval")), DEFAULT_LITESTREAM_SNAPSHOT_INTERVAL);
 	const snapshotRetention = longestDuration(validPolicies.map((policy) => policy.getString("snapshotRetention")), DEFAULT_LITESTREAM_SNAPSHOT_RETENTION);
 	const validationInterval = shortestDuration(validPolicies.map((policy) => policy.getString("validationInterval")), DEFAULT_LITESTREAM_VALIDATION_INTERVAL);
+	const metricsPort = Number($os.getenv("LITESTREAM_METRICS_PORT") || "9199");
+	if (!Number.isInteger(metricsPort) || metricsPort < 1024 || metricsPort > 65535) throw new BadRequestError("Port de supervision Litestream invalide.");
 	return {
 		config: [
+			`addr: 127.0.0.1:${metricsPort}`,
 			"logging:",
 			"  level: info",
 			"  type: text",
@@ -2379,13 +2508,20 @@ const reconcileLitestreamService = () => {
 		stopLitestreamService();
 		throw new Error("Aucune base data.db valide pour Litestream.");
 	}
-	$os.writeFile(litestreamConfigPath(), config, PRIVATE_FILE_MODE);
-	startOrRestartLitestreamService(litestreamConfigPath());
+	let currentConfig = "";
+	try {
+		currentConfig = toString($os.readFile(litestreamConfigPath()));
+	} catch {}
+	const needsRestart = currentConfig !== config || litestreamPm2Status() !== "online";
+	if (needsRestart) {
+		$os.writeFile(litestreamConfigPath(), config, PRIVATE_FILE_MODE);
+		startOrRestartLitestreamService(litestreamConfigPath());
+	}
 	const now = (/* @__PURE__ */ new Date()).toISOString();
 	const pm2Status = litestreamPm2Status();
 	const status = pm2Status === "online" ? "running" : pm2Status ? "failed" : "configured";
 	for (const policy of validPolicies) updateLitestreamPolicyState(policy, status, {
-		lastStartedAt: now,
+		lastStartedAt: needsRestart ? now : policy.getString("lastStartedAt"),
 		lastError: status === "failed" ? `PM2 status: ${pm2Status}` : ""
 	});
 	return validPolicies;
@@ -2687,7 +2823,7 @@ const refreshImportedBackupSizeMetadata = (backup) => {
 		assertSafeBackupFilename(filename);
 		const localPath = backupPath(backup.getString("instance"), filename);
 		if (!pathExists$2(localPath)) return backup;
-		const compressedBytes = fileSize(localPath);
+		const compressedBytes = fileSize$1(localPath);
 		const sourceBytes = archiveSourceSizeBytes(localPath, filename) || compressedBytes;
 		const record = latestBackupRecord(backup);
 		manifest = backupManifestObject(record);
@@ -2712,7 +2848,7 @@ const createImportedBackupFromImporter = (instance, authRecord, importer) => {
 	try {
 		const imported = importer();
 		if (!imported) throw new BadRequestError("Archive manquante. Envoyez un fichier archive ou renseignez un chemin serveur.");
-		const compressedBytes = fileSize(imported.localPath);
+		const compressedBytes = fileSize$1(imported.localPath);
 		const entries = listArchiveEntries(imported.localPath, imported.filename);
 		const sourceBytes = archiveSourceSizeBytes(imported.localPath, imported.filename) || compressedBytes;
 		markBackupReady(backup, {
@@ -2844,7 +2980,7 @@ const storeChunk = (instance, authRecord, uploadId, e) => {
 	} finally {
 		fs.close();
 	}
-	const uploadedBytes = fileSize(partPath);
+	const uploadedBytes = fileSize$1(partPath);
 	if (uploadedBytes !== expectedChunkBytes(session, index)) {
 		try {
 			$os.remove(partPath);
@@ -2863,7 +2999,7 @@ const assertAllChunksPresent = (instanceId, uploadId, session) => {
 	for (let index = 0; index < session.totalChunks; index++) {
 		const partPath = `${chunkPartsDir(instanceId, uploadId)}/${chunkPartFilename(index)}`;
 		if (!pathExists$2(partPath)) throw new BadRequestError(`Morceau ${index + 1}/${session.totalChunks} manquant.`);
-		const partBytes = fileSize(partPath);
+		const partBytes = fileSize$1(partPath);
 		if (partBytes !== expectedChunkBytes(session, index)) throw new BadRequestError(`Morceau ${index + 1}/${session.totalChunks} invalide.`);
 		totalBytes += partBytes;
 	}
@@ -2881,7 +3017,7 @@ const assembleChunkSessionArchive = (instance, uploadId, session) => {
 	$os.removeAll(finalPath);
 	try {
 		runCommand$1("sh", "-c", "set -e; : > \"$3\"; i=0; while [ \"$i\" -lt \"$2\" ]; do part=$(printf \"%s/%08d.part\" \"$1\" \"$i\"); cat \"$part\" >> \"$3\"; i=$((i + 1)); done", "sh", chunkPartsDir(instance.id, uploadId), `${session.totalChunks}`, tmpPath);
-		if (fileSize(tmpPath) !== session.size) throw new BadRequestError("Archive assemblee invalide.");
+		if (fileSize$1(tmpPath) !== session.size) throw new BadRequestError("Archive assemblee invalide.");
 		$os.rename(tmpPath, finalPath);
 		return finalPath;
 	} catch (error) {
@@ -3081,7 +3217,7 @@ const HandleInstanceBackupDownload = (e) => {
 	const localPath = ensureLocalArchive(instance, backup);
 	const filename = backup.getString("filename");
 	e.response.header().set("Content-Disposition", `attachment; filename="${filename}"`);
-	e.response.header().set("Content-Length", `${fileSize(localPath)}`);
+	e.response.header().set("Content-Length", `${fileSize$1(localPath)}`);
 	return e.fileFS($os.dirFS(backupDir(instance.id)), filename);
 };
 const HandleInstanceBackupDelete = (e) => {
@@ -3089,6 +3225,9 @@ const HandleInstanceBackupDelete = (e) => {
 	const instance = findInstance$2(pathValue$2(e, "id"));
 	assertInstanceAccess$2(instance, authRecord);
 	const backup = getBackupRecord(instance, pathValue$2(e, "backupId"));
+	if (backup.getString("kind") === "transfer") {
+		if ($app.findRecordsByFilter("instance_transfers", "backup = {:id} && (status = \"queued\" || status = \"preparing\" || status = \"ready\" || status = \"downloading\" || status = \"restoring\" || status = \"failed\")", "", 1, 0, { id: backup.id }).length) throw new BadRequestError("Terminez ou annulez le transfert avant de supprimer son archive.");
+	}
 	const filename = backup.getString("filename");
 	if (filename) {
 		assertSafeBackupFilename(filename);
@@ -3187,6 +3326,342 @@ const HandleInstanceBackupRestoreNew = (e) => {
 	log(`restored ${backup.id} from ${instance.id} into new instance ${target.id}`);
 	return e.json(200, { instance: target });
 };
+/** Shared archive operations for the background server-to-server transfer worker. */
+const instanceTransferBackupTools = {
+	latestReady: (instanceId) => {
+		const rows = [];
+		for (let offset = 0; offset < 1e4; offset += 500) {
+			const batch = $app.findRecordsByFilter("instance_backups", "instance = {:id} && status = \"ready\"", "", 500, offset, { id: instanceId }).filter((r) => !!r);
+			rows.push(...batch);
+			if (batch.length < 500) return sortBackupsNewestFirst$1(rows)[0];
+		}
+		throw new BadRequestError("Trop de sauvegardes : sélectionnez explicitement une archive.");
+	},
+	dataRoot: dataRoot$3,
+	assertNoRunningOperation,
+	checksum: sha256,
+	progress: (backup) => {
+		const manifest = JSON.parse(backup.getString("manifest") || "{}");
+		const filename = backup.getString("filename");
+		let compressedBytes = Number(backup.get("compressedBytes")) || 0;
+		if (filename) {
+			assertSafeBackupFilename(filename);
+			const path = backupPath(backup.getString("instance"), filename);
+			compressedBytes = pathExists$2(path) ? fileSize$1(path) : pathExists$2(`${path}.tmp`) ? fileSize$1(`${path}.tmp`) : 0;
+		}
+		return {
+			phase: manifest.operation?.phase || "",
+			compressedBytes,
+			sourceBytes: Number(manifest.operation?.sourceSizeBytes || manifest.sourceSizeBytes || backup.get("sizeBytes")) || 0
+		};
+	},
+	create: (instance, auth, transferId, onCreated) => createBackupForInstance(instance, auth, "transfer", false, false, {
+		name: `Transfert ${transferId}`,
+		uploadRemote: false,
+		onCreated
+	}),
+	archivePath: ensureLocalArchive,
+	receive: (instance, auth, archivePath, metadata) => {
+		const backup = createBackupRecord(instance, auth, "transfer", "Transfert depuis un autre serveur");
+		try {
+			const filename = createBackupFilename(instance, "transfer");
+			const localPath = backupPath(instance.id, filename);
+			$os.mkdirAll(backupDir(instance.id), PRIVATE_DIR_MODE);
+			runCommand$1("mv", archivePath, localPath);
+			markBackupReady(backup, {
+				filename,
+				localPath,
+				checksum: metadata.checksum,
+				sizeBytes: metadata.sizeBytes,
+				compressedBytes: metadata.compressedBytes,
+				manifest: {
+					format: BACKUP_FORMAT,
+					transfer: true,
+					sourceSizeBytes: metadata.sizeBytes
+				}
+			}, { uploadRemote: false });
+			return backup;
+		} catch (error) {
+			markBackupFailed(backup, error);
+			throw error;
+		}
+	},
+	restore: (instance, backup) => {
+		assertNoRunningOperation(instance.id);
+		waitUntilIdle(instance.id);
+		restoreArchive(instance, backup);
+	}
+};
+
+//#endregion
+//#region ../common/instanceHostnames.ts
+const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const normalizeInstanceHostname = (value) => {
+	if (typeof value !== "string") return;
+	const host = value.trim().toLowerCase().replace(/\.$/, "");
+	return HOSTNAME.test(host) ? host : void 0;
+};
+const instancePublicHostname = (instance, apex, legacy = "public") => {
+	if (instance.publicHostname) return instance.cname || instance.publicHostname;
+	if (legacy === "generated") return `${instance.subdomain}.${apex}`;
+	if (legacy === "canonical") return instance.cname || `${instance.id}.${apex}`;
+	return instance.cname || `${instance.subdomain}.${apex}`;
+};
+const instanceRoutingHostnames = (instance, apex) => {
+	const legacy = Array.isArray(instance.legacyHostnames) ? instance.legacyHostnames : [];
+	return [...new Set([
+		instance.cname,
+		instance.publicHostname,
+		...legacy,
+		`${instance.subdomain}.${apex}`,
+		...instance.id ? [`${instance.id}.${apex}`] : []
+	].map(normalizeInstanceHostname).filter((host) => !!host))];
+};
+const normalizeAssignedInstanceHostnames = (publicHostname, legacyHostnames) => {
+	if (publicHostname !== void 0 && publicHostname !== null && typeof publicHostname !== "string") throw Error("Adresse publique invalide.");
+	const primary = publicHostname ? normalizeInstanceHostname(publicHostname) : "";
+	if (publicHostname && !primary) throw Error("Adresse publique invalide.");
+	const supplied = legacyHostnames === void 0 || legacyHostnames === null ? [] : legacyHostnames;
+	if (!Array.isArray(supplied) || supplied.length > 16) throw Error("Seize anciens noms d’hôte au maximum.");
+	const legacy = supplied.map((value) => {
+		const host = normalizeInstanceHostname(value);
+		if (!host) throw Error("Ancien nom d’hôte invalide.");
+		return host;
+	});
+	return {
+		publicHostname: primary || "",
+		legacyHostnames: [...new Set(legacy)].sort()
+	};
+};
+
+//#endregion
+//#region src/lib/security/migratedNativeAdmin.ts
+const ID$6 = /^[a-z0-9]{15}$/;
+const unavailable = () => new InternalServerError("Identité native préservée indisponible ; synchronisation refusée.");
+const migratedNativeAdmin = (instance, owner) => {
+	if (!ID$6.test(instance.id) || instance.getString("uid") !== owner.id) throw new ForbiddenError("Propriétaire invalide.");
+	const keyName = `migration:native-admin:${instance.id}`;
+	const rows = $app.findRecordsByFilter("web_app_settings", "key = {:key}", "", 2, 0, { key: keyName });
+	if (!rows.length) return null;
+	if (rows.length !== 1) throw unavailable();
+	let payload;
+	try {
+		const key = $os.getenv("WEB_APPS_MASTER_KEY");
+		if (!/^[\x21-\x7e]{32}$/.test(key || "")) throw new Error("Key unavailable");
+		payload = JSON.parse(toString($security.decrypt(rows[0].getString("valueEncrypted"), key)));
+	} catch {
+		throw unavailable();
+	}
+	if (!payload || !ID$6.test(payload.ownerId || "")) throw unavailable();
+	if (payload.ownerId !== owner.id) return null;
+	if (!ID$6.test(payload.nativeId || "") || typeof payload.email !== "string" || payload.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email) || typeof payload.tokenKey !== "string" || payload.tokenKey.length < 20 || payload.tokenKey.length > 200 || typeof payload.passwordHash !== "string" || !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(payload.passwordHash)) throw unavailable();
+	return {
+		id: payload.nativeId,
+		email: payload.email,
+		tokenKey: payload.tokenKey,
+		passwordHash: payload.passwordHash,
+		preserveExistingNativeIdentity: true
+	};
+};
+
+//#endregion
+//#region ../common/platformDashboardHosts.ts
+/** These controller origins must never be reassigned to a tenant database or website. */
+const PLATFORM_DASHBOARD_HOSTS = [
+	"monappli.re",
+	"app.monappli.re",
+	"app2.monappli.re",
+	"app3.monappli.re",
+	"app4.monappli.re"
+];
+const PLATFORM_CONTROLLER_HOSTS = ["pockethost-central.monappli.re", "pockethost-central.app2.monappli.re"];
+const PLATFORM_CONTROL_HOSTS = [...PLATFORM_DASHBOARD_HOSTS, ...PLATFORM_CONTROLLER_HOSTS];
+
+//#endregion
+//#region src/lib/handlers/instance/hostnames.ts
+const apex = () => $os.getenv("APEX_DOMAIN") || "pockethost.lvh.me";
+const assigned = (record) => normalizeAssignedInstanceHostnames(record.getString("publicHostname"), JSON.parse(record.getString("legacyHostnames") || "[]"));
+const instanceHostnameView = (record) => ({
+	id: record.id,
+	subdomain: record.getString("subdomain"),
+	cname: record.getString("cname"),
+	...assigned(record)
+});
+const eachRecord = (store, collection, visit) => {
+	for (let offset = 0;; offset += 500) {
+		const rows = store.findRecordsByFilter(collection, "id != \"\"", "id", 500, offset);
+		for (const record of rows) if (visit(record)) return true;
+		if (rows.length < 500) return false;
+	}
+};
+/** The two assigned fields are writable only by current platform operators, including through the native API. */
+const canAssignInstanceHostnames = (auth) => !!auth && (auth.collection().name === "_superusers" || auth.collection().name === "users" && auth.getBool("superAdmin") && !auth.getString("suspension"));
+const assertInstanceHostnameOperator = (auth) => {
+	if (!canAssignInstanceHostnames(auth)) throw new ForbiddenError("Les adresses de migration sont réservées à la plateforme.");
+};
+const GuardInstanceHostnamesRequest = (e) => {
+	let next;
+	try {
+		next = assigned(e.record);
+	} catch {
+		throw new BadRequestError("Adresses de migration invalides.");
+	}
+	let before = {
+		publicHostname: "",
+		legacyHostnames: []
+	};
+	if (!e.record.isNew()) before = assigned((e.app || $app).findRecordById("instances", e.record.id));
+	if (JSON.stringify(before) !== JSON.stringify(next)) assertInstanceHostnameOperator(e.auth);
+	return e.next();
+};
+/** Exact ownership lookup is shared with website domain claims; an old database URL must never become a site. */
+const instanceOwnsHostname = (hostname, exceptId = "", store = $app) => {
+	const host = normalizeInstanceHostname(hostname);
+	if (!host) return false;
+	return eachRecord(store, "instances", (record) => record.id !== exceptId && instanceRoutingHostnames(instanceHostnameView(record), apex()).includes(host));
+};
+const protectedHost = (host) => {
+	const currentApex = apex();
+	return [
+		currentApex,
+		($os.getenv("APP_HOST") || "").toLowerCase(),
+		/^https?:\/\/([^/:]+)/i.exec($os.getenv("APP_URL") || "")?.[1]?.toLowerCase(),
+		`app.${currentApex}`,
+		`${$os.getenv("MOTHERSHIP_NAME") || "pockethost-central"}.${currentApex}`,
+		...PLATFORM_CONTROL_HOSTS
+	].includes(host);
+};
+const collectionExists = (store, collection) => {
+	try {
+		store.findCollectionByNameOrId(collection);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const websiteOwnsHostname = (host, store) => {
+	if (collectionExists(store, "web_app_domains") && store.findRecordsByFilter("web_app_domains", "host={:host} && status!=\"pending_dns\"", "", 1, 0, { host }).length) return true;
+	return collectionExists(store, "web_apps") && eachRecord(store, "web_apps", (record) => {
+		return normalizeInstanceHostname(JSON.parse(record.getString("config") || "{}").generatedDomain) === host;
+	});
+};
+/** Model guard covers custom platform routes, direct collection API calls and internal writes alike. */
+const ValidateInstanceHostnames = (e) => {
+	const record = e.record, store = e.app || $app;
+	let values;
+	try {
+		values = assigned(record);
+	} catch {
+		throw new BadRequestError("Adresses de migration invalides (FQDN uniquement, seize alias maximum).");
+	}
+	record.set("publicHostname", values.publicHostname);
+	record.set("legacyHostnames", values.legacyHostnames);
+	const hosts = instanceRoutingHostnames({
+		...instanceHostnameView(record),
+		...values
+	}, apex());
+	if (!record.isNew()) {
+		const before = store.findRecordById("instances", record.id);
+		if (JSON.stringify(hosts) === JSON.stringify(instanceRoutingHostnames(instanceHostnameView(before), apex()))) return e.next();
+	}
+	for (const host of hosts) if (protectedHost(host) || instanceOwnsHostname(host, record.id, store) || websiteOwnsHostname(host, store)) throw new BadRequestError("Ce nom d’hôte est déjà réservé.");
+	return e.next();
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceConsoleAuth.ts
+const TICKETS = "ph_console_auth_tickets";
+const decode$1 = (raw) => raw ? JSON.parse(`${raw}`) : {};
+const prune = (tickets) => {
+	for (const key of Object.keys(tickets)) if (tickets[key].expiresAt <= Date.now()) delete tickets[key];
+	return tickets;
+};
+const instanceFor = (e) => {
+	const id = e.request.pathValue("id");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Instance introuvable.");
+	return $app.findRecordById("instances", id);
+};
+const consoleUrl = (instance) => {
+	const host = instancePublicHostname(instanceHostnameView(instance), $os.getenv("APEX_DOMAIN") || "pockethost.lvh.me");
+	if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d+)?$/i.test(host)) throw new BadRequestError("Adresse de console invalide.");
+	return `${($os.getenv("APP_URL") || "").startsWith("http://") ? "http" : "https"}://${host}/_/ph-auth`;
+};
+const assertAccess = (instance, user) => {
+	if (user.collection().name !== "users" || !canManageInstance(instance, user)) throw new ForbiddenError("Vous ne pouvez pas administrer cette instance.");
+	if (user.getString("suspension") || instance.getString("suspension")) throw new ForbiddenError("Accès suspendu.");
+};
+const result = (e, value) => {
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(200, value);
+};
+/** Public address only: a logged-out dashboard bridge can return to the native sign-in form. */
+const HandleInstanceConsoleInfo = (e) => result(e, { url: consoleUrl(instanceFor(e)) });
+const HandleInstanceConsoleTicket = (e) => {
+	const instance = instanceFor(e);
+	if (!e.auth) throw new UnauthorizedError("Connexion au dashboard requise.");
+	assertAccess(instance, e.auth);
+	if (!instance.getBool("power")) throw new BadRequestError("Démarrez cette instance avant d’ouvrir sa console.");
+	const version = instance.getString("version").match(/^(\d+)\.(\d+)/);
+	if (!version || Number(version[1]) === 0 && Number(version[2]) < 23) throw new BadRequestError("La connexion depuis le dashboard nécessite PocketBase 0.23 ou ultérieur.");
+	const headers = JSON.parse(JSON.stringify(e.requestInfo().headers || {}));
+	const payload = JSON.parse(JSON.stringify($security.parseUnverifiedJWT((headers.authorization || "").replace(/^Bearer\s+/i, ""))));
+	const expiresAt = Math.min(Date.now() + 6e4, Number(payload.exp) * 1e3);
+	if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new UnauthorizedError("Session expirée.");
+	const ticket = $security.randomString(64);
+	const user = e.auth;
+	$app.store().setFunc(TICKETS, (raw) => {
+		const tickets = prune(decode$1(raw));
+		for (const key of Object.keys(tickets)) if (tickets[key].user === user.id && tickets[key].instance === instance.id) delete tickets[key];
+		if (Object.keys(tickets).length >= 1e3) throw new TooManyRequestsError("Réessayez dans une minute.");
+		tickets[$security.sha256(ticket)] = {
+			instance: instance.id,
+			owner: instance.getString("uid"),
+			user: user.id,
+			authKey: $security.sha256(user.getString("tokenKey")),
+			expiresAt
+		};
+		return JSON.stringify(tickets);
+	});
+	return result(e, {
+		url: consoleUrl(instance),
+		ticket,
+		expiresAt: new Date(expiresAt).toISOString()
+	});
+};
+/** The instance exchanges a one-use capability; its own id comes from platform configuration. */
+const HandleInstanceConsoleConsume = (e) => {
+	const instance = instanceFor(e);
+	const input = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	if (!/^[A-Za-z0-9]{64}$/.test(input.ticket || "")) throw new UnauthorizedError("Autorisation de console invalide.");
+	let consumed;
+	$app.store().setFunc(TICKETS, (raw) => {
+		const tickets = prune(decode$1(raw));
+		const key = $security.sha256(input.ticket);
+		const ticket = tickets[key];
+		if (ticket?.instance === instance.id) {
+			consumed = ticket;
+			delete tickets[key];
+		}
+		return JSON.stringify(tickets);
+	});
+	if (!consumed) throw new UnauthorizedError("Autorisation expirée ou déjà utilisée. Rouvrez la console depuis le dashboard.");
+	const user = $app.findRecordById("users", consumed.user);
+	assertAccess(instance, user);
+	if (instance.getString("uid") !== consumed.owner || !instance.getBool("power") || !$security.equal(consumed.authKey, $security.sha256(user.getString("tokenKey")))) throw new UnauthorizedError("Cette autorisation de console a été révoquée.");
+	const owner = $app.findRecordById("users", consumed.owner);
+	const native = migratedNativeAdmin(instance, owner);
+	if (native) return result(e, {
+		instance: instance.id,
+		user: native.id,
+		email: native.email
+	});
+	return result(e, {
+		instance: instance.id,
+		user: owner.id,
+		email: owner.getString("email")
+	});
+};
+const PruneInstanceConsoleTickets = () => $app.store().setFunc(TICKETS, (raw) => JSON.stringify(prune(decode$1(raw))));
 
 //#endregion
 //#region src/lib/util/versions.ts
@@ -3213,6 +3688,8661 @@ const readPocketbaseVersions = () => {
 const listVersions = () => readPocketbaseVersions().map((entry) => entry.range);
 
 //#endregion
+//#region ../common/webAccess.ts
+/**
+* Applications web — rôles par projet. Logique pure, partagée par les hooks mothership (Goja JSVM : synchrone, sans API
+* Node) et le dashboard.
+*/
+const WEB_ROLES = [
+	"viewer",
+	"developer",
+	"admin",
+	"owner"
+];
+const WEB_PERMISSIONS = {
+	"project.read": "viewer",
+	"members.read": "viewer",
+	"app.read": "viewer",
+	"logs.read": "viewer",
+	"variables.read": "viewer",
+	"app.deploy": "developer",
+	"variables.write": "developer",
+	"tasks.run": "developer",
+	"backups.create": "developer",
+	"previews.manage": "developer",
+	"app.configure": "admin",
+	"variables.reveal": "admin",
+	"terminal.open": "admin",
+	"domains.manage": "admin",
+	"backups.manage": "admin",
+	"storage.manage": "admin",
+	"notifications.manage": "admin",
+	"tasks.manage": "admin",
+	"health.manage": "admin",
+	"ci.manage": "admin",
+	"environments.manage": "admin",
+	"members.manage": "admin",
+	"project.update": "admin",
+	"alerts.test": "admin",
+	"source.deployKey.rotate": "admin",
+	"source.hostKey.scan": "admin",
+	"members.manageAdmins": "owner",
+	"project.rename": "owner",
+	"project.delete": "owner",
+	"app.delete": "owner",
+	"app.move": "owner",
+	"platform.github": "platform",
+	"platform.recovery": "platform",
+	"platform.settings": "platform",
+	"project.create": "platform",
+	"app.create": "platform",
+	"app.attach": "platform",
+	"app.detach": "platform",
+	"app.repository": "platform",
+	"source.git.configure": "platform"
+};
+const WEB_PERMISSION_NAMES = Object.keys(WEB_PERMISSIONS);
+const isWebRole = (value) => typeof value === "string" && WEB_ROLES.indexOf(value) >= 0;
+const isWebPermission = (value) => typeof value === "string" && Object.prototype.hasOwnProperty.call(WEB_PERMISSIONS, value);
+/** -1 pour une valeur inconnue ou vide : aucun accès. */
+const webRoleRank = (role) => isWebRole(role) ? WEB_ROLES.indexOf(role) : -1;
+const isWebPlatformPermission = (permission) => WEB_PERMISSIONS[permission] === "platform";
+/** `platform` = superAdmin non suspendu ; un rôle de projet n'ouvre jamais une permission plateforme. */
+const webRoleAllows = (role, permission) => {
+	if (!isWebPermission(permission)) return false;
+	if (role === "platform") return true;
+	const min = WEB_PERMISSIONS[permission];
+	if (min === "platform") return false;
+	const rank = webRoleRank(role);
+	return rank >= 0 && rank >= webRoleRank(min);
+};
+const webCapabilities = (role) => {
+	const out = {};
+	for (const name of WEB_PERMISSION_NAMES) out[name] = webRoleAllows(role, name);
+	return out;
+};
+/** Un acteur peut-il gérer une ligne de membre de ce rôle (ou attribuer ce rôle) ? */
+const webCanManageRole = (actor, role) => {
+	if (!isWebRole(role)) return false;
+	if (actor === "platform" || actor === "owner") return true;
+	return actor === "admin" && webRoleRank(role) < webRoleRank("admin");
+};
+/**
+* Règles d'escalade. Retourne '' si autorisé, sinon { code, message } (message en français). `ownerCount` = nombre
+* actuel de propriétaires du projet, ligne ciblée comprise. Un projet qui a au moins un propriétaire en garde toujours
+* au moins un. HTTP conseillé : invalid -> 400, forbidden -> 403, last-owner -> 400.
+*/
+const webMemberChangeError = (actor, change) => {
+	const fail = (code, message) => ({
+		code,
+		message
+	});
+	const lastOwner = (from, ownerCount) => from === "owner" && ownerCount <= 1;
+	if (change.kind === "leave") {
+		if (!isWebRole(change.from)) return fail("invalid", "Vous n’êtes pas membre de ce projet.");
+		return lastOwner(change.from, change.ownerCount) ? fail("last-owner", "Vous êtes le dernier propriétaire. Nommez un autre propriétaire avant de quitter le projet.") : "";
+	}
+	if (actor !== "platform" && !webRoleAllows(actor, "members.manage")) return fail("forbidden", "Droits insuffisants pour gérer les membres.");
+	if (change.kind === "add" || change.kind === "change") {
+		if (!isWebRole(change.role)) return fail("invalid", "Rôle attendu : viewer, developer, admin ou owner.");
+		if (!webCanManageRole(actor, change.role)) return fail("forbidden", "Seul un propriétaire peut attribuer le rôle administrateur ou propriétaire.");
+	}
+	if (change.kind === "add") return "";
+	if (!webCanManageRole(actor, change.from)) return fail("forbidden", "Seul un propriétaire peut modifier un administrateur ou un propriétaire.");
+	if (change.kind === "change" && change.role === change.from) return "";
+	return lastOwner(change.from, change.ownerCount) ? fail("last-owner", "Un projet doit garder au moins un propriétaire.") : "";
+};
+
+//#endregion
+//#region ../common/webQueue.ts
+/**
+* `queue` : jobs en attente, du plus ancien au plus récent. Un seul locataire : FIFO strict. Sinon le plus ancien job
+* de l'application servie il y a le plus longtemps (jamais servie : 0) ; à égalité, le plus ancien job.
+*/
+const nextWebQueuedJob = (queue, tenantOf, lastServedAt) => {
+	const heads = /* @__PURE__ */ new Map();
+	for (const job of queue) if (!heads.has(job.appId)) heads.set(job.appId, job);
+	if (new Set([...heads.keys()].map(tenantOf)).size < 2) return queue[0];
+	let next, oldest = Infinity;
+	for (const [appId, job] of heads) {
+		const at = lastServedAt(appId);
+		if (at < oldest) {
+			next = job;
+			oldest = at;
+		}
+	}
+	return next;
+};
+
+//#endregion
+//#region src/lib/security/webProjectAccess.ts
+/**
+* Applications web : même modèle que `instanceAccess.ts` (canManageInstance / instanceAccessQuery). Refus si l'acteur
+* n'est pas un utilisateur dashboard ou est suspendu ; superAdmin => tout (1=1). Le rôle d'un utilisateur sur un projet
+* est porté par `web_project_members` (une relation sur users ne peut pas porter de rôle). Collection à règles API
+* nulles : aucune auto-attribution possible via l'API PocketBase.
+*/
+const WEB_PROJECT_MEMBERS = "web_project_members";
+const ID$5 = /^[a-z0-9]{15}$/;
+const usable = (user) => !!user && user.collection().name === "users" && !user.getString("suspension");
+const projectIdOf = (project) => typeof project === "string" ? project : project.id;
+const rolesFrom = (minRole) => WEB_ROLES.filter((role) => webRoleRank(role) >= webRoleRank(minRole));
+const isWebPlatformAdmin = (user) => usable(user) && user.getBool("superAdmin");
+const webProjectMemberRecord = (project, user, store = $app) => {
+	const projectId = projectIdOf(project), userId = typeof user === "string" ? user : user.id;
+	if (!ID$5.test(userId || "") || !ID$5.test(projectId || "")) return null;
+	try {
+		return store.findFirstRecordByFilter(WEB_PROJECT_MEMBERS, "project={:project} && user={:user}", {
+			project: projectId,
+			user: userId
+		});
+	} catch {
+		return null;
+	}
+};
+/** Rôle de membre réel ('' si non membre, suspendu ou hors collection users). N'inclut pas le statut superAdmin. */
+const webRoleFor = (project, user, store = $app) => {
+	if (!usable(user)) return "";
+	const role = webProjectMemberRecord(project, user, store)?.getString("role");
+	return isWebRole(role) ? role : "";
+};
+/** Accès d'un utilisateur à un projet avec au moins `minRole` (superAdmin non suspendu : toujours). */
+const canAccessWebProject = (project, user, minRole = "viewer", store = $app) => usable(user) && (user.getBool("superAdmin") || webRoleRank(webRoleFor(project, user, store)) >= webRoleRank(minRole));
+/**
+* Filtre de liste par projet accessible, à combiner avec `&&` : `projectField` est le champ de la collection interrogée
+* qui porte l'identifiant du projet (`id` pour web_projects, `projectId` pour web_app_environments,
+* web_project_variables, web_project_audit ; `project` pour une relation). Jointure `@collection`, donc pas de limite
+* du nombre d'adhésions (un filtre `id={:a0} || ...` est refusé par PocketBase au-delà d'environ 200 termes).
+*/
+const webProjectAccessQuery = (user, projectField = "project", minRole = "viewer") => {
+	const params = { uid: user.id };
+	if (!usable(user)) return {
+		filter: "1=0",
+		params
+	};
+	if (user.getBool("superAdmin")) return {
+		filter: "1=1",
+		params
+	};
+	const m = `@collection.${WEB_PROJECT_MEMBERS}:wpa`;
+	return {
+		filter: `(${m}.user ?= {:uid} && ${m}.project ?= ${projectField} && (${rolesFrom(minRole).map((role) => `${m}.role ?= "${role}"`).join(" || ")}))`,
+		params
+	};
+};
+/**
+* Filtre de liste d'applications accessibles (web_apps : `appField = 'id'` ; collections filles : `appId`). Résolution
+* application -> web_app_environments.appId -> projectId -> membre. Une application legacy (sans projet) n'est visible
+* que d'un superAdmin.
+*/
+const webAppAccessQuery = (user, appField = "id", minRole = "viewer") => {
+	const params = { uid: user.id };
+	if (!usable(user)) return {
+		filter: "1=0",
+		params
+	};
+	if (user.getBool("superAdmin")) return {
+		filter: "1=1",
+		params
+	};
+	const m = `@collection.${WEB_PROJECT_MEMBERS}:wpa`, env = "@collection.web_app_environments:wpe";
+	return {
+		filter: `(${env}.appId ?= ${appField} && ${env}.projectId ?= ${m}.project && ${m}.user ?= {:uid} && (${rolesFrom(minRole).map((role) => `${m}.role ?= "${role}"`).join(" || ")}))`,
+		params
+	};
+};
+/** Dépôts « propriétaire/dépôt » que les admins du projet peuvent choisir (liste gérée par un superAdmin). */
+const webProjectAllowedRepositories = (project) => {
+	let value;
+	try {
+		value = JSON.parse(project.getString("allowedRepositories") || "[]");
+	} catch {
+		return [];
+	}
+	return Array.isArray(value) ? value.filter((r) => typeof r === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r)) : [];
+};
+/**
+* Un utilisateur peut-il donner ce dépôt à une application du projet ? superAdmin : toujours. Sinon rôle >= admin ET
+* dépôt (insensible à la casse) présent dans allowedRepositories ; liste vide => superAdmin uniquement. Le dépôt vide
+* (moteur non source) et le dépôt actuel inchangé ne sont pas des changements de dépôt.
+*/
+const canSetWebRepository = (project, user, repository, current = "", store = $app) => {
+	if (isWebPlatformAdmin(user)) return true;
+	const wanted = `${repository || ""}`.toLowerCase();
+	if (!project || !canAccessWebProject(project, user, "admin", store)) return false;
+	if (wanted === `${current || ""}`.toLowerCase()) return true;
+	return !!wanted && webProjectAllowedRepositories(project).some((r) => r.toLowerCase() === wanted);
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/auth.ts
+const requireOperatorAdmin = (e) => {
+	const authRecord = e.auth;
+	if (!authRecord) throw new UnauthorizedError("Authentification requise.");
+	if (authRecord.collection().name !== "users" || authRecord.getString("suspension") || !authRecord.getBool("superAdmin")) throw new ForbiddenError("Acces superadmin requis.");
+	return authRecord;
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/deletionState.ts
+/** Tombstones remain until the worker has acknowledged every destructive step. */
+const webDeletionView = (record, store = $app) => {
+	const id = record.getString("deletionId");
+	if (!id) return null;
+	try {
+		const job = store.findRecordById("web_deletion_jobs", id);
+		return {
+			id,
+			status: job.getString("status"),
+			stage: job.getString("stage"),
+			error: job.getString("error")
+		};
+	} catch {
+		return {
+			id,
+			status: "failed",
+			stage: "",
+			error: "État du nettoyage indisponible."
+		};
+	}
+};
+const assertWebNotDeleting = (record, permission = "") => {
+	if (record.getString("deletionId") && !permission.endsWith(".read") && !["app.delete", "project.delete"].includes(permission)) throw new BadRequestError("Suppression en cours : cette ressource ne peut plus être modifiée.");
+};
+/** Model hooks also reject requests which read a record just BEFORE its tombstone was committed. */
+const GuardWebDeletingRecord = (e) => {
+	const record = e.record, name = record.collection().name, store = e.app || $app;
+	if (!name.startsWith("web_") || name === "web_deletion_jobs") return e.next();
+	if (name === "web_apps" || name === "web_projects") {
+		let previous;
+		try {
+			previous = store.findRecordById(name, record.id);
+		} catch {}
+		if (previous?.getString("deletionId")) throw new BadRequestError("La suppression de cette ressource est déjà engagée.");
+		return e.next();
+	}
+	const appId = record.getString("appId"), projectId = record.getString("projectId") || (name === "web_project_members" ? record.getString("project") : "");
+	if (appId) {
+		let app;
+		try {
+			app = store.findRecordById("web_apps", appId);
+		} catch {}
+		if (!app && record.isNew()) {
+			if (store.findRecordsByFilter("web_deletion_jobs", "snapshot ~ {:id}", "", 0, 0, { id: appId }).some((job) => (JSON.parse(job.getString("snapshot")).apps || []).some((item) => item.id === appId))) throw new BadRequestError("Cette application a été supprimée.");
+		}
+		const terminalUpdate = !record.isNew() && ([
+			"web_deployments",
+			"web_task_runs",
+			"web_notification_deliveries"
+		].includes(name) && [
+			"ready",
+			"failed",
+			"cancelled",
+			"sent",
+			"suppressed",
+			"expired"
+		].includes(record.getString("status")) || ["web_alert_events", "web_app_health_events"].includes(name));
+		if (app?.getString("deletionId") && !(["web_app_backups", "web_storage_jobs"].includes(name) && !record.isNew() && record.getString("operation") === "delete" || terminalUpdate)) throw new BadRequestError("Suppression en cours : aucune nouvelle opération sur cette application.");
+	}
+	if (projectId && [
+		"web_project_members",
+		"web_project_variables",
+		"web_app_environments"
+	].includes(name)) {
+		let project;
+		try {
+			project = store.findRecordById("web_projects", projectId);
+		} catch {}
+		if (project?.getString("deletionId")) throw new BadRequestError("Suppression du projet en cours.");
+	}
+	return e.next();
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/access.ts
+/**
+* Applications web — contrôle d'accès central (source unique de vérité). Résolution : application ->
+* web_app_environments (appId unique) -> projet. Une application sans projet (« legacy ») reste réservée aux
+* superAdmins. Module autonome (aucun import de ./api ou ./projects) pour éviter les cycles. Les primitives
+* (suspension, collection users, superAdmin => tout, rôle de membre, filtres de liste) viennent de
+* `security/webProjectAccess.ts`, calqué sur `security/instanceAccess.ts`.
+*/
+const WEB_MEMBERS = WEB_PROJECT_MEMBERS;
+const ID$4 = /^[a-z0-9]{15}$/;
+const enabled = () => $os.getenv("WEB_APPS_ENABLED") === "true";
+const notFound = (target) => new NotFoundError(target.projectId && !target.appId && !target.environmentId ? "Projet introuvable." : "Application introuvable.");
+/** Ancienne sémantique de requireWebAdmin : superAdmin non suspendu et module activé. */
+const requirePlatformAdmin = (e) => {
+	const user = requireOperatorAdmin(e);
+	if (!enabled()) throw new ForbiddenError("Applications web désactivées sur ce serveur.");
+	return user;
+};
+/** Utilisateur dashboard authentifié, non suspendu, module activé. */
+const requireWebUser = (e) => {
+	const user = e.auth;
+	if (!user) throw new UnauthorizedError("Authentification requise.");
+	if (user.collection().name !== "users" || user.getString("suspension")) throw new ForbiddenError("Accès refusé.");
+	if (!enabled()) throw new ForbiddenError("Applications web désactivées sur ce serveur.");
+	return user;
+};
+/** Rôle effectif : 'platform' pour un superAdmin non suspendu, '' si aucun accès. */
+const webEffectiveRole = (user, projectId, store = $app) => {
+	if (user.getString("suspension")) return "";
+	if (isWebPlatformAdmin(user)) return "platform";
+	return projectId ? webRoleFor(projectId, user, store) : "";
+};
+/** Null = tous les projets (superAdmin). Sinon les projets dont l'utilisateur est membre. */
+const listAccessibleProjectIds = (user, store = $app) => {
+	if (isWebPlatformAdmin(user)) return null;
+	if (user.getString("suspension")) return [];
+	const q = webProjectAccessQuery(user, "id");
+	return store.findRecordsByFilter("web_projects", q.filter, "-created", 1e3, 0, q.params).map((r) => r.id);
+};
+/** Adhésions de l'utilisateur : [{ projectId, role }]. */
+const listWebMemberships = (user, store = $app) => store.findRecordsByFilter(WEB_MEMBERS, "user={:user}", "created", 1e3, 0, { user: user.id }).map((r) => ({
+	projectId: r.getString("project"),
+	role: r.getString("role")
+}));
+/**
+* Identifiants d'applications accessibles ; null = toutes (superAdmin). Pour une liste paginée, utiliser
+* webAppAccessQuery.
+*/
+const listAccessibleWebAppIds = (user, store = $app) => {
+	if (isWebPlatformAdmin(user)) return null;
+	const q = webAppAccessQuery(user, "id");
+	return store.findRecordsByFilter("web_apps", q.filter, "-created", 1e3, 0, q.params).map((r) => r.id);
+};
+const appEnvironment = (appId, store) => {
+	try {
+		return store.findFirstRecordByFilter("web_app_environments", "appId={:id}", { id: appId });
+	} catch {
+		return null;
+	}
+};
+/** Résout la cible sans contrôle de droits. Lève 404 uniforme si introuvable. */
+const resolveWebAccessTarget = (target, store = $app) => {
+	let app = null, environment = null, project = null;
+	const find = (collection, id) => {
+		try {
+			return store.findRecordById(collection, id);
+		} catch {
+			throw notFound(target);
+		}
+	};
+	if (target.appId !== void 0) {
+		if (!ID$4.test(target.appId || "")) throw new BadRequestError("Application invalide.");
+		app = find("web_apps", target.appId);
+		environment = appEnvironment(app.id, store);
+	} else if (target.environmentId !== void 0) {
+		if (!ID$4.test(target.environmentId || "")) throw new BadRequestError("Environnement invalide.");
+		environment = find("web_app_environments", target.environmentId);
+		if (environment.getString("appId")) try {
+			app = store.findRecordById("web_apps", environment.getString("appId"));
+		} catch {}
+	}
+	const projectId = environment ? environment.getString("projectId") : target.projectId;
+	if (projectId !== void 0 && projectId !== "") {
+		if (!ID$4.test(projectId)) throw new BadRequestError("Projet invalide.");
+		if (target.projectId && environment && target.projectId !== projectId) throw notFound(target);
+		project = find("web_projects", projectId);
+	}
+	if (!app && !project) throw notFound(target);
+	return {
+		app,
+		environment,
+		project
+	};
+};
+const check = (user, target, permission, store) => {
+	const platform = isWebPlatformAdmin(user);
+	if (!platform && isWebPlatformPermission(permission)) throw new ForbiddenError("Action réservée aux administrateurs de la plateforme.");
+	const { app, environment, project } = resolveWebAccessTarget(target, store);
+	const memberRole = project ? webRoleFor(project, user, store) : "";
+	if (!platform && !memberRole) throw notFound(target);
+	if (!platform && !webRoleAllows(memberRole, permission)) throw new ForbiddenError("Droits insuffisants sur ce projet.");
+	if (app) assertWebNotDeleting(app, permission);
+	if (project) assertWebNotDeleting(project, permission);
+	if (platform) return {
+		user,
+		role: "platform",
+		platform,
+		memberRole,
+		project,
+		app,
+		environment
+	};
+	return {
+		user,
+		role: memberRole,
+		platform,
+		memberRole,
+		project,
+		app,
+		environment
+	};
+};
+/**
+* Garde centrale des routes Applications web. superAdmin non suspendu : tout. Sinon rôle de projet >= rôle minimal de
+* la permission. 401 sans session, 403 suspendu/module désactivé/droits insuffisants, 404 si inaccessible.
+*/
+const requireWebPermission = (e, target, permission, store = $app) => check(requireWebUser(e), target, permission, store);
+/** Raccourci pour les routes /api/web-apps/{id}/... */
+const requireWebAppPermission = (e, permission, store = $app) => requireWebPermission(e, { appId: e.request.pathValue("id") }, permission, store);
+/** Raccourci pour les routes /api/web-projects/{projectId}/... */
+const requireWebProjectPermission = (e, permission, store = $app) => requireWebPermission(e, { projectId: e.request.pathValue("projectId") }, permission, store);
+/** Variante non bloquante (même règles), utile pour décider d'un sous-cas dans un handler. */
+const webCan = (user, target, permission, store = $app) => {
+	try {
+		check(user, target, permission, store);
+		return true;
+	} catch {
+		return false;
+	}
+};
+/**
+* Revalidation des identifiants longue durée (terminal, jetons CI, tâches, notifications) : l'acteur existe, n'est pas
+* suspendu, et a encore la permission sur le projet ACTUEL de la cible. Ne dépend pas de WEB_APPS_ENABLED (les
+* appelants internes le vérifient déjà).
+*/
+const webActorCan = (actorId, target, permission, store = $app) => {
+	if (!ID$4.test(actorId || "")) return false;
+	let actor;
+	try {
+		actor = store.findRecordById("users", actorId);
+	} catch {
+		return false;
+	}
+	if (actor.getString("suspension")) return false;
+	return webCan(actor, target, permission, store);
+};
+/** Vue d'accès pour une application, à joindre aux réponses (dashboard). */
+const webAppAccessView = (user, app, store = $app) => {
+	const projectId = appEnvironment(app.id, store)?.getString("projectId") || "", role = webEffectiveRole(user, projectId, store);
+	return {
+		projectId,
+		role: role === "platform" ? "platform" : role || null,
+		memberRole: projectId ? webRoleFor(projectId, user, store) || null : null,
+		capabilities: webCapabilities(role)
+	};
+};
+/**
+* Réglages d'application (tâches planifiées, alertes) : ils appartiennent à l'application, pas à leur auteur. Actifs
+* tant que l'application existe et appartient à un projet ; pour une application legacy (sans projet), tant que
+* l'auteur reste superAdmin non suspendu. Le départ ou la rétrogradation de l'auteur ne les coupe pas. Toute
+* modification de ces réglages exige la permission au moment de l'écriture (requireWebAppPermission).
+*/
+const webAppSettingActive = (appId, actorId, store = $app) => {
+	if (!ID$4.test(appId || "")) return false;
+	try {
+		if (store.findRecordById("web_apps", appId).getString("deletionId")) return false;
+	} catch {
+		return false;
+	}
+	if (appEnvironment(appId, store)) return true;
+	try {
+		return isWebPlatformAdmin(store.findRecordById("users", actorId));
+	} catch {
+		return false;
+	}
+};
+
+//#endregion
+//#region ../common/sshPublicKey.ts
+/** JSVM-safe ssh-ed25519 public key parsing. Safe for pb_hooks (Goja) and Node/browser consumers. */
+const ED25519_ALGO = "ssh-ed25519";
+const ED25519_WIRE_KEY_LEN = 32;
+const ED25519_WIRE_LEN = 51;
+const readUint32BE = (bytes, offset) => {
+	if (offset + 4 > bytes.length) throw new Error("Invalid public key encoding.");
+	return (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
+};
+const readSshString = (bytes, offset) => {
+	const length = readUint32BE(bytes, offset);
+	offset += 4;
+	if (length < 0 || offset + length > bytes.length) throw new Error("Invalid public key encoding.");
+	return {
+		value: bytes.slice(offset, offset + length),
+		nextOffset: offset + length
+	};
+};
+const bytesToAscii = (bytes) => {
+	let out = "";
+	for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
+	return out;
+};
+const decodeBase64 = (value) => {
+	const normalized = value.replace(/[\s\r\n]+/g, "");
+	if (!normalized || normalized.length % 4 === 1 || !/^[A-Za-z0-9+/]+=*$/.test(normalized)) throw new Error("Public key base64 is invalid.");
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	const bytes = [];
+	let buffer = 0;
+	let bits = 0;
+	for (const char of normalized.replace(/=+$/, "")) {
+		const index = alphabet.indexOf(char);
+		if (index === -1) throw new Error("Public key base64 is invalid.");
+		buffer = buffer << 6 | index;
+		bits += 6;
+		if (bits >= 8) {
+			bits -= 8;
+			bytes.push(buffer >> bits & 255);
+		}
+	}
+	return new Uint8Array(bytes);
+};
+const validateWire = (wire) => {
+	if (wire.length !== ED25519_WIRE_LEN) throw new Error("Invalid Ed25519 public key length.");
+	let offset = 0;
+	const algo = readSshString(wire, offset);
+	offset = algo.nextOffset;
+	if (bytesToAscii(algo.value) !== ED25519_ALGO) throw new Error("Public key algorithm must be ssh-ed25519.");
+	const key = readSshString(wire, offset);
+	if (key.value.length !== ED25519_WIRE_KEY_LEN) throw new Error("Invalid Ed25519 public key length.");
+	if (key.nextOffset !== wire.length) throw new Error("Invalid public key encoding.");
+};
+const parseSshEd25519PublicKey = (input) => {
+	const trimmed = input.trim();
+	if (!trimmed) throw new Error("Public key is required.");
+	const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+	if (lines.length > 1) throw new Error("Paste a single public key line only.");
+	const parts = (lines[0] ?? "").split(/\s+/).filter(Boolean);
+	if (parts.length < 2) throw new Error("Public key must look like: ssh-ed25519 AAAA… comment");
+	const algo = parts[0];
+	const keyData = parts[1];
+	if (algo !== ED25519_ALGO) throw new Error("Only ssh-ed25519 public keys are supported.");
+	const wire = decodeBase64(keyData);
+	validateWire(wire);
+	const comment = parts.slice(2).join(" ");
+	return {
+		normalized: comment ? `${ED25519_ALGO} ${keyData} ${comment}` : `${ED25519_ALGO} ${keyData}`,
+		wire
+	};
+};
+
+//#endregion
+//#region ../common/webGit.ts
+const WEB_GIT_DEFAULT_PORT = 22;
+const WEB_GIT_DEFAULT_USER = "git";
+const WEB_GIT_HOST_KEY_TYPES = [
+	"ssh-ed25519",
+	"ecdsa-sha2-nistp256",
+	"ecdsa-sha2-nistp384",
+	"ecdsa-sha2-nistp521",
+	"ssh-rsa"
+];
+const INVALID = "Adresse SSH du dépôt invalide. Utilisez git@hôte:propriétaire/dépôt.git ou ssh://git@hôte/chemin.";
+const HOST$1 = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
+const USER = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$/;
+const PATH = /^[A-Za-z0-9._~\/-]{1,250}$/;
+const fail$1 = (message = INVALID) => {
+	throw new Error(message);
+};
+/** Hôte DNS public uniquement (pas d'IP littérale ni de nom local) ; l'adresse résolue est revérifiée côté Python. */
+const webGitHostValid = (host) => HOST$1.test(host) && !/(^|\.)(localhost|local|internal|localdomain|home\.arpa|arpa)$/.test(host);
+const cleanPath = (raw) => {
+	const path = raw.replace(/^\/(?=~)/, "").replace(/\/+$/, "");
+	const relative = path.replace(/^\//, "");
+	if (!PATH.test(path) || !relative || relative.startsWith("-") || relative.startsWith("/")) fail$1();
+	for (const part of relative.split("/")) if (!part || part === "." || part === "..") fail$1();
+	if (relative === ".git" || relative.endsWith("/.git")) fail$1();
+	return path;
+};
+/** Analyse une adresse SSH de dépôt. Lève une Error au message français fixe (jamais l'entrée recopiée). */
+const parseGitRemote = (input) => {
+	if (typeof input !== "string") return fail$1();
+	const url = input.trim();
+	if (!url || url.length > 500 || /[\x00-\x20\x7f%\\"'`]/.test(url) || url.startsWith("-")) fail$1();
+	let user = "git", host = "", port = 22, path = "";
+	if (url.indexOf("://") >= 0) {
+		const match = /^ssh:\/\/(?:([^@\/:]+)@)?([^@\/:\[\]]+)(?::([0-9]{1,5}))?(\/.*)$/.exec(url);
+		if (!match) return fail$1();
+		if (match[1] !== void 0) user = match[1];
+		host = match[2].toLowerCase();
+		if (match[3] !== void 0) {
+			if (!/^[1-9][0-9]{0,4}$/.test(match[3]) || Number(match[3]) > 65535) fail$1();
+			port = Number(match[3]);
+		}
+		path = match[4];
+	} else {
+		const match = /^(?:([^@\/:]+)@)?([^@\/:\[\]]+):([^:]*)$/.exec(url);
+		if (!match) return fail$1();
+		if (match[1] !== void 0) user = match[1];
+		host = match[2].toLowerCase();
+		path = match[3];
+	}
+	if (!USER.test(user) || !webGitHostValid(host)) fail$1();
+	path = cleanPath(path);
+	const remote = {
+		host,
+		port,
+		sshUser: user,
+		path,
+		canonical: ""
+	};
+	remote.canonical = canonicalGitRemote(remote);
+	if (remote.canonical.length > 240) fail$1();
+	return remote;
+};
+/**
+* Forges dont les chemins ignorent la casse et où `ssh://hôte/o/r` désigne le même dépôt que `hôte:o/r`. Ailleurs (sshd
+* classique, auto-hébergé), un chemin relatif part du dossier personnel de l'utilisateur SSH, un chemin absolu non, et
+* la casse compte : ces informations restent dans la clé pour que deux dépôts distincts n'aient jamais la même source.
+*/
+const CASE_INSENSITIVE_FORGES = [
+	"github.com",
+	"gitlab.com",
+	"bitbucket.org"
+];
+/**
+* Clé d'unicité d'un dépôt : `[utilisateur@]hôte[:port]/chemin` sans `.git`, hôte en minuscules ; l'utilisateur
+* n'apparaît que s'il diffère de `git`. GitHub, GitLab.com, Bitbucket : chemin en minuscules, sans `/` initial. Autres
+* hôtes : casse conservée, chemin absolu gardé tel quel (`hôte//srv/depot`) pour le distinguer du relatif
+* (`hôte/srv/depot`).
+*/
+const canonicalGitRemote = (remote) => {
+	const host = remote.host.toLowerCase();
+	return `${remote.sshUser && remote.sshUser !== "git" ? `${remote.sshUser}@` : ""}${host}${remote.port && remote.port !== 22 ? `:${remote.port}` : ""}/${(CASE_INSENSITIVE_FORGES.indexOf(host) >= 0 ? remote.path.replace(/^\/+/, "").toLowerCase() : remote.path).replace(/\.git$/, "")}`;
+};
+/** Valeur de `web_apps.config.repository` pour une source Git (ne peut pas égaler un `owner/repo` GitHub). */
+const webGitRepository = (remote) => `git:${remote.canonical}`;
+/** Adresse affichable, au format scp sur le port 22, ssh:// sinon. */
+const webGitDisplayUrl = (remote) => remote.port === 22 ? `${remote.sshUser}@${remote.host}:${remote.path}` : `ssh://${remote.sshUser}@${remote.host}:${remote.port}${remote.path.startsWith("/") ? "" : "/"}${remote.path}`;
+const webGitProvider = (host) => {
+	const value = `${host || ""}`.toLowerCase();
+	if (value === "github.com") return "github";
+	if (value === "gitlab.com") return "gitlab";
+	if (value === "bitbucket.org") return "bitbucket";
+	return "other";
+};
+/** Branche acceptée par validateConfig (même règle que pour GitHub). */
+const webGitBranchValid = (branch) => typeof branch === "string" && /^[A-Za-z0-9_./-]{1,200}$/.test(branch) && branch.indexOf("..") < 0 && !branch.startsWith("-") && !branch.startsWith("/") && !branch.endsWith("/") && !branch.endsWith(".lock");
+/**
+* Clés d'hôte publiées par les hébergeurs (épinglage sans TOFU, port 22 uniquement). Sources officielles :
+*
+* - GitHub : https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+* - GitLab.com : https://docs.gitlab.com/user/gitlab_com/#ssh-known_hosts-entries
+* - Bitbucket Cloud : https://support.atlassian.com/bitbucket-cloud/docs/configure-ssh-and-two-step-verification/ («
+*   bitbucket.org known_hosts ») Les empreintes sont revérifiées par scripts/test-web-git-source-transport.py
+*   (ssh-keygen -lf) et webGit.test.ts.
+*/
+const WEB_GIT_HOST_KEY_PRESETS = {
+	"github.com": [
+		{
+			type: "ssh-ed25519",
+			key: "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+			fingerprint: "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+		},
+		{
+			type: "ecdsa-sha2-nistp256",
+			key: "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=",
+			fingerprint: "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM"
+		},
+		{
+			type: "ssh-rsa",
+			key: "AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=",
+			fingerprint: "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s"
+		}
+	],
+	"gitlab.com": [
+		{
+			type: "ssh-ed25519",
+			key: "AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf",
+			fingerprint: "SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8"
+		},
+		{
+			type: "ecdsa-sha2-nistp256",
+			key: "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY=",
+			fingerprint: "SHA256:HbW3g8zUjNSksFbqTiUWPWg2Bq1x8xdGUrliXFzSnUw"
+		},
+		{
+			type: "ssh-rsa",
+			key: "AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9",
+			fingerprint: "SHA256:ROQFvPThGrW4RuWLoL9tq9I9zJ42fK4XywyRtbOz/EQ"
+		}
+	],
+	"bitbucket.org": [
+		{
+			type: "ssh-ed25519",
+			key: "AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0MuJ2e2gKTKqu+UUO",
+			fingerprint: "SHA256:ybgmFkzwOSotHTHLJgHO0QN8L0xErw6vd0VhFA9m3SM"
+		},
+		{
+			type: "ecdsa-sha2-nistp256",
+			key: "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPIQmuzMBuKdWeF4+a2sjSSpBK0iqitSQ+5BM9KhpexuGt20JpTVM7u5BDZngncgrqDMbWdxMWWOGtZ9UgbqgZE=",
+			fingerprint: "SHA256:FC73VB6C4OQLSCrjEayhMp9UMxS97caD/Yyi2bhW/J0"
+		},
+		{
+			type: "ssh-rsa",
+			key: "AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uh/7Iv4uyH/cV/0b4WDSd3DptigWq84lJubb9t/DnZlrJazxyDCulTmKdOR7vs9gMTo+uoIrPSb8ScTtvw65+odKAlBj59dhnVp9zd7QUojOpXlL62Aw56U4oO+FALuevvMjiWeavKhJqlR7i5n9srYcrNV7ttmDw7kf/97P5zauIhxcjX+xHv4M=",
+			fingerprint: "SHA256:46OSHA1Rmj8E8ERTC6xkNcmGOw9oFxYr0WF6zWW8l1E"
+		}
+	]
+};
+/** Clés publiées pour cet hôte sur le port 22, sinon [] (TOFU avec confirmation explicite des empreintes). */
+const webGitHostKeyPreset = (host, port = 22) => port === 22 && Object.prototype.hasOwnProperty.call(WEB_GIT_HOST_KEY_PRESETS, host) ? WEB_GIT_HOST_KEY_PRESETS[host].map((k) => ({ ...k })) : [];
+/** Ensemble d'empreintes normalisé (trié, sans doublon) pour comparer une confirmation à un scan. */
+const webGitFingerprintSet = (values) => {
+	if (!Array.isArray(values)) return [];
+	const out = [];
+	for (const value of values) if (typeof value === "string" && /^SHA256:[A-Za-z0-9+\/]{43}$/.test(value) && out.indexOf(value) < 0) out.push(value);
+	return out.sort();
+};
+
+//#endregion
+//#region ../common/webEnvironment.ts
+/** Literal dotenv editing shared by the controller and dashboard. Never executes/interpolates values. */
+const WEB_ENV_MASK = "__POCKETHOST_MASKED__";
+const NEXT_EXPORT_MARKER = "# pockethost-export: nextjs";
+const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+function problem(line, message) {
+	throw new Error(`Ligne ${line} : ${message}`);
+}
+function validateWebEnvName(name) {
+	if (!/^[A-Za-z_][A-Za-z0-9_]{0,100}$/.test(name)) throw new Error("Nom de variable invalide.");
+	if ([
+		"NODE_OPTIONS",
+		"NODE_ENV",
+		"HOSTNAME",
+		"PORT"
+	].includes(name)) throw new Error(`La variable ${name} est réservée au moteur d’hébergement.`);
+	if ([
+		"__proto__",
+		"constructor",
+		"prototype"
+	].includes(name)) throw new Error("Nom de variable réservé.");
+}
+function parseWebDotenv(input) {
+	if (typeof input !== "string" || input.length > 2e5 || input.includes("\0")) throw new Error("Fichier .env invalide ou trop volumineux (200 000 caractères maximum).");
+	const text = input.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+	const nextExport = text === NEXT_EXPORT_MARKER || text.startsWith("# pockethost-export: nextjs\n");
+	const result = [];
+	const names = /* @__PURE__ */ new Set();
+	let index = 0;
+	let line = 1;
+	let flags;
+	while (index < text.length) {
+		const startLine = line;
+		let end = text.indexOf("\n", index);
+		if (end < 0) end = text.length;
+		const raw = text.slice(index, end);
+		const trimmed = raw.trim();
+		if (!trimmed || trimmed.startsWith("#")) {
+			const annotation = /^#\s*(?:pockethost|coolify):\s*(.*)$/.exec(trimmed);
+			if (annotation) {
+				if (flags) problem(line, "une seule directive est permise, juste avant sa variable.");
+				flags = {};
+				const tokens = annotation[1].trim().split(/\s+/).filter(Boolean);
+				if (!tokens.length) problem(line, "directive vide.");
+				const seen = /* @__PURE__ */ new Set();
+				for (const token of tokens) {
+					const match = /^(build|buildtime|runtime|literal)(?:=(true|false))?$/.exec(token);
+					if (!match) problem(line, "directive inconnue ; utilisez build=true/false et runtime=true/false.");
+					const key = match[1] === "buildtime" ? "build" : match[1];
+					if (seen.has(key)) problem(line, "directive dupliquée.");
+					seen.add(key);
+					const enabled = match[2] !== "false";
+					if (key === "literal") {
+						if (!enabled) problem(line, "les références $ restent toujours littérales ; l’interpolation est désactivée.");
+					} else flags[key] = enabled;
+				}
+			} else if (flags) problem(line, "la directive doit être immédiatement suivie de sa variable.");
+			index = end + 1;
+			line++;
+			continue;
+		}
+		const prefix = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*/.exec(raw);
+		if (!prefix) problem(line, "entrée attendue au format NOM=valeur.");
+		const name = prefix[1];
+		try {
+			validateWebEnvName(name);
+		} catch (e) {
+			problem(line, e instanceof Error ? e.message : "Nom de variable invalide.");
+		}
+		if (names.has(name)) problem(line, `la variable ${name} est présente plusieurs fois.`);
+		names.add(name);
+		if (result.length >= 100) problem(line, "100 variables maximum.");
+		index += prefix[0].length;
+		let value = "";
+		let quoted = false;
+		const quote = text[index];
+		if (quote === "\"" || quote === "'" || quote === "`") {
+			quoted = true;
+			index++;
+			let closed = false;
+			while (index < text.length) {
+				const char = text[index++];
+				if (char === quote) {
+					closed = true;
+					break;
+				}
+				if (char === "\n") line++;
+				if (char === "\\" && index < text.length) {
+					const next = text[index];
+					if (quote === "\"" && (next === "n" || next === "r")) {
+						value += next === "n" ? "\n" : "\r";
+						index++;
+						continue;
+					}
+				}
+				value += char;
+			}
+			if (!closed) problem(startLine, "valeur entre guillemets non terminée.");
+			while (text[index] === " " || text[index] === "	") index++;
+			if (text[index] !== void 0 && text[index] !== "\n" && text[index] !== "#") problem(line, "caractères inattendus après la valeur ; utilisez des guillemets pour les commentaires littéraux.");
+			while (index < text.length && text[index] !== "\n") index++;
+		} else {
+			end = text.indexOf("\n", index);
+			if (end < 0) end = text.length;
+			value = text.slice(index, end).split("#", 1)[0].trim();
+			index = end;
+		}
+		if (nextExport) value = value.replace(/\\\$/g, "$");
+		if (value.length > 1e4 || value.includes("\0")) problem(startLine, "valeur trop longue (10 000 caractères maximum).");
+		result.push({
+			name,
+			value,
+			preserve: !quoted && value === "__POCKETHOST_MASKED__",
+			...flags,
+			line: startLine
+		});
+		flags = void 0;
+		if (text[index] === "\n") {
+			index++;
+			line++;
+		}
+	}
+	if (flags) problem(line, "directive sans variable.");
+	return result;
+}
+/**
+* `blind` : pour un appelant sans droit de révélation, une valeur explicite est toujours signalée « modifiée » (jamais
+* « conservée ») : le diff ne doit pas confirmer qu'une valeur devinée égale la valeur enregistrée.
+*/
+function planWebEnvironment(current, entries, mode, options = {}) {
+	if (!["merge", "replace"].includes(mode)) throw new Error("Choisissez Fusionner ou Remplacer.");
+	const explicit = /* @__PURE__ */ new Set();
+	const next = Object.create(null);
+	if (mode === "merge") for (const name of Object.keys(current)) next[name] = { ...current[name] };
+	for (const entry of entries) {
+		validateWebEnvName(entry.name);
+		const before = own(current, entry.name) ? current[entry.name] : void 0;
+		if (entry.preserve && !before) throw new Error(`La variable ${entry.name} n’a aucune valeur enregistrée à conserver.`);
+		if (entry.preserve) explicit.delete(entry.name);
+		else explicit.add(entry.name);
+		next[entry.name] = {
+			value: entry.preserve ? before.value : entry.value,
+			build: entry.build ?? before?.build ?? true,
+			runtime: entry.runtime ?? before?.runtime ?? true
+		};
+		if (!next[entry.name].build && !next[entry.name].runtime) throw new Error(`La variable ${entry.name} doit être utilisée à la construction ou à l’exécution.`);
+	}
+	if (Object.keys(next).length > 100) throw new Error("100 variables maximum après fusion.");
+	const changes = {
+		added: [],
+		updated: [],
+		removed: [],
+		preserved: []
+	};
+	let requiresRebuild = false;
+	for (const name of [...new Set([...Object.keys(current), ...Object.keys(next)])].sort()) {
+		const before = own(current, name) ? current[name] : void 0;
+		const after = own(next, name) ? next[name] : void 0;
+		const kind = !before ? "added" : !after ? "removed" : before.value !== after.value || before.build !== after.build || before.runtime !== after.runtime || options.blind && explicit.has(name) ? "updated" : "preserved";
+		changes[kind].push(name);
+		if (kind !== "preserved" && (before?.build || after?.build)) requiresRebuild = true;
+	}
+	if (utf8Size(JSON.stringify(next)) > 65e3) throw new Error("L’ensemble des variables est trop volumineux (65 Ko maximum).");
+	return {
+		next,
+		changes,
+		requiresRebuild
+	};
+}
+function utf8Size(value) {
+	let bytes = 0;
+	for (const char of value) {
+		const n = char.codePointAt(0);
+		bytes += n <= 127 ? 1 : n <= 2047 ? 2 : n <= 65535 ? 3 : 4;
+	}
+	return bytes;
+}
+/** Select an absent quote delimiter; target-specific expansion escaping is handled by the formatter. */
+function quoteWebEnv(value) {
+	if (value.includes("\r")) return null;
+	if (!value.includes("'")) return "'" + value + "'";
+	if (!value.includes("`")) return "`" + value + "`";
+	if (!value.includes("\"") && !/\\[nr]/.test(value)) return "\"" + value + "\"";
+	return null;
+}
+function formatWebDotenv(values, reveal = false, example = false, target = "literal") {
+	const warnings = [];
+	const lines = target === "nextjs" ? [NEXT_EXPORT_MARKER] : [];
+	for (const name of Object.keys(values).sort()) {
+		const item = values[name];
+		lines.push(`# pockethost: build=${item.build} runtime=${item.runtime}`);
+		let value = example ? "''" : WEB_ENV_MASK;
+		if (reveal && !example) {
+			const quoted = quoteWebEnv(target === "nextjs" ? item.value.replace(/\$/g, "\\$") : item.value);
+			if (quoted === null) warnings.push(name);
+			else value = quoted;
+		}
+		lines.push(`${name}=${value}`);
+	}
+	return {
+		text: lines.join("\n") + (lines.length ? "\n" : ""),
+		warnings
+	};
+}
+
+//#endregion
+//#region ../common/webProjectLimits.ts
+const defaultWebProjectLimits = () => ({
+	traffic: {
+		enabled: false,
+		requestsPerMinute: 600,
+		concurrentRequests: 50
+	},
+	resources: {
+		enabled: false,
+		cpuMillicores: 2e3,
+		memoryMiB: 3072,
+		buildMinutes: 15,
+		queuedBuilds: 3
+	}
+});
+/** Shared validation for the API, registry and dashboard; no coercion of booleans or numbers. */
+function normalizeWebProjectLimits(input = {}) {
+	const object = (value, keys) => {
+		if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((k) => !keys.includes(k))) throw Error("Réglages de limites invalides.");
+		return value;
+	};
+	const top = object(input, ["traffic", "resources"]), defaults = defaultWebProjectLimits();
+	const traffic = {
+		...defaults.traffic,
+		...object(top.traffic ?? {}, Object.keys(defaults.traffic))
+	};
+	const resources = {
+		...defaults.resources,
+		...object(top.resources ?? {}, Object.keys(defaults.resources))
+	};
+	const integer = (value, min, max) => {
+		if (!Number.isInteger(value) || value < min || value > max) throw Error(`Limite entière attendue entre ${min} et ${max}.`);
+	};
+	if (typeof traffic.enabled !== "boolean" || typeof resources.enabled !== "boolean") throw Error("L’activation des limites doit être explicite.");
+	integer(traffic.requestsPerMinute, 1, 1e6);
+	integer(traffic.concurrentRequests, 1, 1e4);
+	integer(resources.cpuMillicores, 50, 32e3);
+	integer(resources.memoryMiB, 64, 131072);
+	integer(resources.buildMinutes, 1, 30);
+	integer(resources.queuedBuilds, 1, 100);
+	return {
+		traffic,
+		resources
+	};
+}
+
+//#endregion
+//#region ../common/webRegistry.ts
+/**
+* Applications web — hôtes de registre d'images. Logique pure, partagée par les hooks mothership (Goja JSVM). Le worker
+* tire les images depuis le réseau de l'hôte : un locataire ne vise ni la boucle locale ni le réseau interne. Contrôle
+* syntaxique uniquement : un nom public peut toujours se résoudre vers une adresse privée.
+*/
+const HOST = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+const PRIVATE_SUFFIXES = [
+	"arpa",
+	"corp",
+	"home",
+	"internal",
+	"intranet",
+	"lan",
+	"local",
+	"localdomain",
+	"localhost"
+];
+const IMAGE = /^(?:[a-z0-9.-]+(?::[0-9]{1,5})?\/)?[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/;
+/** Nom DNS complet (un point, TLD alphabétique : ni localhost, ni IP, ni hôte court), port facultatif. */
+const webRegistryHostAllowed = (value) => {
+	const match = typeof value === "string" ? /^([^:/]+)(?::([1-9][0-9]{0,4}))?$/.exec(value) : null;
+	if (!match || Number(match[2] || 0) > 65535 || !HOST.test(match[1])) return false;
+	return !PRIVATE_SUFFIXES.includes(match[1].split(".").pop());
+};
+/**
+* Image fixée par digest. Règle de Docker : le premier segment est un registre s'il contient « . » ou « : » ou vaut
+* localhost, sinon l'image vient de Docker Hub. `localhost/x` et `10.0.0.1/x` sont aussi de simples chemins pour
+* l'expression : le contrôle porte donc sur ce segment, pas sur le groupe d'hôte.
+*/
+const webImageDigestValid = (value) => {
+	if (typeof value !== "string" || !IMAGE.test(value)) return false;
+	const first = value.split("/")[0];
+	return !value.includes("/") || !(/[.:]/.test(first) || first === "localhost") || webRegistryHostAllowed(first);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/runtimes.ts
+const COLLECTION$6 = "web_runtime_profiles";
+const kinds = [
+	"nextjs",
+	"auto",
+	"dockerfile",
+	"image",
+	"compose",
+	"worker"
+];
+const name$1 = /^[a-z][a-z0-9-]{0,30}$/;
+const integer = (value, min, max) => {
+	if (!Number.isInteger(value) || value < min || value > max) throw new BadRequestError("Quota ou port invalide.");
+	return value;
+};
+const relative = (value) => {
+	if (typeof value !== "string" || !value || value.length > 200 || value.startsWith("/") || value.split("/").includes("..") || !/^[A-Za-z0-9_./-]+$/.test(value)) throw new BadRequestError("Chemin de construction invalide.");
+	return value;
+};
+const command$2 = (value) => {
+	if (value === void 0) return [];
+	if (!Array.isArray(value) || value.length > 50 || value.some((x) => typeof x !== "string" || !x || x.length > 4096 || x.includes("\0"))) throw new BadRequestError("Commande attendue sous forme de tableau.");
+	return value;
+};
+const text$1 = (value) => {
+	if (value === void 0 || value === null || value === "") return "";
+	if (typeof value !== "string" || value.length > 1e3 || /[\0\r\n]/.test(value)) throw new BadRequestError("Commande de démarrage ou de construction invalide (une ligne, 1000 caractères maximum).");
+	return value;
+};
+const quota = (value = {}) => {
+	if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((k) => ![
+		"cpuMillicores",
+		"memoryMiB",
+		"pids"
+	].includes(k))) throw new BadRequestError("Quotas invalides.");
+	return {
+		cpuMillicores: integer(value.cpuMillicores ?? 500, 50, 1e3),
+		memoryMiB: integer(value.memoryMiB ?? 768, 64, 1536),
+		pids: integer(value.pids ?? 256, 16, 512)
+	};
+};
+const validateRuntimeProfile = (input = {}) => {
+	if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((k) => ![
+		"kind",
+		"port",
+		"dockerfile",
+		"image",
+		"command",
+		"entrypoint",
+		"compose",
+		"resources",
+		"buildTarget",
+		"startCommand",
+		"buildCommand",
+		"pruneDependencies"
+	].includes(k))) throw new BadRequestError("Profil de runtime invalide.");
+	const kind = input.kind || "nextjs";
+	if (!kinds.includes(kind)) throw new BadRequestError("Runtime inconnu.");
+	const profile = {
+		kind,
+		port: kind === "worker" ? null : integer(input.port ?? 3e3, 1, 65535),
+		dockerfile: relative(input.dockerfile || "Dockerfile"),
+		image: ["image", "worker"].includes(kind) ? input.image || "" : "",
+		command: command$2(input.command),
+		entrypoint: command$2(input.entrypoint),
+		resources: quota(input.resources)
+	};
+	if ((kind === "image" || kind === "worker") && profile.image && !webImageDigestValid(profile.image)) throw new BadRequestError("Image attendue avec @sha256 et un digest complet.");
+	if (kind === "image" && !profile.image) throw new BadRequestError("Image immuable requise.");
+	if (kind === "auto" && (profile.command.length || profile.entrypoint.length)) throw new BadRequestError("Pour la construction automatique, utilisez la commande de démarrage (champ texte).");
+	if (kind === "auto" && input.buildTarget) throw new BadRequestError("Étape Dockerfile sans objet pour la construction automatique.");
+	for (const key of ["startCommand", "buildCommand"]) {
+		const value = text$1(input[key]);
+		if (value && kind !== "auto") throw new BadRequestError("Profil de runtime invalide.");
+		if (value) profile[key] = value;
+	}
+	if (input.pruneDependencies !== void 0 && input.pruneDependencies !== null && typeof input.pruneDependencies !== "boolean") throw new BadRequestError("Profil de runtime invalide.");
+	if (input.pruneDependencies && kind !== "auto") throw new BadRequestError("Profil de runtime invalide.");
+	if (input.pruneDependencies) profile.pruneDependencies = true;
+	if (input.buildTarget) {
+		if (typeof input.buildTarget !== "string" || !name$1.test(input.buildTarget)) throw new BadRequestError("Étape Dockerfile invalide.");
+		profile.buildTarget = input.buildTarget;
+	}
+	if (kind === "compose") {
+		const compose = input.compose;
+		if (!compose || typeof compose !== "object" || Object.keys(compose).some((k) => !["front", "services"].includes(k)) || !compose.services || typeof compose.services !== "object" || Array.isArray(compose.services) || Object.keys(compose.services).length < 1 || Object.keys(compose.services).length > 4 || !Object.hasOwn(compose.services, compose.front)) throw new BadRequestError("Compose exige un frontal et de un à quatre services.");
+		const services = {};
+		const count = Object.keys(compose.services).length;
+		for (const [key, source] of Object.entries(compose.services)) {
+			const item = source;
+			if (!name$1.test(key) || !item || typeof item !== "object" || Object.keys(item).some((k) => ![
+				"image",
+				"dockerfile",
+				"port",
+				"command",
+				"entrypoint",
+				"environment",
+				"depends_on",
+				"volumes",
+				"resources",
+				"healthcheck"
+			].includes(k))) throw new BadRequestError("Option Compose non autorisée : aucun privilège, bind, port public ou réseau hôte.");
+			if (!!item.image === !!item.dockerfile) throw new BadRequestError("Chaque service nécessite une image immuable ou un Dockerfile.");
+			if (item.image && !webImageDigestValid(item.image)) throw new BadRequestError("Image Compose sans digest.");
+			if (item.dockerfile) relative(item.dockerfile);
+			const env = item.environment || [], depends = item.depends_on || [], volumes = item.volumes || [];
+			if (!Array.isArray(env) || env.length > 100 || env.some((v) => typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]{0,100}$/.test(v))) throw new BadRequestError("Compose référence uniquement les noms des variables enregistrées.");
+			if (!Array.isArray(depends) || depends.some((v) => typeof v !== "string" || v === key || !Object.hasOwn(compose.services, v))) throw new BadRequestError("Dépendance Compose invalide.");
+			if (!Array.isArray(volumes) || volumes.length > 4 || volumes.some((v) => typeof v !== "string" || !/^[a-z][a-z0-9-]{0,30}:\/[A-Za-z0-9_./-]+(?::ro)?$/.test(v) || v.split(":")[1].split("/").includes(".."))) throw new BadRequestError("Montage Compose invalide : volume nommé uniquement.");
+			const resources = quota(item.resources || {
+				cpuMillicores: Math.max(50, Math.floor(profile.resources.cpuMillicores / count)),
+				memoryMiB: Math.max(64, Math.floor(profile.resources.memoryMiB / count)),
+				pids: Math.max(16, Math.floor(profile.resources.pids / count))
+			});
+			let healthcheck;
+			if (item.healthcheck) {
+				const check = item.healthcheck, test = command$2(check.test);
+				if (Object.keys(check).some((k) => ![
+					"test",
+					"timeoutSeconds",
+					"intervalSeconds",
+					"retries"
+				].includes(k)) || test[0] !== "CMD" || test.length < 2) throw new BadRequestError("Contrôle Compose attendu avec CMD.");
+				healthcheck = {
+					test,
+					timeoutSeconds: integer(check.timeoutSeconds ?? 5, 1, 10),
+					intervalSeconds: integer(check.intervalSeconds ?? 10, 5, 60),
+					retries: integer(check.retries ?? 3, 1, 10)
+				};
+			}
+			services[key] = {
+				...item.image ? { image: item.image } : { dockerfile: item.dockerfile },
+				port: integer(item.port ?? 3e3, 1, 65535),
+				command: command$2(item.command),
+				entrypoint: command$2(item.entrypoint),
+				environment: env,
+				depends_on: depends,
+				volumes,
+				resources,
+				...healthcheck ? { healthcheck } : {}
+			};
+		}
+		for (const [key, max] of [
+			["cpuMillicores", 1e3],
+			["memoryMiB", 1536],
+			["pids", 512]
+		]) if (Object.values(services).reduce((n, row) => n + row.resources[key], 0) > max) throw new BadRequestError("La somme des quotas Compose dépasse celle du site.");
+		const ordered = [];
+		while (ordered.length < count) {
+			const ready = Object.keys(services).filter((key) => !ordered.includes(key) && services[key].depends_on.every((dep) => ordered.includes(dep)));
+			if (!ready.length) throw new BadRequestError("Cycle de dépendances Compose refusé.");
+			ordered.push(...ready);
+		}
+		profile.compose = {
+			front: compose.front,
+			services
+		};
+	}
+	return profile;
+};
+const rowOf = (app, store = $app) => store.findRecordsByFilter(COLLECTION$6, "appId={:id}", "", 1, 0, { id: app.id })[0];
+const runtimeProfile = (app, store = $app) => {
+	const row = rowOf(app, store);
+	return row ? JSON.parse(row.getString("profile") || "{}") : validateRuntimeProfile();
+};
+const runtimeWorkerSnapshot = (app, store = $app) => {
+	const row = rowOf(app, store);
+	return {
+		...runtimeProfile(app, store),
+		...row?.getString("registryEncrypted") ? { registry: decryptWebValue(row.getString("registryEncrypted")) } : {}
+	};
+};
+/** Serveur et compte du registre : app.configure seulement (mêmes champs vides pour les autres rôles). */
+const view$1 = (app, canConfigure) => {
+	const row = rowOf(app), registry = canConfigure && row?.getString("registryEncrypted") ? decryptWebValue(row.getString("registryEncrypted")) : {};
+	return {
+		profile: runtimeProfile(app),
+		revision: row?.getString("revision") || "",
+		registry: {
+			server: registry.server || "",
+			username: registry.username || "",
+			hasPassword: !!registry.password
+		},
+		capabilities: {
+			kinds,
+			maxServices: 4,
+			maxCpuMillicores: 1e3,
+			maxMemoryMiB: 1536,
+			maxPids: 512,
+			hostBindings: false,
+			railpackAvailable: webAppsCapability().railpackAvailable
+		}
+	};
+};
+const HandleWebRuntimeGet = (e) => {
+	const { app, role } = requireWebAppPermission(e, "app.read");
+	return webJson(e, view$1(app, webRoleAllows(role, "app.configure")));
+};
+const HandleWebRuntimeUpdate = (e) => {
+	const app = requireWebAppPermission(e, "app.configure").app, input = webInput(e), profile = validateRuntimeProfile(input.profile);
+	$app.runInTransaction((tx) => {
+		let row = rowOf(app, tx);
+		if (input.revision !== void 0 && input.revision !== (row?.getString("revision") || "")) throw new BadRequestError("Le profil a changé. Rechargez la page.");
+		if (!row) {
+			row = new Record(tx.findCollectionByNameOrId(COLLECTION$6));
+			row.set("appId", app.id);
+		}
+		if (input.registry !== void 0) {
+			const previous = row.getString("registryEncrypted") ? decryptWebValue(row.getString("registryEncrypted")) : {}, value = input.registry;
+			if (value?.clear === true) row.set("registryEncrypted", "");
+			else {
+				if (!value || !webRegistryHostAllowed(value.server) || typeof value.username !== "string" || !value.username || value.username.length > 200) throw new BadRequestError("Registre privé invalide.");
+				const password = value.password === void 0 && previous.server === value.server && previous.username === value.username ? previous.password : value.password;
+				if (typeof password !== "string" || !password || password.length > 1e4 || /[\0\r\n]/.test(password)) throw new BadRequestError("Mot de passe du registre invalide.");
+				row.set("registryEncrypted", encryptWebValue({
+					server: value.server,
+					username: value.username,
+					password
+				}));
+			}
+		}
+		row.set("profile", profile);
+		row.set("revision", $security.randomString(24));
+		tx.save(row);
+	});
+	return webJson(e, view$1(app, true));
+};
+const currentWebRuntimeRevision = (app, store = $app) => rowOf(app, store)?.getString("revision") || "";
+const applyWebRuntimePublishedImage = (app, image, store = $app, expectedRevision) => {
+	if (!webImageDigestValid(image)) throw new BadRequestError("Image CI immuable invalide.");
+	const row = rowOf(app, store);
+	if (!row) return false;
+	if (expectedRevision !== void 0 && row.getString("revision") !== expectedRevision) return false;
+	const profile = JSON.parse(row.getString("profile") || "{}");
+	if (!["image", "worker"].includes(profile.kind)) return false;
+	profile.image = image;
+	row.set("profile", validateRuntimeProfile(profile));
+	row.set("revision", $security.randomString(24));
+	store.save(row);
+	return true;
+};
+const HandleWebRuntimePreview = (e) => {
+	const app = requireWebAppPermission(e, "app.configure").app, profile = validateRuntimeProfile(webInput(e).profile), before = runtimeProfile(app);
+	let volumes = [];
+	try {
+		const row = $app.findRecordsByFilter("web_storage_settings", "appId={:id}", "", 1, 0, { id: app.id })[0];
+		volumes = row ? JSON.parse(row.getString("volumes") || "[]") : [];
+	} catch {}
+	const strategy = volumes.some((item) => !item.readOnly) ? "recreate" : "rolling", resources = profile.kind === "compose" ? Object.values(profile.compose.services).reduce((sum, item) => ({
+		cpuMillicores: sum.cpuMillicores + item.resources.cpuMillicores,
+		memoryMiB: sum.memoryMiB + item.resources.memoryMiB,
+		pids: sum.pids + item.resources.pids
+	}), {
+		cpuMillicores: 0,
+		memoryMiB: 0,
+		pids: 0
+	}) : profile.resources;
+	return webJson(e, {
+		profile,
+		changes: Object.keys(profile).filter((key) => JSON.stringify(profile[key]) !== JSON.stringify(before[key])),
+		requiresDeploy: true,
+		strategy,
+		resources,
+		warnings: [
+			...strategy === "recreate" ? ["Les volumes en écriture imposent une pause des services au démarrage de la nouvelle version. Le code précédent ne restaure pas automatiquement un ancien schéma de données."] : [],
+			...profile.kind === "worker" ? ["Ce profil ne publie pas de route HTTP."] : [],
+			...profile.kind === "auto" ? [
+				"Railpack détecte le langage du dossier du projet et télécharge les outils pendant la construction : la première construction peut être longue.",
+				`Le conteneur reçoit PORT=${profile.port} : l’application doit écouter sur cette variable.`,
+				"Les variables de construction dont le nom commence par RAILPACK_ sont transmises en clair à l’analyse : n’y placez pas de secret.",
+				"Les applications PHP ou qui écrivent sur disque doivent déclarer leurs dossiers inscriptibles dans Stockage.",
+				"PHP : Railpack construit sur dunglas/frankenphp et copie composer:latest depuis Docker Hub par tags mobiles, non épinglés par la plateforme.",
+				...webAppsCapability().railpackAvailable ? [] : ["Railpack n’est pas installé sur le worker : la construction échouera."]
+			] : [],
+			"Les images doivent fonctionner sous UID 10001 avec une racine en lecture seule.",
+			"La capacité effective est revérifiée avant la construction et le démarrage."
+		]
+	});
+};
+const restoreWebRuntimeBackup = (app, value, store = $app) => {
+	const input = { ...value || { kind: "nextjs" } }, registry = input.registry;
+	delete input.registry;
+	const profile = validateRuntimeProfile(input);
+	let row = rowOf(app, store);
+	if (!row) {
+		row = new Record(store.findCollectionByNameOrId(COLLECTION$6));
+		row.set("appId", app.id);
+	}
+	if (registry) {
+		if (!webRegistryHostAllowed(registry.server) || typeof registry.username !== "string" || typeof registry.password !== "string" || !registry.password || /[\0\r\n]/.test(registry.password)) throw new BadRequestError("Registre de sauvegarde invalide.");
+		row.set("registryEncrypted", encryptWebValue({
+			server: registry.server,
+			username: registry.username,
+			password: registry.password
+		}));
+	} else row.set("registryEncrypted", "");
+	row.set("profile", profile);
+	row.set("revision", $security.randomString(24));
+	store.save(row);
+};
+const runtimeNeedsSource = (profile) => profile.kind === "compose" ? Object.values(profile.compose?.services || {}).some((service) => !!service.dockerfile) : profile.kind !== "image" && !(profile.kind === "worker" && profile.image);
+
+//#endregion
+//#region src/lib/handlers/webApps/projects.ts
+const WEB_ENVIRONMENTS = [
+	"dev",
+	"staging",
+	"prod",
+	"preview"
+];
+const webProjectId = (value) => {
+	if (!/^[a-z0-9]{15}$/.test(value || "")) throw new BadRequestError("Projet invalide.");
+	return value;
+};
+const webEnvironmentName = (value) => {
+	if (!WEB_ENVIRONMENTS.includes(value)) throw new BadRequestError("Environnement attendu : dev, staging, prod ou preview.");
+	return value;
+};
+const webMembership = (appId, store = $app) => {
+	try {
+		return store.findFirstRecordByFilter("web_app_environments", "appId={:id}", { id: appId });
+	} catch {
+		return null;
+	}
+};
+const webProject = (projectId, store = $app) => store.findRecordById("web_projects", webProjectId(projectId));
+const webProjectVariable = (projectId, environment, store = $app) => {
+	try {
+		return store.findFirstRecordByFilter("web_project_variables", "projectId={:id} && environment={:environment}", {
+			id: projectId,
+			environment
+		});
+	} catch {
+		return null;
+	}
+};
+const auditWebProject = (projectId, actorId, action, details, store = $app) => {
+	const row = new Record(store.findCollectionByNameOrId("web_project_audit"));
+	row.set("projectId", projectId);
+	row.set("actorId", actorId);
+	row.set("action", action);
+	row.set("details", details);
+	store.save(row);
+};
+const webProjectLimits = (row) => normalizeWebProjectLimits(JSON.parse(row.getString("limits") || "null") || {});
+const webProjectView = (row) => ({
+	id: row.id,
+	name: row.getString("name"),
+	repository: row.getString("repository"),
+	multiRepository: row.getBool("multiRepository"),
+	allowedRepositories: webProjectAllowedRepositories(row),
+	previewEnabled: row.getBool("previewEnabled"),
+	previewSourceAppId: row.getString("previewSourceAppId"),
+	previewMax: row.getInt("previewMax") || 3,
+	previewTtlHours: row.getInt("previewTtlHours") || 24,
+	limits: webProjectLimits(row),
+	deletion: webDeletionView(row)
+});
+const variableRevision = (row) => $security.sha256(row?.getString("valueEncrypted") || "no-project-variables");
+const webEnvironmentResources = (app, store = $app) => {
+	let runtime, storage;
+	try {
+		runtime = store.findRecordsByFilter("web_runtime_profiles", "appId={:id}", "", 1, 0, { id: app.id })[0];
+	} catch {}
+	try {
+		storage = store.findRecordsByFilter("web_storage_settings", "appId={:id}", "", 1, 0, { id: app.id })[0];
+	} catch {}
+	return {
+		profile: validateRuntimeProfile(runtime ? JSON.parse(runtime.getString("profile") || "{}") : {}),
+		volumes: storage ? JSON.parse(storage.getString("volumes") || "[]") : [],
+		revision: $security.sha256(JSON.stringify([
+			runtime?.getString("profile") || "",
+			runtime?.getString("registryEncrypted") || "",
+			runtime?.getString("revision") || "",
+			storage?.getString("volumes") || "",
+			storage?.getString("revision") || ""
+		]))
+	};
+};
+/** Égalité de dépôts : insensible à la casse pour GitHub, exacte pour 'git:' (sensible à la casse hors des forges). */
+const webSameRepository = (a, b) => {
+	const left = `${a || ""}`, right = `${b || ""}`;
+	return left.startsWith("git:") || right.startsWith("git:") ? left === right : left.toLowerCase() === right.toLowerCase();
+};
+/**
+* Invariant dépôt application/projet. Même dépôt (insensible à la casse, exact pour 'git:'), ou dépôt vide côté
+* application pour un moteur non source (image, worker, CI) : un projet peut ainsi regrouper ces moteurs, avec ou sans
+* dépôt. Groupe de sites (multiRepository) : aucun invariant, le dépôt du projet ne sert qu'aux previews.
+*/
+const webProjectRepositoryMatches = (app, project, store = $app) => {
+	if (project.getBool("multiRepository")) return true;
+	const repository = `${webConfig(app).repository || ""}`;
+	if (webSameRepository(repository, project.getString("repository"))) return true;
+	return !repository && !webSourceBuildSupported(app, store);
+};
+/**
+* Groupe de sites : une promotion reste dans le même site (même dépôt, ou lignée de clonage `sourceAppId`). `a` et `b`
+* : lignes web_app_environments de la source et de la cible.
+*/
+const webSameSiteFamily = (source, target, a, b) => {
+	const left = `${webConfig(source).repository || ""}`, right = `${webConfig(target).repository || ""}`;
+	if (left && right && webSameRepository(left, right)) return true;
+	const fromA = a.getString("sourceAppId"), fromB = b.getString("sourceAppId");
+	return fromA === target.id || fromB === source.id || !!fromA && fromA === fromB;
+};
+/** Projet et ses projets d'origine (restaurations « · récupération » successives), du plus récent au plus ancien. */
+const webProjectLineage = (projectId, store = $app) => {
+	const lineage = [];
+	for (let id = projectId; id && !lineage.includes(id) && lineage.length < 20;) {
+		lineage.push(id);
+		let from = "";
+		try {
+			const row = store.findFirstRecordByFilter("web_project_audit", "projectId={:id} && action=\"project-recovered\"", { id });
+			from = `${JSON.parse(row.getString("details") || "{}").fromProjectId || ""}`;
+		} catch {}
+		id = from;
+	}
+	return lineage;
+};
+/** L'application a déjà quitté un projet : ses variables locales ont pu recevoir les variables partagées aplaties. */
+const webAppDetachment = (appId, store = $app) => store.findRecordsByFilter("web_project_audit", "action=\"application-detached\" && details ~ {:id}", "-created", 1, 0, { id: appId })[0] || null;
+/**
+* Historique rejouable (déploiement, sauvegarde) : capturé dans le projet actuel ou l'un de ses projets d'origine, ou
+* hors projet si l'application n'a jamais quitté un projet. Une application déplacée d'une équipe à l'autre ne rejoue
+* jamais l'image, le dépôt ni les variables de l'équipe précédente. `projectId` = projet cible (rattachement en
+* cours).
+*/
+const webHistoryInScope = (app, originProjectId, store = $app, projectId = webMembership(app.id, store)?.getString("projectId") || "") => {
+	if (!projectId) return true;
+	if (originProjectId) return webProjectLineage(projectId, store).includes(originProjectId);
+	return !webAppDetachment(app.id, store);
+};
+/** Projet dans lequel le contenu d'un déploiement (image, variables résolues) a été produit. */
+const webDeploymentOrigin = (row) => `${decryptWebValue(row.getString("snapshotEncrypted"))?.projectEnvironment?.projectId || ""}`;
+const assertWebDeploymentInScope = (app, row, store = $app) => {
+	if (!webHistoryInScope(app, webDeploymentOrigin(row), store)) throw new ForbiddenError("Cette version a été produite dans un autre projet. Déployez une nouvelle version depuis ce projet ; seul un administrateur de la plateforme peut la rejouer.");
+};
+const resolveWebEnvironment = (app, store = $app) => {
+	const membership = webMembership(app.id, store), local = decryptWebValue(app.getString("envEncrypted"));
+	if (!membership) return {
+		env: local,
+		context: {
+			projectId: "",
+			environment: "legacy",
+			revision: $security.sha256(app.getString("envEncrypted") || "no-environment")
+		}
+	};
+	const project = webProject(membership.getString("projectId"), store), environment = webEnvironmentName(membership.getString("environment"));
+	if (!webProjectRepositoryMatches(app, project, store)) throw new BadRequestError("Le dépôt de cette application diffère de celui de son projet. Détachez-la du projet avant de changer de dépôt.");
+	const shared = webProjectVariable(project.id, environment, store), values = decryptWebValue(shared?.getString("valueEncrypted") || "");
+	const env = Object.create(null);
+	for (const name of Object.keys(values)) env[name] = { ...values[name] };
+	for (const name of Object.keys(local)) env[name] = { ...local[name] };
+	try {
+		planWebEnvironment(env, [], "merge");
+	} catch (error) {
+		throw new BadRequestError(error instanceof Error ? error.message : "Variables résolues invalides.");
+	}
+	return {
+		env,
+		context: {
+			projectId: project.id,
+			environment,
+			revision: $security.sha256(JSON.stringify([
+				membership.id,
+				membership.getString("state"),
+				environment,
+				variableRevision(shared),
+				app.getString("envEncrypted")
+			]))
+		}
+	};
+};
+const currentWebEnvironmentRevision = (app, store = $app) => $security.sha256(JSON.stringify([
+	app.getString("name"),
+	app.getString("config"),
+	app.getString("envEncrypted"),
+	app.getString("desiredCommit"),
+	app.getString("activeDeployment"),
+	resolveWebEnvironment(app, store).context.revision,
+	webEnvironmentResources(app, store).revision
+]));
+const assertWebEnvironmentRevision = (app, expected, store = $app) => {
+	if (typeof expected !== "string" || !$security.equal(expected, currentWebEnvironmentRevision(app, store))) throw new BadRequestError("L’environnement cible a changé. Préparez une nouvelle promotion ; ses réglages actuels sont conservés.");
+};
+const assertWebEnvironmentDeployAllowed = (app, action, store = $app) => {
+	const member = webMembership(app.id, store);
+	if (member?.getString("environment") === "preview" && !["stop", "preview-remove"].includes(action) && (member.getString("state") !== "active" || !Number.isFinite(Date.parse(member.getString("expiresAt"))) || Date.parse(member.getString("expiresAt")) <= Date.now())) throw new BadRequestError("Cette preview est fermée ou expirée. Son nettoyage est en cours.");
+};
+const assertWebEnvironmentBackupAllowed = (app, store = $app) => {
+	if (webMembership(app.id, store)?.getString("environment") === "preview") throw new BadRequestError("Les previews de pull requests sont temporaires et ne sont pas sauvegardées. Promouvez leur commit vers dev, staging ou prod pour le conserver.");
+};
+/** Projets accessibles (superAdmin : tous), paginés en base via une jointure sur web_project_members. */
+const HandleWebProjectsList = (e) => {
+	const user = requireWebUser(e), q = webProjectAccessQuery(user, "id"), page = Math.max(1, Math.floor(Number(e.request.url.query().get("page")) || 1)), rows = $app.findRecordsByFilter("web_projects", q.filter, "-created", 26, (page - 1) * 25, q.params);
+	return webJson(e, {
+		items: rows.slice(0, 25).map((row) => {
+			const role = webEffectiveRole(user, row.id);
+			return {
+				...webProjectView(row),
+				role: role || null,
+				capabilities: webCapabilities(role)
+			};
+		}),
+		page,
+		hasMore: rows.length > 25
+	});
+};
+const HandleWebProjectUpdate = (e) => {
+	const { user, project: current } = requireWebProjectPermission(e, "project.update"), input = webInput(e), projectId = current.id;
+	if (input.name === void 0) input.name = current.getString("name");
+	if (typeof input.name === "string" && input.name.trim() !== current.getString("name")) requireWebPermission(e, { projectId }, "project.rename");
+	let allowedRepositories;
+	if (input.allowedRepositories !== void 0) {
+		const list = input.allowedRepositories;
+		if (!Array.isArray(list) || list.length > 50 || list.some((r) => typeof r !== "string" || r.length > 250 || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r))) throw new BadRequestError("Dépôts autorisés attendus au format propriétaire/dépôt (50 au maximum).");
+		allowedRepositories = list.filter((r, i) => list.findIndex((o) => o.toLowerCase() === r.toLowerCase()) === i);
+		const key = (items) => JSON.stringify(items.map((r) => r.toLowerCase()).sort());
+		if (key(allowedRepositories) !== key(webProjectAllowedRepositories(current))) requireWebPermission(e, { projectId }, "app.repository");
+	}
+	let multiRepository = false;
+	if (input.multiRepository !== void 0) {
+		if (typeof input.multiRepository !== "boolean") throw new BadRequestError("Le choix multi-dépôt doit être explicite.");
+		if (!input.multiRepository && current.getBool("multiRepository")) throw new BadRequestError("Un groupe de sites ne peut pas redevenir un projet mono-dépôt.");
+		if (input.multiRepository && !current.getBool("multiRepository")) {
+			requireWebPermission(e, { projectId }, "app.repository");
+			multiRepository = true;
+		}
+	}
+	let project;
+	$app.runInTransaction((tx) => {
+		const row = webProject(projectId, tx);
+		if (input.previewEnabled === void 0) input.previewEnabled = row.getBool("previewEnabled");
+		if (input.previewSourceAppId === void 0) input.previewSourceAppId = row.getString("previewSourceAppId");
+		if (input.previewMax === void 0) input.previewMax = row.getInt("previewMax");
+		if (input.previewTtlHours === void 0) input.previewTtlHours = row.getInt("previewTtlHours");
+		if (typeof input.name !== "string" || !input.name.trim() || input.name.trim().length > 80 || typeof input.previewEnabled !== "boolean" || !Number.isInteger(input.previewMax) || input.previewMax < 1 || input.previewMax > 5 || !Number.isInteger(input.previewTtlHours) || input.previewTtlHours < 1 || input.previewTtlHours > 72) throw new BadRequestError("Nom, quota 1 à 5 et durée 1 à 72 heures requis.");
+		if (input.previewEnabled) {
+			const source = tx.findRecordById("web_apps", webProjectId(input.previewSourceAppId)), membership = webMembership(source.id, tx);
+			if (membership?.getString("projectId") !== row.id || membership.getString("environment") === "preview") throw new BadRequestError("Choisissez une application dev, staging ou prod de ce projet comme modèle.");
+			if (webConfig(source).source === "git") throw new BadRequestError("Les aperçus de pull request nécessitent la source GitHub App.");
+			if (multiRepository || row.getBool("multiRepository")) {
+				const repository = `${webConfig(source).repository || ""}`;
+				if (!repository) throw new BadRequestError("Le modèle de preview doit avoir un dépôt GitHub.");
+				if (!webSameRepository(repository, row.getString("repository")) && tx.findRecordsByFilter("web_app_environments", "projectId={:id} && environment='preview' && state!='closed'", "", 1, 0, { id: row.id }).length) throw new BadRequestError("Fermez d’abord les previews ouvertes avant de changer de modèle de preview.");
+				row.set("repository", repository);
+			}
+		}
+		if (multiRepository) row.set("multiRepository", true);
+		row.set("name", input.name.trim());
+		row.set("previewEnabled", input.previewEnabled);
+		row.set("previewSourceAppId", input.previewEnabled ? input.previewSourceAppId : "");
+		row.set("previewMax", input.previewMax);
+		row.set("previewTtlHours", input.previewTtlHours);
+		if (allowedRepositories) row.set("allowedRepositories", allowedRepositories);
+		if (input.limits !== void 0) try {
+			row.set("limits", normalizeWebProjectLimits(input.limits));
+		} catch (error) {
+			throw new BadRequestError(error instanceof Error ? error.message : "Limites invalides.");
+		}
+		tx.save(row);
+		auditWebProject(row.id, user.id, "settings-updated", {
+			name: input.name.trim(),
+			previewEnabled: input.previewEnabled,
+			previewMax: input.previewMax,
+			previewTtlHours: input.previewTtlHours,
+			...allowedRepositories ? { allowedRepositories } : {},
+			...multiRepository ? { multiRepository: true } : {},
+			...input.limits !== void 0 ? { limits: webProjectLimits(row) } : {}
+		}, tx);
+		project = webProjectView(row);
+	});
+	return webJson(e, { project });
+};
+const variableScope = (e, permission) => {
+	const { user, project, role } = requireWebProjectPermission(e, permission);
+	return {
+		user,
+		project,
+		environment: webEnvironmentName(e.request.pathValue("environment")),
+		blind: !webRoleAllows(role, "variables.reveal")
+	};
+};
+const variablesView = (row, revealed = false) => {
+	const values = decryptWebValue(row?.getString("valueEncrypted") || ""), dotenv = formatWebDotenv(values, revealed);
+	return {
+		revision: variableRevision(row),
+		revealed,
+		dotenv: dotenv.text,
+		variables: Object.keys(values).sort().map((name) => ({
+			name,
+			build: values[name].build,
+			runtime: values[name].runtime,
+			...revealed ? { value: values[name].value } : {}
+		})),
+		exportWarnings: dotenv.warnings
+	};
+};
+const HandleWebProjectVariablesGet = (e) => {
+	const { project, environment } = variableScope(e, "variables.read");
+	return webJson(e, variablesView(webProjectVariable(project.id, environment)));
+};
+const HandleWebProjectVariablesReveal = (e) => {
+	const { user, project, environment } = variableScope(e, "variables.reveal");
+	auditWebProject(project.id, user.id, "variables-revealed", { environment });
+	return webJson(e, variablesView(webProjectVariable(project.id, environment), true));
+};
+const sharedToken = (actor, projectId, environment, input) => $security.hs256(JSON.stringify([
+	actor,
+	projectId,
+	environment,
+	input.revision,
+	input.text,
+	input.mode
+]), $os.getenv("WEB_APPS_MASTER_KEY"));
+const sharedPlan = (old, input, blind = false) => {
+	if (typeof input.revision !== "string" || !$security.equal(input.revision, variableRevision(old))) throw new BadRequestError("Ces variables partagées ont changé. Rechargez-les avant de les enregistrer.");
+	try {
+		return planWebEnvironment(decryptWebValue(old?.getString("valueEncrypted") || ""), parseWebDotenv(input.text), input.mode, { blind });
+	} catch (error) {
+		throw new BadRequestError(error instanceof Error ? error.message : "Fichier .env invalide.");
+	}
+};
+const validateCombinedVariables = (projectId, environment, values, store) => {
+	for (const member of store.findRecordsByFilter("web_app_environments", "projectId={:id} && environment={:environment} && state=\"active\"", "", 1e3, 0, {
+		id: projectId,
+		environment
+	})) {
+		const app = store.findRecordById("web_apps", member.getString("appId")), combined = {
+			...values,
+			...decryptWebValue(app.getString("envEncrypted"))
+		};
+		try {
+			planWebEnvironment(combined, [], "merge");
+		} catch (error) {
+			throw new BadRequestError(`Variables combinées de ${app.getString("name")} : ${error instanceof Error ? error.message : "limite dépassée"}`);
+		}
+	}
+};
+const HandleWebProjectVariablesPreview = (e) => {
+	const { user, project, environment, blind } = variableScope(e, "variables.write"), input = webInput(e), plan = sharedPlan(webProjectVariable(project.id, environment), input, blind);
+	validateCombinedVariables(project.id, environment, plan.next, $app);
+	return webJson(e, {
+		changes: plan.changes,
+		previewToken: sharedToken(user.id, project.id, environment, input)
+	});
+};
+const HandleWebProjectVariablesPut = (e) => {
+	const { user, project, environment } = variableScope(e, "variables.write"), input = webInput(e);
+	if (typeof input.previewToken !== "string" || !$security.equal(input.previewToken, sharedToken(user.id, project.id, environment, input))) throw new BadRequestError("Prévisualisez les changements avant de modifier les variables partagées.");
+	let result;
+	$app.runInTransaction((tx) => {
+		const old = webProjectVariable(project.id, environment, tx);
+		const plan = sharedPlan(old, input);
+		validateCombinedVariables(project.id, environment, plan.next, tx);
+		const row = old || new Record(tx.findCollectionByNameOrId("web_project_variables"));
+		row.set("projectId", project.id);
+		row.set("environment", environment);
+		row.set("valueEncrypted", encryptWebValue(plan.next));
+		tx.save(row);
+		auditWebProject(project.id, user.id, "variables-updated", {
+			environment,
+			changes: plan.changes
+		}, tx);
+		result = variablesView(row);
+	});
+	return webJson(e, result);
+};
+const exportWebEnvironmentBackup = (app, store = $app) => {
+	const member = webMembership(app.id, store);
+	if (!member) return null;
+	const project = webProject(member.getString("projectId"), store), environment = member.getString("environment");
+	return {
+		version: 1,
+		project: {
+			id: project.id,
+			name: project.getString("name"),
+			repository: project.getString("repository"),
+			multiRepository: project.getBool("multiRepository")
+		},
+		membership: {
+			environment,
+			slug: member.getString("slug")
+		},
+		variablesEncrypted: webProjectVariable(project.id, environment, store)?.getString("valueEncrypted") || encryptWebValue({})
+	};
+};
+const restoreWebEnvironmentBackup = (app, state, store = $app) => {
+	const old = webMembership(app.id, store);
+	if (!state) {
+		if (old) store.delete(old);
+		reconcileWebGitSourceProject(app, store);
+		return;
+	}
+	const multiRepository = state?.project?.multiRepository === true;
+	if (state.version !== 1 || typeof state.project?.name !== "string" || !multiRepository && !webSameRepository(state.project.repository, webConfig(app).repository)) throw new BadRequestError("Rattachement de projet de sauvegarde invalide.");
+	const environment = webEnvironmentName(state.membership?.environment);
+	if (environment === "preview") throw new BadRequestError("Une preview temporaire ne peut pas être restaurée comme environnement permanent.");
+	planWebEnvironment(decryptWebValue(state.variablesEncrypted), [], "merge");
+	const project = new Record(store.findCollectionByNameOrId("web_projects"));
+	project.set("name", (state.project.name + " · récupération").slice(0, 80));
+	project.set("repository", `${state.project.repository || ""}`);
+	project.set("multiRepository", multiRepository);
+	project.set("previewMax", 3);
+	project.set("previewTtlHours", 24);
+	project.set("limits", normalizeWebProjectLimits(state.project.limits || {}));
+	const fromProjectId = old?.getString("projectId") || "";
+	try {
+		if (fromProjectId) project.set("allowedRepositories", webProjectAllowedRepositories(store.findRecordById("web_projects", fromProjectId)));
+	} catch {}
+	store.save(project);
+	const members = fromProjectId ? store.findRecordsByFilter(WEB_MEMBERS, "project={:id}", "created", 1e3, 0, { id: fromProjectId }) : [];
+	for (const row of members) {
+		const copy = new Record(store.findCollectionByNameOrId(WEB_MEMBERS));
+		copy.set("project", project.id);
+		copy.set("user", row.getString("user"));
+		copy.set("role", row.getString("role"));
+		store.save(copy);
+	}
+	auditWebProject(project.id, "", "project-recovered", {
+		appId: app.id,
+		fromProjectId,
+		members: members.length
+	}, store);
+	const variables = new Record(store.findCollectionByNameOrId("web_project_variables"));
+	variables.set("projectId", project.id);
+	variables.set("environment", environment);
+	variables.set("valueEncrypted", state.variablesEncrypted);
+	store.save(variables);
+	const member = old || new Record(store.findCollectionByNameOrId("web_app_environments"));
+	member.set("appId", app.id);
+	member.set("projectId", project.id);
+	member.set("environment", environment);
+	member.set("slug", environment);
+	member.set("state", "active");
+	member.set("previewNumber", 0);
+	member.set("expiresAt", "");
+	member.set("sourceAppId", "");
+	store.save(member);
+	reconcileWebGitSourceProject(app, store);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/gitSource.ts
+/**
+* Source « Dépôt Git (clé de déploiement) » : une clé Ed25519 par dépôt (GitHub refuse la même clé sur deux dépôts),
+* partagée par les applications et environnements du même dépôt. La clé privée est chiffrée avec WEB_APPS_MASTER_KEY et
+* ne quitte le contrôleur que vers le worker local (claim). Les clés d'hôte sont épinglées : valeurs publiées pour
+* github.com, gitlab.com et bitbucket.org, sinon scan + confirmation explicite des empreintes (TOFU). Routes
+* enregistrées dans hooks.ts ; claim, validateConfig et webhook câblés dans api.ts. Permissions : source.git.configure
+* (plateforme : créer, supprimer, rattacher), source.hostKey.scan et source.deployKey.rotate (admin, débit limité),
+* app.configure (test, branches), app.read (lecture : clé publique et empreintes). La source suit le projet de ses
+* applications ; dès qu'une application qui l'utilise est hors de ce projet (sans projet, détachée, restaurée
+* ailleurs), seul un administrateur de la plateforme peut la gérer.
+*/
+/**
+* Transport SSH durci du contrôleur (keygen, keyscan, ls-remote, test). Aucune sortie brute de ssh/git n'est renvoyée :
+* les erreurs sont des messages français fixes. Chaque connexion revérifie que l'hôte se résout uniquement vers des
+* adresses publiques et épingle HostName sur l'adresse vérifiée (pas de rebinding DNS).
+*/
+const GIT_SOURCE_READER = String.raw`
+import sys,json,os,re,base64,hashlib,ipaddress,pathlib,queue,shlex,signal,socket,subprocess,tempfile,threading
+os.umask(0o077)
+HOST=re.compile(r'(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]')
+LOCAL=re.compile(r'(^|\.)(localhost|local|internal|localdomain|home\.arpa|arpa)$')
+USER=re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}')
+PATH=re.compile(r'[A-Za-z0-9._~/-]{1,250}')
+BRANCH=re.compile(r'[A-Za-z0-9_./-]{1,200}')
+TYPES=('ssh-ed25519','ecdsa-sha2-nistp256','ecdsa-sha2-nistp384','ecdsa-sha2-nistp521','ssh-rsa')
+ALIAS='pockethost-git';LIMIT=5000;OUTPUT=4000000;BLOCKED=[ipaddress.ip_network(n)for n in ['64:ff9b::/96','64:ff9b:1::/48','2002::/16','2001::/32']]
+MESSAGES={'invalid':'Adresse du dépôt Git invalide.','ssrf':'Cette adresse Git n’est pas autorisée : seuls les serveurs publics sont acceptés.','dns':'Nom d’hôte Git introuvable.','unreachable':'Le serveur Git est injoignable sur ce port.','timeout':'Le serveur Git n’a pas répondu à temps. Réessayez.','hostkey':'L’empreinte du serveur Git ne correspond pas aux clés confirmées. Vérifiez l’hôte puis confirmez de nouveau ses empreintes.','unpinned':'Confirmez d’abord les empreintes du serveur Git.','publickey':'Le serveur Git refuse la clé de déploiement. Ajoutez la clé publique au dépôt (lecture seule) puis réessayez.','repository':'Dépôt introuvable ou inaccessible avec cette clé de déploiement.','branch':'Branche introuvable dans ce dépôt.','nokeys':'Le serveur Git n’a présenté aucune clé d’hôte exploitable.','tools':'git et openssh-client doivent être installés sur ce serveur.','keygen':'La génération de la clé de déploiement a échoué.','failed':'L’accès au dépôt Git a échoué.'}
+class Fail(Exception):
+ def __init__(self,code):self.code=code;super().__init__(code)
+def timeout(*args):raise TimeoutError()
+def fingerprint(blob):return 'SHA256:'+base64.b64encode(hashlib.sha256(base64.b64decode(blob)).digest()).decode().rstrip('=')
+def remote(value):
+ if not isinstance(value,dict):raise Fail('invalid')
+ host=str(value.get('host')or'');user=str(value.get('sshUser')or'git');path=str(value.get('path')or'');port=value.get('port',22)
+ if not HOST.fullmatch(host)or LOCAL.search(host)or not USER.fullmatch(user)or type(port)is not int or not 1<=port<=65535:raise Fail('invalid')
+ relative=path[1:]if path.startswith('/')else path
+ if not PATH.fullmatch(path)or not relative or relative[0]in'-/'or any(p in['','.','..']for p in relative.split('/')):raise Fail('invalid')
+ return {'host':host,'port':port,'user':user,'path':path}
+def public(ip):
+ mapped=getattr(ip,'ipv4_mapped',None)
+ return ip.is_global and not ip.is_multicast and not(mapped and not mapped.is_global)and not getattr(ip,'sixtofour',None)and not getattr(ip,'teredo',None)and not any(ip.version==6 and ip in n for n in BLOCKED)
+def addresses(host,port):
+ result=queue.Queue(maxsize=1)
+ def resolve():
+  try:result.put(socket.getaddrinfo(host,port,type=socket.SOCK_STREAM))
+  except Exception:result.put(None)
+ threading.Thread(target=resolve,daemon=True).start()
+ try:values=result.get(timeout=3)
+ except queue.Empty:raise Fail('timeout')from None
+ if not values:raise Fail('dns')
+ checked=[]
+ for family,kind,proto,_,address in values:
+  if family not in(socket.AF_INET,socket.AF_INET6):raise Fail('ssrf')
+  try:ip=ipaddress.ip_address(str(address[0]).split('%')[0])
+  except ValueError:raise Fail('ssrf')from None
+  if not public(ip):raise Fail('ssrf')
+  if str(ip)not in checked:checked.append(str(ip))
+ return sorted(checked,key=lambda a:':'in a)
+def host_key(kind,key):
+ if kind not in TYPES or not isinstance(key,str)or not 16<=len(key)<=4096:return None
+ try:blob=base64.b64decode(key,validate=True)
+ except Exception:return None
+ if len(blob)<8 or blob[4:4+int.from_bytes(blob[:4],'big')]!=kind.encode():return None
+ return {'type':kind,'key':key,'fingerprint':fingerprint(key)}
+def pinned(values):
+ keys=[k for k in(host_key(v.get('type'),v.get('key'))for v in(values if isinstance(values,list)else[])[:10]if isinstance(v,dict))if k]
+ if not keys:raise Fail('unpinned')
+ return keys
+def ssh_config(folder,ip,target):
+ q=lambda v:'"'+v+'"'
+ options=[('HostName',ip),('Port',str(target['port'])),('User',target['user']),('HostKeyAlias',target['host']),('IdentityFile',q(folder+'/id_ed25519')),('IdentitiesOnly','yes'),('IdentityAgent','none'),('UserKnownHostsFile',q(folder+'/known_hosts')),('GlobalKnownHostsFile','/dev/null'),('StrictHostKeyChecking','yes'),('UpdateHostKeys','no'),('CheckHostIP','no'),('VerifyHostKeyDNS','no'),('BatchMode','yes'),('PasswordAuthentication','no'),('KbdInteractiveAuthentication','no'),('HostbasedAuthentication','no'),('PubkeyAuthentication','yes'),('PreferredAuthentications','publickey'),('ProxyCommand','none'),('ProxyJump','none'),('ForwardAgent','no'),('ForwardX11','no'),('ForwardX11Trusted','no'),('ClearAllForwardings','yes'),('PermitLocalCommand','no'),('RequestTTY','no'),('Tunnel','no'),('ControlMaster','no'),('ControlPath','none'),('AddKeysToAgent','no'),('EnableSSHKeysign','no'),('ConnectTimeout','8'),('ConnectionAttempts','1'),('ServerAliveInterval','5'),('ServerAliveCountMax','2'),('LogLevel','ERROR')]
+ return 'Host '+ALIAS+'\n'+''.join(' '+k+' '+v+'\n'for k,v in options)
+def git_env(folder,config):
+ return {'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':folder,'XDG_CONFIG_HOME':folder,'LANG':'C','LC_ALL':'C','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','GIT_ALLOW_PROTOCOL':'ssh','GIT_PROTOCOL_FROM_USER':'0','GIT_TERMINAL_PROMPT':'0','GIT_ASKPASS':'/bin/false','SSH_ASKPASS':'/bin/false','SSH_ASKPASS_REQUIRE':'never','GIT_SSH_VARIANT':'ssh','GIT_SSH_COMMAND':'ssh -F '+shlex.quote(config)}
+GIT=['git','-c','protocol.allow=never','-c','protocol.ssh.allow=always','-c','credential.helper=','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null']
+def classify(text):
+ t=text.lower()
+ if 'host key verification failed'in t or 'remote host identification has changed'in t or 'no matching host key type'in t:return 'hostkey'
+ if 'permission denied'in t:return 'publickey'
+ if 'could not resolve hostname'in t:return 'dns'
+ if 'timed out'in t:return 'timeout'
+ if any(s in t for s in['connection refused','no route to host','network is unreachable','connection closed','connection reset']):return 'unreachable'
+ if any(s in t for s in['not found','could not be found','does not exist','not a git repository','does not appear to be a git repository','could not read from remote repository']):return 'repository'
+ return 'failed'
+def run_git(folder,env,args,limit=OUTPUT,seconds=30):
+ stderr=open(folder+'/stderr','w+b');expired=[]
+ try:proc=subprocess.Popen(GIT+args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=stderr,env=env,cwd=folder,start_new_session=True)
+ except FileNotFoundError:raise Fail('tools')from None
+ def kill():
+  expired.append(1)
+  try:os.killpg(proc.pid,signal.SIGKILL)
+  except Exception:pass
+ timer=threading.Timer(seconds,kill);timer.start();out=b'';truncated=False
+ try:
+  while True:
+   chunk=proc.stdout.read(65536)
+   if not chunk:break
+   out+=chunk
+   if len(out)>limit:truncated=True;kill();break
+  code=proc.wait()
+ finally:
+  timer.cancel()
+  if proc.poll()is None:
+   kill();proc.wait()
+  proc.stdout.close()
+ stderr.seek(0);text=stderr.read(20000).decode('utf-8','replace');stderr.close()
+ if expired and not truncated:raise Fail('timeout')
+ if code!=0 and not truncated:raise Fail(classify(text))
+ return out,truncated
+def parse_refs(out,limit=LIMIT):
+ rows=[];head='';truncated=False
+ for line in out.decode('utf-8','replace').splitlines():
+  m=re.fullmatch(r'ref: refs/heads/(\S+)\tHEAD',line)
+  if m:
+   if BRANCH.fullmatch(m.group(1))and '..'not in m.group(1):head=m.group(1)
+   continue
+  m=re.fullmatch(r'([0-9a-f]{40})\t(\S+)',line)
+  if not m:continue
+  if len(rows)>=limit:truncated=True;break
+  rows.append((m.group(2),m.group(1)))
+ return rows,head,truncated
+def branch_name(ref):
+ name=ref[11:]if ref.startswith('refs/heads/')else''
+ return name if BRANCH.fullmatch(name)and '..'not in name and name[0]not in'-/'and not name.endswith('/')else''
+def ls_remote(data,args):
+ target=remote(data.get('remote'));keys=pinned(data.get('hostKeys'));private=data.get('privateKey')
+ if not isinstance(private,str)or not private.startswith('-----BEGIN OPENSSH PRIVATE KEY-----')or len(private)>10000:raise Fail('invalid')
+ ip=addresses(target['host'],target['port'])[0]
+ with tempfile.TemporaryDirectory(prefix='web-git-')as folder:
+  os.chmod(folder,0o700);config=folder+'/ssh_config'
+  for name,text in[('id_ed25519',private.rstrip('\n')+'\n'),('known_hosts',''.join(target['host']+' '+k['type']+' '+k['key']+'\n'for k in keys)),('ssh_config',ssh_config(folder,ip,target))]:
+   pathlib.Path(folder,name).write_text(text);os.chmod(folder+'/'+name,0o600)
+  return run_git(folder,git_env(folder,config),['ls-remote',*args,'--',ALIAS+':'+target['path'],*data.get('patterns',[])])
+def keygen(comment):
+ if not re.fullmatch(r'[A-Za-z0-9@._-]{1,64}',comment):raise Fail('keygen')
+ try:
+  from cryptography.hazmat.primitives import serialization as s
+  from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+  key=Ed25519PrivateKey.generate();private=key.private_bytes(s.Encoding.PEM,s.PrivateFormat.OpenSSH,s.NoEncryption()).decode();public=key.public_key().public_bytes(s.Encoding.OpenSSH,s.PublicFormat.OpenSSH).decode()
+ except ImportError:
+  with tempfile.TemporaryDirectory(prefix='web-git-key-')as folder:
+   try:subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-C',comment,'-f',folder+'/k'],check=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
+   except FileNotFoundError:raise Fail('tools')from None
+   except Exception:raise Fail('keygen')from None
+   private=pathlib.Path(folder,'k').read_text();public=pathlib.Path(folder,'k.pub').read_text()
+ parts=public.split()
+ if len(parts)<2 or parts[0]!='ssh-ed25519'or not private.startswith('-----BEGIN OPENSSH PRIVATE KEY-----')or host_key(parts[0],parts[1])is None:raise Fail('keygen')
+ return {'privateKey':private,'publicKey':parts[0]+' '+parts[1]+' '+comment,'fingerprint':fingerprint(parts[1])}
+def keyscan(data):
+ target=remote(dict(data.get('remote')or{},path='scan'));ip=addresses(target['host'],target['port'])[0]
+ try:out=subprocess.run(['ssh-keyscan','-T','5','-t','ed25519,ecdsa,rsa','-p',str(target['port']),ip],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=15).stdout[:200000].decode('utf-8','replace')
+ except FileNotFoundError:raise Fail('tools')from None
+ except subprocess.TimeoutExpired:raise Fail('timeout')from None
+ keys=[]
+ for line in out.splitlines():
+  parts=line.split()
+  if len(parts)<3 or line.startswith('#'):continue
+  key=host_key(parts[1],parts[2])
+  if key and all(k['fingerprint']!=key['fingerprint']for k in keys):keys.append(key)
+  if len(keys)>=10:break
+ if not keys:raise Fail('nokeys')
+ order={t:i for i,t in enumerate(TYPES)};keys.sort(key=lambda k:order[k['type']])
+ return {'hostKeys':keys}
+def main(data):
+ action=data.get('action')
+ if action=='keygen':return keygen(str(data.get('comment')or'pockethost-web-deploy'))
+ if action=='keyscan':return keyscan(data)
+ if action in['ls-remote','test']:
+  mode=data.get('mode')if action=='ls-remote'else'test';branch=data.get('branch')or''
+  if branch and(not isinstance(branch,str)or not branch_name('refs/heads/'+branch)):raise Fail('invalid')
+  if mode=='heads':
+   out,cut=ls_remote(dict(data,patterns=['HEAD','refs/heads/*']),['--symref']);rows,head,truncated=parse_refs(out)
+   items=[{'name':branch_name(ref),'commit':sha}for ref,sha in rows if branch_name(ref)]
+   return {'branches':items,'defaultBranch':head,'truncated':truncated or cut,'skipped':sum(1 for ref,sha in rows if ref!='HEAD'and not branch_name(ref))}
+  if mode=='resolve':
+   if not branch:raise Fail('invalid')
+   out,cut=ls_remote(dict(data,patterns=['refs/heads/'+branch]),[]);rows,head,truncated=parse_refs(out)
+   found=[sha for ref,sha in rows if ref=='refs/heads/'+branch]
+   if not found:raise Fail('branch')
+   return {'commit':found[0]}
+  if mode=='test':
+   out,cut=ls_remote(dict(data,patterns=['HEAD']+(['refs/heads/'+branch]if branch else[])),['--symref']);rows,head,truncated=parse_refs(out)
+   found=[sha for ref,sha in rows if branch and ref=='refs/heads/'+branch]
+   return {'ok':True,'defaultBranch':head,'head':next((sha for ref,sha in rows if ref=='HEAD'),''),'branchFound':bool(found)if branch else None,'commit':found[0]if found else''}
+ raise Fail('invalid')
+signal.signal(signal.SIGALRM,timeout);signal.alarm(45)
+try:
+ p=pathlib.Path(sys.argv[1]);data=json.loads(p.read_text());p.unlink()
+ print(json.dumps(main(data)))
+except Exception as error:
+ code=error.code if isinstance(error,Fail)else 'timeout'if isinstance(error,(TimeoutError,subprocess.TimeoutExpired))else 'failed'
+ print(json.dumps({'error':MESSAGES.get(code,MESSAGES['failed']),'code':code}))
+finally:signal.alarm(0)
+`;
+const COLLECTION$5 = "web_git_sources";
+const ID$3 = /^[a-z0-9]{15}$/;
+const WEBHOOK_ID = /^[A-Za-z0-9]{24}$/;
+const SCAN_LIFETIME = 600 * 1e3;
+const RATE_STORE = "web_git_source_rate";
+const RATE_MAX = 6;
+/** Livraisons webhook acceptées par minute et par source avant ls-remote (chaque relecture bloque jusqu'à 45 s). */
+const WEBHOOK_RATE_MAX = 20;
+/**
+* Relectures de tête (déployer, CI) par minute et par source : chacune lance ssh/git et bloque jusqu'à 45 s. Même
+* plafond pour les appels GitHub synchrones (assertWebGithubRate).
+*/
+const RESOLVE_RATE_MAX = 12;
+const BRANCHES_MAX = 5e3;
+const RATE_WINDOW = 60 * 1e3;
+const KEY_COMMENT = "pockethost-web-deploy";
+const FINGERPRINT = /^SHA256:[A-Za-z0-9+\/]{43}$/;
+const FAILED = "Le contrôle du dépôt Git a échoué. Réessayez.";
+const now$3 = () => (/* @__PURE__ */ new Date()).toISOString();
+const transport$2 = (action, values) => {
+	const file = `${$app.dataDir()}/.web-git-source-${$security.randomString(24)}.json`;
+	try {
+		$os.writeFile(file, JSON.stringify({
+			action,
+			...values
+		}), 384);
+		const result = JSON.parse(toString($os.cmd("python3", "-c", GIT_SOURCE_READER, file).output()));
+		if (!result || typeof result !== "object") throw new Error("Invalid git response");
+		return result;
+	} catch {
+		return {
+			error: FAILED,
+			code: "failed"
+		};
+	} finally {
+		try {
+			$os.remove(file);
+		} catch {}
+	}
+};
+/** Appel du lecteur ; une réponse {error} devient une BadRequestError au message fixe. */
+const webGitSource = (action, values = {}) => {
+	const result = transport$2(action, values);
+	if (result.error) throw new BadRequestError(`${result.error}`.slice(0, 300));
+	return result;
+};
+const parse = (url) => {
+	try {
+		return parseGitRemote(url);
+	} catch (error) {
+		throw new BadRequestError(error instanceof Error ? error.message : "Adresse SSH du dépôt invalide.");
+	}
+};
+const findSource = (id, store = $app) => {
+	if (!ID$3.test(id || "")) throw new BadRequestError("Dépôt Git invalide.");
+	try {
+		return store.findRecordById(COLLECTION$5, id);
+	} catch {
+		throw new NotFoundError("Dépôt Git introuvable.");
+	}
+};
+const findCanonical = (canonical, store = $app) => {
+	try {
+		return store.findFirstRecordByFilter(COLLECTION$5, "canonical={:canonical}", { canonical });
+	} catch {
+		return null;
+	}
+};
+const remoteOf = (row) => ({
+	host: row.getString("host"),
+	port: row.getInt("port") || 22,
+	sshUser: row.getString("sshUser") || "git",
+	path: row.getString("path")
+});
+const hostKeysOf = (row) => {
+	try {
+		const value = JSON.parse(row.getString("hostKeys") || "[]");
+		return Array.isArray(value) ? value.filter((k) => k && WEB_GIT_HOST_KEY_TYPES.indexOf(k.type) >= 0 && typeof k.key === "string" && FINGERPRINT.test(k.fingerprint)) : [];
+	} catch {
+		return [];
+	}
+};
+const privateKeyOf = (row) => `${decryptWebValue(row.getString("privateKeyEncrypted")).privateKey || ""}`;
+const hostKeysConfirmed = (row) => !!row.getString("hostKeysConfirmedAt") && hostKeysOf(row).length > 0;
+/** Une source est prête quand une clé privée existe et que des clés d'hôte sont confirmées. */
+const assertWebGitSourceReady = (row) => {
+	if (!row.getString("privateKeyEncrypted")) throw new BadRequestError("Clé de déploiement absente : régénérez-la.");
+	if (!hostKeysConfirmed(row)) throw new BadRequestError("Confirmez d’abord les empreintes du serveur Git.");
+};
+const credentials = (row) => {
+	assertWebGitSourceReady(row);
+	return {
+		remote: remoteOf(row),
+		privateKey: privateKeyOf(row),
+		hostKeys: hostKeysOf(row).map((k) => ({
+			type: k.type,
+			key: k.key
+		}))
+	};
+};
+const origin$2 = () => {
+	const host = $os.getenv("APP_HOST") || `app.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`;
+	return /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) ? `https://${host}` : "";
+};
+const webhookUrl = (row) => origin$2() && WEBHOOK_ID.test(row.getString("webhookId")) ? `${origin$2()}/api/web-git-sources/webhook/${row.getString("webhookId")}` : "";
+/** Applications dont la configuration référence cette source (source='git', gitSourceId). */
+const webGitSourceApps = (sourceId, store = $app) => store.findRecordsByFilter("web_apps", "", "", 2e3, 0).filter((row) => {
+	const c = webConfig(row);
+	return c.source === "git" && c.gitSourceId === sourceId;
+});
+/** Projet de chaque application qui utilise la source ('' : application sans projet), hors `exceptAppId`. */
+const webGitSourceAppProjects = (sourceId, store = $app, exceptAppId = "") => webGitSourceApps(sourceId, store).filter((row) => row.id !== exceptAppId).map((row) => webMembership(row.id, store)?.getString("projectId") || "");
+/**
+* Après un détachement ou une restauration de `app` : la source suit le seul projet de ses applications, ou
+* n'appartient plus à aucun projet (superAdmin seul). Plusieurs projets : rattachement inchangé, sourceAccess réserve
+* alors la source à la plateforme. `app` peut porter une configuration pas encore enregistrée (restauration).
+*/
+const reconcileWebGitSourceProject = (app, store = $app) => {
+	const config = webConfig(app);
+	if (config.source !== "git") return;
+	let row;
+	try {
+		row = findSource(`${config.gitSourceId || ""}`, store);
+	} catch {
+		return;
+	}
+	const projects = [...webGitSourceAppProjects(row.id, store, app.id), webMembership(app.id, store)?.getString("projectId") || ""].filter((id, index, all) => !!id && all.indexOf(id) === index), next = projects.length > 1 ? row.getString("projectId") : projects[0] || "";
+	if (next === row.getString("projectId")) return;
+	row.set("projectId", next);
+	store.save(row);
+};
+/** Cible RBAC d'une source : son projet (si défini) et les applications qui l'utilisent. */
+const webGitSourceTarget = (sourceId, store = $app) => {
+	const row = findSource(sourceId, store), projectId = row.getString("projectId");
+	return {
+		...projectId ? { projectId } : {},
+		appIds: webGitSourceApps(row.id, store).map((r) => r.id)
+	};
+};
+/** Champs non secrets à écrire dans web_apps.config pour rattacher une application à la source. */
+const webGitAppConfig = (sourceId, store = $app) => {
+	const row = findSource(sourceId, store);
+	return {
+		source: "git",
+		gitSourceId: row.id,
+		repository: webGitRepository({ canonical: row.getString("canonical") })
+	};
+};
+/** Vue publique : jamais de clé privée, de secret de webhook ni de scan en attente. */
+const serializeWebGitSource = (row, store = $app) => {
+	const remote = remoteOf(row), keys = hostKeysOf(row), canonical = row.getString("canonical");
+	return {
+		id: row.id,
+		...remote,
+		canonical,
+		repository: webGitRepository({ canonical }),
+		url: webGitDisplayUrl(remote),
+		provider: webGitProvider(remote.host),
+		projectId: row.getString("projectId"),
+		publicKey: row.getString("publicKey"),
+		fingerprint: row.getString("fingerprint"),
+		hostKeys: keys.map((k) => ({
+			type: k.type,
+			fingerprint: k.fingerprint,
+			preset: !!k.preset
+		})),
+		hostKeysPreset: keys.some((k) => !!k.preset),
+		hostKeysConfirmed: hostKeysConfirmed(row),
+		hostKeysConfirmedAt: row.getString("hostKeysConfirmedAt"),
+		ready: !!row.getString("privateKeyEncrypted") && hostKeysConfirmed(row),
+		webhook: {
+			url: webhookUrl(row),
+			configured: !!row.getString("webhookSecretEncrypted")
+		},
+		lastCheckAt: row.getString("lastCheckAt"),
+		lastCheckStatus: row.getString("lastCheckStatus"),
+		lastError: row.getString("lastError"),
+		rotatedAt: row.getString("rotatedAt"),
+		appCount: webGitSourceApps(row.id, store).length,
+		created: row.getString("created"),
+		updated: row.getString("updated")
+	};
+};
+const generateKey = () => {
+	const r = webGitSource("keygen", { comment: KEY_COMMENT });
+	let publicKey = "";
+	try {
+		publicKey = parseSshEd25519PublicKey(`${r.publicKey || ""}`).normalized;
+	} catch {}
+	if (!publicKey || publicKey.length > 200 || !FINGERPRINT.test(r.fingerprint || "") || typeof r.privateKey !== "string" || !r.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----")) throw new BadRequestError("La génération de la clé de déploiement a échoué.");
+	return {
+		publicKey,
+		fingerprint: r.fingerprint,
+		privateKeyEncrypted: encryptWebValue({ privateKey: r.privateKey })
+	};
+};
+const rateLimit = (sourceId, store = RATE_STORE, max = RATE_MAX, message = "Trop de contrôles Git pour ce dépôt. Réessayez dans une minute.") => {
+	$app.store().setFunc(store, (raw) => {
+		const at = Date.now(), all = raw ? JSON.parse(`${raw}`) : {};
+		for (const id of Object.keys(all)) {
+			all[id] = (all[id] || []).filter((t) => t > at - RATE_WINDOW);
+			if (!all[id].length) delete all[id];
+		}
+		const hits = all[sourceId] || [];
+		if (hits.length >= max) throw new TooManyRequestsError(message);
+		hits.push(at);
+		all[sourceId] = hits;
+		return JSON.stringify(all);
+	});
+};
+const webRateLimit = rateLimit;
+/**
+* Appels synchrones vers GitHub : chacun lance un python3 qui bloque jusqu'à 30 s une VM du pool de hooks. Plafond par
+* cible (application, ou projet pour une preview) ET par acteur ; l'acteur d'abord, pour qu'un compte déjà au plafond
+* n'épuise pas le quota de son application.
+*/
+const assertWebGithubRate = (targetId, actorId) => {
+	const message = "Trop de demandes pour cette application. Réessayez dans une minute.";
+	if (actorId) rateLimit(actorId, `${RATE_STORE}_github_actor`, RESOLVE_RATE_MAX, message);
+	rateLimit(targetId, `${RATE_STORE}_github_target`, RESOLVE_RATE_MAX, message);
+};
+/**
+* Garde d'accès : source rattachée à un projet => rôle de projet ; source sans projet => superAdmin. Une source
+* inaccessible répond comme une source inexistante (pas d'énumération). Une application hors du projet (sans projet,
+* détachée, restaurée dans un projet de récupération) utilise encore la source : une rotation ou un nouvel épinglage la
+* casserait sans que ce projet en ait la charge, donc superAdmin seul (403).
+*/
+const sourceAccess = (e, permission) => {
+	const user = requireWebUser(e), row = findSource(e.request.pathValue("sourceId")), projectId = row.getString("projectId");
+	if (!projectId) {
+		if (!isWebPlatformAdmin(user)) throw new NotFoundError("Dépôt Git introuvable.");
+		return {
+			row,
+			user: requirePlatformAdmin(e)
+		};
+	}
+	try {
+		requireWebPermission(e, { projectId }, permission);
+	} catch (error) {
+		if (error instanceof NotFoundError) throw new NotFoundError("Dépôt Git introuvable.");
+		throw error;
+	}
+	if (!isWebPlatformAdmin(user) && webGitSourceAppProjects(row.id).some((id) => id !== projectId)) throw new ForbiddenError("Ce dépôt Git sert aussi une application hors de ce projet : seul un administrateur de la plateforme peut le gérer.");
+	return {
+		row,
+		user
+	};
+};
+/** POST /api/web-git-sources {url, projectId?} — superAdmin (source.git.configure). Idempotent par dépôt (canonical). */
+const HandleWebGitSourceCreate = (e) => {
+	const actor = requirePlatformAdmin(e), input = webInput(e), remote = parse(input.url), projectId = typeof input.projectId === "string" ? input.projectId : "";
+	if (projectId) {
+		if (!ID$3.test(projectId)) throw new BadRequestError("Projet invalide.");
+		try {
+			$app.findRecordById("web_projects", projectId);
+		} catch {
+			throw new NotFoundError("Projet introuvable.");
+		}
+	}
+	const adopt = (row) => {
+		const current = row.getString("projectId");
+		if (projectId && current && current !== projectId) throw new BadRequestError("Ce dépôt Git est déjà relié à un autre projet : une clé de déploiement ne peut servir qu’un seul dépôt.");
+		if (projectId && !current) {
+			row.set("projectId", projectId);
+			$app.save(row);
+		}
+		return webJson(e, {
+			source: serializeWebGitSource(row),
+			created: false
+		});
+	};
+	const existing = findCanonical(remote.canonical);
+	if (existing) return adopt(existing);
+	const key = generateKey(), preset = webGitHostKeyPreset(remote.host, remote.port), row = new Record($app.findCollectionByNameOrId(COLLECTION$5));
+	row.set("host", remote.host);
+	row.set("port", remote.port);
+	row.set("sshUser", remote.sshUser);
+	row.set("path", remote.path);
+	row.set("canonical", remote.canonical);
+	row.set("projectId", projectId);
+	row.set("publicKey", key.publicKey);
+	row.set("fingerprint", key.fingerprint);
+	row.set("privateKeyEncrypted", key.privateKeyEncrypted);
+	row.set("hostKeys", preset.map((k) => ({
+		...k,
+		preset: true
+	})));
+	if (preset.length) {
+		row.set("hostKeysConfirmedAt", now$3());
+		row.set("hostKeysConfirmedBy", actor.id);
+	}
+	row.set("webhookId", $security.randomString(24));
+	row.set("actorId", actor.id);
+	try {
+		$app.save(row);
+	} catch (error) {
+		const again = findCanonical(remote.canonical);
+		if (again) return adopt(again);
+		throw error;
+	}
+	return webJson(e, {
+		source: serializeWebGitSource(row),
+		created: true
+	}, 201);
+};
+/** GET /api/web-git-sources/{sourceId} — lecture (app.read) : clé publique, empreintes, état. */
+const HandleWebGitSourceGet = (e) => webJson(e, { source: serializeWebGitSource(sourceAccess(e, "app.read").row) });
+/** POST .../{sourceId}/scan — admin (source.hostKey.scan). Hôte publié : vérifie la concordance ; sinon prépare un TOFU. */
+const HandleWebGitSourceScan = (e) => {
+	const { row, user } = sourceAccess(e, "source.hostKey.scan");
+	rateLimit(row.id);
+	const remote = remoteOf(row), scanned = webGitSource("keyscan", { remote: {
+		host: remote.host,
+		port: remote.port
+	} }), keys = (Array.isArray(scanned.hostKeys) ? scanned.hostKeys : []).filter((k) => k && WEB_GIT_HOST_KEY_TYPES.indexOf(k.type) >= 0 && FINGERPRINT.test(k.fingerprint)).slice(0, 10).map((k) => ({
+		type: k.type,
+		key: `${k.key}`,
+		fingerprint: k.fingerprint
+	})), preset = webGitHostKeyPreset(remote.host, remote.port);
+	if (!keys.length) throw new BadRequestError("Le serveur Git n’a présenté aucune clé d’hôte exploitable.");
+	if (preset.length) {
+		const published = preset.map((k) => k.fingerprint);
+		if (!keys.some((k) => published.indexOf(k.fingerprint) >= 0)) throw new BadRequestError("Les clés présentées par ce serveur ne correspondent pas aux empreintes publiées par l’hébergeur. Connexion refusée.");
+		if (!hostKeysConfirmed(row)) {
+			row.set("hostKeys", preset.map((k) => ({
+				...k,
+				preset: true
+			})));
+			row.set("hostKeysConfirmedAt", now$3());
+			row.set("hostKeysConfirmedBy", user.id);
+			$app.save(row);
+		}
+		return webJson(e, {
+			preset: true,
+			matches: true,
+			confirmed: true,
+			hostKeys: preset.map((k) => ({
+				type: k.type,
+				fingerprint: k.fingerprint
+			})),
+			source: serializeWebGitSource(row)
+		});
+	}
+	const nonce = $security.randomString(48), expiresAt = new Date(Date.now() + SCAN_LIFETIME).toISOString(), current = webGitFingerprintSet(hostKeysOf(row).map((k) => k.fingerprint)).join(",");
+	row.set("pendingHostKeysEncrypted", encryptWebValue({
+		nonceHash: $security.sha256(nonce),
+		expiresAt,
+		keys,
+		actorId: user.id,
+		...remote
+	}));
+	$app.save(row);
+	return webJson(e, {
+		preset: false,
+		nonce,
+		expiresAt,
+		hostKeys: keys.map((k) => ({
+			type: k.type,
+			fingerprint: k.fingerprint
+		})),
+		changed: !!current && current !== webGitFingerprintSet(keys.map((k) => k.fingerprint)).join(",")
+	});
+};
+/** POST .../{sourceId}/confirm-host-keys {nonce, fingerprints[]} — admin. Les empreintes doivent égaler le dernier scan. */
+const HandleWebGitSourceConfirmHostKeys = (e) => {
+	const { row: initial, user } = sourceAccess(e, "source.hostKey.scan"), input = webInput(e);
+	if (typeof input.nonce !== "string" || !/^[A-Za-z0-9]{48}$/.test(input.nonce)) throw new BadRequestError("Ce scan est invalide ou expiré. Relancez le scan.");
+	const confirmed = webGitFingerprintSet(input.fingerprints);
+	let saved = initial;
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById(COLLECTION$5, initial.id), remote = remoteOf(row);
+		if (webGitHostKeyPreset(remote.host, remote.port).length) throw new BadRequestError("Les empreintes de cet hébergeur sont déjà épinglées.");
+		const pending = row.getString("pendingHostKeysEncrypted") ? decryptWebValue(row.getString("pendingHostKeysEncrypted")) : {};
+		if (!pending.nonceHash || !$security.equal(pending.nonceHash, $security.sha256(input.nonce)) || !(Date.parse(pending.expiresAt) > Date.now()) || pending.host !== remote.host || pending.port !== remote.port) throw new BadRequestError("Ce scan est invalide ou expiré. Relancez le scan.");
+		const keys = Array.isArray(pending.keys) ? pending.keys : [];
+		if (!confirmed.length || confirmed.join(",") !== webGitFingerprintSet(keys.map((k) => k.fingerprint)).join(",")) throw new BadRequestError("Les empreintes confirmées ne correspondent pas au dernier scan. Relancez le scan.");
+		row.set("hostKeys", keys.map((k) => ({
+			type: k.type,
+			key: k.key,
+			fingerprint: k.fingerprint,
+			preset: false
+		})));
+		row.set("hostKeysConfirmedAt", now$3());
+		row.set("hostKeysConfirmedBy", user.id);
+		row.set("pendingHostKeysEncrypted", "");
+		row.set("lastCheckStatus", "");
+		row.set("lastError", "");
+		tx.save(row);
+		saved = row;
+	});
+	return webJson(e, { source: serializeWebGitSource(saved) });
+};
+const recordCheck = (id, status, error) => {
+	try {
+		const row = $app.findRecordById(COLLECTION$5, id);
+		row.set("lastCheckAt", now$3());
+		row.set("lastCheckStatus", status.slice(0, 30));
+		row.set("lastError", error.slice(0, 500));
+		$app.save(row);
+		return row;
+	} catch {
+		return null;
+	}
+};
+/** POST .../{sourceId}/test {branch?} — admin. Résultat {ok, error?, code?} en 200 : un refus est un résultat. */
+const HandleWebGitSourceTest = (e) => {
+	const { row } = sourceAccess(e, "app.configure"), input = webInput(e), branch = typeof input.branch === "string" ? input.branch : "";
+	if (branch && !webGitBranchValid(branch)) throw new BadRequestError("Branche invalide.");
+	rateLimit(row.id);
+	const r = transport$2("test", {
+		...credentials(row),
+		branch
+	}), error = r.error ? `${r.error}`.slice(0, 300) : "", code = error ? `${r.code || "failed"}` : branch && !r.branchFound ? "branch" : "ok", updated = recordCheck(row.id, code, error || (code === "branch" ? "Branche introuvable dans ce dépôt." : "")) || row;
+	return webJson(e, {
+		ok: !error,
+		...error ? {
+			error,
+			code
+		} : {},
+		defaultBranch: error ? "" : `${r.defaultBranch || ""}`,
+		branchFound: error || !branch ? null : !!r.branchFound,
+		commit: error ? "" : `${r.commit || ""}`,
+		source: serializeWebGitSource(updated)
+	});
+};
+/** GET .../{sourceId}/branches?page&perPage&search — admin. Même forme que WebBranchPage (+ defaultBranch, truncated). */
+const HandleWebGitSourceBranches = (e) => {
+	const { row } = sourceAccess(e, "app.configure"), query = e.request.url.query(), page = Math.max(1, Math.min(1e3, Number(query.get("page")) || 1)), perPage = Math.max(1, Math.min(BRANCHES_MAX, Number(query.get("perPage")) || 50)), search = (query.get("search") || "").trim().toLowerCase().slice(0, 100);
+	rateLimit(row.id);
+	const r = webGitSource("ls-remote", {
+		...credentials(row),
+		mode: "heads"
+	}), all = (Array.isArray(r.branches) ? r.branches : []).filter((b) => webGitBranchValid(b?.name) && /^[a-f0-9]{40}$/.test(b?.commit || "")), defaultBranch = webGitBranchValid(r.defaultBranch) ? r.defaultBranch : "", matches = all.filter((b) => !search || b.name.toLowerCase().indexOf(search) >= 0).sort((a, b) => a.name === defaultBranch ? -1 : b.name === defaultBranch ? 1 : a.name < b.name ? -1 : 1);
+	return webJson(e, {
+		items: matches.slice((page - 1) * perPage, page * perPage),
+		page,
+		perPage,
+		totalItems: matches.length,
+		hasMore: page * perPage < matches.length,
+		defaultBranch,
+		truncated: !!r.truncated
+	});
+};
+/**
+* Tête de branche (40 hex) par ls-remote. Pour queueWebDeployment, le webhook et la vérification CI. Débit limité par
+* source (429) ; le webhook a son propre plafond et passe `limited = false`.
+*/
+const resolveWebGitCommit = (source, branch, store = $app, limited = true) => {
+	const row = typeof source === "string" ? findSource(source, store) : source;
+	if (!webGitBranchValid(branch)) throw new BadRequestError("Branche invalide.");
+	const access = credentials(row);
+	if (limited) rateLimit(row.id, `${RATE_STORE}_resolve`, RESOLVE_RATE_MAX);
+	const r = webGitSource("ls-remote", {
+		...access,
+		mode: "resolve",
+		branch
+	});
+	if (!/^[a-f0-9]{40}$/.test(r.commit || "")) throw new BadRequestError("Commit Git invalide.");
+	return r.commit;
+};
+/** Identifiants du job worker (claim) : job.git. Lit la ligne ACTUELLE (une rotation s'applique aux jobs en file). */
+const webGitJobCredentials = (source, commit = "", branch = "", store = $app) => {
+	const c = credentials(typeof source === "string" ? findSource(source, store) : source);
+	return {
+		host: c.remote.host,
+		port: c.remote.port,
+		sshUser: c.remote.sshUser,
+		path: c.remote.path,
+		privateKey: c.privateKey,
+		hostKeys: c.hostKeys,
+		commit,
+		branch
+	};
+};
+/** POST .../{sourceId}/rotate-key {confirm?} — admin (source.deployKey.rotate). confirm:true requis si utilisée. */
+const HandleWebGitSourceRotateKey = (e) => {
+	const { row } = sourceAccess(e, "source.deployKey.rotate"), input = webInput(e), appCount = webGitSourceApps(row.id).length;
+	if (appCount && input.confirm !== true) throw new BadRequestError(`Cette clé sert à ${appCount} application${appCount > 1 ? "s" : ""}. Confirmez la rotation : ajoutez la nouvelle clé publique au dépôt avant le prochain déploiement.`);
+	rateLimit(row.id);
+	const key = generateKey();
+	row.set("publicKey", key.publicKey);
+	row.set("fingerprint", key.fingerprint);
+	row.set("privateKeyEncrypted", key.privateKeyEncrypted);
+	row.set("rotatedAt", now$3());
+	row.set("lastCheckStatus", "");
+	row.set("lastError", "");
+	$app.save(row);
+	return webJson(e, {
+		publicKey: key.publicKey,
+		fingerprint: key.fingerprint,
+		appCount,
+		notice: "Ajoutez la nouvelle clé au dépôt, puis supprimez l’ancienne chez l’hébergeur.",
+		source: serializeWebGitSource(row)
+	});
+};
+/** POST .../{sourceId}/rotate-webhook-secret {disable?} — admin (source.deployKey.rotate). Secret affiché une fois. */
+const HandleWebGitSourceRotateWebhookSecret = (e) => {
+	const { row } = sourceAccess(e, "source.deployKey.rotate");
+	if (webInput(e).disable === true) {
+		row.set("webhookSecretEncrypted", "");
+		$app.save(row);
+		return webJson(e, { source: serializeWebGitSource(row) });
+	}
+	rateLimit(row.id);
+	const secret = $security.randomString(48);
+	if (!WEBHOOK_ID.test(row.getString("webhookId"))) row.set("webhookId", $security.randomString(24));
+	row.set("webhookSecretEncrypted", encryptWebValue({ secret }));
+	$app.save(row);
+	return webJson(e, {
+		secret,
+		url: webhookUrl(row),
+		source: serializeWebGitSource(row)
+	});
+};
+/** DELETE /api/web-git-sources/{sourceId} — superAdmin (source.git.configure). Refusé tant qu'une application l'utilise. */
+const HandleWebGitSourceDelete = (e) => {
+	requirePlatformAdmin(e);
+	const row = findSource(e.request.pathValue("sourceId")), appCount = webGitSourceApps(row.id).length;
+	if (appCount) throw new BadRequestError(`Ce dépôt Git est encore utilisé par ${appCount} application${appCount > 1 ? "s" : ""}. Détachez-les avant de supprimer la clé.`);
+	$app.delete(row);
+	return webJson(e, {
+		deleted: true,
+		notice: "Supprimez aussi la clé de déploiement chez l’hébergeur du dépôt."
+	});
+};
+const ACTIONS = {
+	scan: HandleWebGitSourceScan,
+	"confirm-host-keys": HandleWebGitSourceConfirmHostKeys,
+	test: HandleWebGitSourceTest,
+	"rotate-key": HandleWebGitSourceRotateKey,
+	"rotate-webhook-secret": HandleWebGitSourceRotateWebhookSecret
+};
+/**
+* POST /api/web-git-sources/{sourceId}/{action}. Une seule route générique : des routes littérales `/{sourceId}/scan`
+* entreraient en conflit (mux Go) avec `/webhook/{webhookId}`.
+*/
+const HandleWebGitSourceAction = (e) => {
+	const handler = ACTIONS[e.request.pathValue("action")];
+	if (!handler || !Object.prototype.hasOwnProperty.call(ACTIONS, e.request.pathValue("action"))) throw new NotFoundError("Action inconnue.");
+	return handler(e);
+};
+const header = (e, name) => e.request.header.get(name) || "";
+const signed = (e, raw, secret) => {
+	const hex = $security.hs256(raw, secret);
+	for (const name of ["X-Hub-Signature-256", "X-Hub-Signature"]) {
+		const value = header(e, name);
+		if (value && $security.equal("sha256=" + hex, value.toLowerCase())) return true;
+	}
+	for (const name of [
+		"X-Gitea-Signature",
+		"X-Forgejo-Signature",
+		"X-Gogs-Signature"
+	]) {
+		const value = header(e, name);
+		if (value && $security.equal(hex, value.toLowerCase())) return true;
+	}
+	const token = header(e, "X-Gitlab-Token");
+	return !!token && $security.equal(secret, token);
+};
+const pushOf = (body) => {
+	if (body?.push && Array.isArray(body.push.changes)) {
+		const change = body.push.changes.slice(0, 20).find((c) => c?.new?.type === "branch");
+		return change ? {
+			branch: `${change.new.name || ""}`,
+			after: `${change.new.target?.hash || ""}`,
+			deleted: false
+		} : {
+			branch: "",
+			after: "",
+			deleted: body.push.changes.some((c) => c && c.closed)
+		};
+	}
+	const ref = typeof body?.ref === "string" && body.ref.length <= 211 ? body.ref : "", after = typeof body?.after === "string" ? body.after : "";
+	return {
+		branch: ref.startsWith("refs/heads/") ? ref.slice(11) : "",
+		after,
+		deleted: body?.deleted === true || /^0{40}$/.test(after)
+	};
+};
+/**
+* Traitement d'un webhook signé : vérifie la signature, déduplique, ignore tags/suppressions/autres branches, relit la
+* tête par ls-remote hors transaction puis enregistre la livraison. Retourne la liste {appId, commit} à déployer ;
+* `queue` (fourni par api.ts au câblage) ajoute réellement chaque déploiement dans la même transaction.
+*/
+const webGitWebhookDeliver = (e, queue) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const hookId = e.request.pathValue("webhookId");
+	if (!WEBHOOK_ID.test(hookId)) throw new NotFoundError();
+	let source;
+	try {
+		source = $app.findFirstRecordByFilter(COLLECTION$5, "webhookId={:id}", { id: hookId });
+	} catch {
+		throw new NotFoundError();
+	}
+	const encrypted = source.getString("webhookSecretEncrypted"), secret = encrypted ? `${decryptWebValue(encrypted).secret || ""}` : "", raw = readerToString(e.request.body);
+	if (secret.length < 32 || raw.length > 1e7 || !signed(e, raw, secret)) throw new UnauthorizedError("Signature Git invalide.");
+	let body;
+	try {
+		body = JSON.parse(raw.startsWith("payload=") ? decodeURIComponent(raw.slice(8).replace(/\+/g, " ")) : raw);
+	} catch {
+		throw new BadRequestError("Charge utile JSON attendue.");
+	}
+	const event = (header(e, "X-GitHub-Event") || header(e, "X-Gitea-Event") || header(e, "X-Forgejo-Event") || header(e, "X-Gogs-Event") || header(e, "X-Gitlab-Event") || header(e, "X-Event-Key")).slice(0, 60), delivery = `git-${source.id}-${$security.sha256(raw)}`, push = [
+		"push",
+		"Push Hook",
+		"repo:push"
+	].indexOf(event) >= 0, change = pushOf(body), branch = webGitBranchValid(change.branch) ? change.branch : "", repository = webGitRepository({ canonical: source.getString("canonical") }).slice(0, 250), ignored = !push || change.deleted || !branch;
+	if (!ignored && !/^[a-f0-9]{40}$/.test(change.after)) throw new BadRequestError("Commit invalide.");
+	const bump = (tx) => {
+		let row;
+		try {
+			row = tx.findFirstRecordByFilter("web_webhook_deliveries", "deliveryId={:id}", { id: delivery });
+		} catch {}
+		if (!row) return false;
+		row.set("duplicateCount", Math.min(1e5, row.getInt("duplicateCount") + 1));
+		row.set("lastReceivedAt", now$3());
+		tx.save(row);
+		return true;
+	};
+	let duplicate = false;
+	$app.runInTransaction((tx) => {
+		duplicate = bump(tx);
+	});
+	if (duplicate) return {
+		status: 200,
+		body: {
+			accepted: true,
+			duplicate: true
+		},
+		deploy: []
+	};
+	const matches = (row) => {
+		const c = webConfig(row);
+		return c.autoDeploy && c.branch === branch && webSourceBuildSupported(row);
+	};
+	const matching = ignored ? [] : webGitSourceApps(source.id).filter(matches);
+	if (matching.length) rateLimit(source.id, `${RATE_STORE}_webhook`, WEBHOOK_RATE_MAX);
+	const head = matching.length ? resolveWebGitCommit(source, branch, $app, false) : ignored ? "" : change.after;
+	const deploy = [];
+	let queued = 0;
+	$app.runInTransaction((tx) => {
+		if (bump(tx)) {
+			duplicate = true;
+			return;
+		}
+		const seen = new Record(tx.findCollectionByNameOrId("web_webhook_deliveries"));
+		seen.set("deliveryId", delivery);
+		seen.set("event", event);
+		seen.set("repository", repository);
+		seen.set("branch", branch);
+		seen.set("payloadCommit", /^[a-f0-9]{40}$/.test(change.after) ? change.after : "");
+		seen.set("resolvedCommit", head);
+		seen.set("lastReceivedAt", now$3());
+		if (!ignored) for (const row of webGitSourceApps(source.id, tx).filter(matches)) {
+			deploy.push({
+				appId: row.id,
+				commit: head
+			});
+			if (queue && queue(tx, row, head)) queued++;
+		}
+		seen.set("queued", queued);
+		seen.set("status", queued ? "queued" : deploy.length && !queue ? "planned" : "ignored");
+		seen.set("note", queued ? "Déploiement ajouté à la file." : ignored ? change.deleted ? "Suppression de branche : aucun déploiement." : "Événement sans déploiement." : !deploy.length ? "Aucune application automatique ne correspond à ce dépôt et à cette branche." : queue ? "Cette version est déjà publiée ou en cours de déploiement." : "Déploiement à planifier.");
+		tx.save(seen);
+	});
+	if (duplicate) return {
+		status: 200,
+		body: {
+			accepted: true,
+			duplicate: true
+		},
+		deploy: []
+	};
+	return {
+		status: queued ? 202 : 200,
+		body: {
+			accepted: true,
+			queued
+		},
+		deploy
+	};
+};
+/**
+* POST /api/web-git-sources/webhook/{webhookId} (sans authentification, corps ≤ 10 Mo). Aucun identifiant interne
+* renvoyé.
+*/
+const HandleWebGitSourceWebhook = (e, queue) => {
+	const result = webGitWebhookDeliver(e, queue);
+	return webJson(e, result.body, result.status);
+};
+
+//#endregion
+//#region ../common/webNotifications.ts
+/** Alertes Applications web : liste et libellés partagés par les hooks mothership (Goja) et le dashboard. */
+const WEB_ALERT_BRAND = "Kolab Hosting";
+const WEB_NOTIFICATION_EVENTS$1 = [
+	"health_degraded",
+	"health_recovered",
+	"deployment_failed",
+	"backup_failed",
+	"runtime_stopped",
+	"task_failed",
+	"certificate_expiring",
+	"certificate_failed",
+	"disk_low",
+	"disk_recovered"
+];
+/** Événements par défaut d'un nouveau canal d'application (disque : canal plateforme, opt-in ici). */
+const WEB_NOTIFICATION_DEFAULT_EVENTS = WEB_NOTIFICATION_EVENTS$1.filter((event) => !event.startsWith("disk_"));
+const WEB_PLATFORM_EVENTS = [
+	"disk_low",
+	"disk_recovered",
+	"worker_unresponsive",
+	"worker_recovered",
+	"controller_unreachable",
+	"recovery_failed",
+	"recovery_service_offline",
+	"recovery_capture_stale",
+	"backup_cleanup_failed",
+	"runtime_stopped",
+	"app_deployment_failed",
+	"app_backup_failed",
+	"app_health_degraded"
+];
+/** Par défaut, le canal plateforme ne reçoit pas les copies d'événements des applications. */
+const WEB_PLATFORM_DEFAULT_EVENTS = WEB_PLATFORM_EVENTS.filter((event) => !event.startsWith("app_"));
+const WEB_WEBHOOK_FORMATS = [
+	"generic",
+	"slack",
+	"discord"
+];
+/** Title : libellé court (UI, objet email) ; sentence : phrase du message ; tab : onglet du lien profond. */
+const WEB_NOTIFICATION_LABELS = {
+	health_degraded: {
+		title: "Site indisponible",
+		sentence: "Le site ne répond plus correctement au contrôle de santé.",
+		tab: "health"
+	},
+	health_recovered: {
+		title: "Site rétabli",
+		sentence: "Le site répond à nouveau au contrôle de santé.",
+		tab: "health"
+	},
+	deployment_failed: {
+		title: "Échec de déploiement",
+		sentence: "Un déploiement a échoué ; la version publiée précédente est conservée si elle existe.",
+		tab: "deployments"
+	},
+	backup_failed: {
+		title: "Échec de sauvegarde",
+		sentence: "Une sauvegarde, sa planification ou sa copie S3 a échoué.",
+		tab: "backups"
+	},
+	runtime_stopped: {
+		title: "Site arrêté par la plateforme",
+		sentence: "Le site a été arrêté : limite de cache ou espace disque insuffisant.",
+		tab: "deployments"
+	},
+	task_failed: {
+		title: "Échec de tâche planifiée",
+		sentence: "Une tâche planifiée a échoué, dépassé sa durée maximale ou été suspendue.",
+		tab: "tasks"
+	},
+	certificate_expiring: {
+		title: "Certificat bientôt expiré",
+		sentence: "Un certificat expire dans moins de 30 jours.",
+		tab: "domains"
+	},
+	certificate_failed: {
+		title: "Échec de certificat",
+		sentence: "La création ou le renouvellement d’un certificat a échoué.",
+		tab: "domains"
+	},
+	disk_low: {
+		title: "Espace disque faible",
+		sentence: "L’espace disque du serveur est inférieur à 15 Gio.",
+		tab: "notifications"
+	},
+	disk_recovered: {
+		title: "Espace disque rétabli",
+		sentence: "La réserve disque du serveur est rétablie.",
+		tab: "notifications"
+	},
+	worker_unresponsive: {
+		title: "Worker web injoignable",
+		sentence: "Le worker des applications web ne contacte plus le contrôleur depuis plus de 3 minutes : sondes, sauvegardes et webhooks sont à l’arrêt.",
+		tab: ""
+	},
+	worker_recovered: {
+		title: "Worker web rétabli",
+		sentence: "Le worker des applications web contacte à nouveau le contrôleur.",
+		tab: ""
+	},
+	controller_unreachable: {
+		title: "Contrôleur injoignable",
+		sentence: "Le worker ne parvient plus à joindre le contrôleur de la plateforme.",
+		tab: ""
+	},
+	recovery_failed: {
+		title: "Échec de capture ou de test de reprise",
+		sentence: "Une capture ou un test de reprise de la plateforme a échoué.",
+		tab: ""
+	},
+	recovery_service_offline: {
+		title: "Service de reprise hors ligne",
+		sentence: "Le service de reprise ne publie plus son état.",
+		tab: ""
+	},
+	recovery_capture_stale: {
+		title: "Capture de reprise trop ancienne",
+		sentence: "Aucune capture de reprise vérifiée depuis plus de 36 heures alors que la planification est active.",
+		tab: ""
+	},
+	backup_cleanup_failed: {
+		title: "Suppression de sauvegarde bloquée",
+		sentence: "Une sauvegarde de site n’a pas pu être supprimée (rétention ou suppression manuelle) : son archive et ses objets S3 peuvent rester en place. Nouvel essai automatique sous 24 heures.",
+		tab: ""
+	},
+	app_deployment_failed: {
+		title: "Échec de déploiement (copie plateforme)",
+		sentence: "Un déploiement d’application a échoué.",
+		tab: "deployments"
+	},
+	app_backup_failed: {
+		title: "Échec de sauvegarde (copie plateforme)",
+		sentence: "Une sauvegarde d’application a échoué.",
+		tab: "backups"
+	},
+	app_health_degraded: {
+		title: "Site indisponible (copie plateforme)",
+		sentence: "Un site ne répond plus au contrôle de santé.",
+		tab: "health"
+	},
+	test: {
+		title: "Test d’alerte",
+		sentence: "Notification de test demandée depuis le dashboard.",
+		tab: "notifications"
+	},
+	alerts_grouped: {
+		title: "Alertes regroupées",
+		sentence: "Des alertes ont été regroupées par la limite de fréquence pendant l’heure écoulée.",
+		tab: "notifications"
+	}
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/instanceMonitoring.ts
+const MONITORING_DEFAULTS = {
+	healthPath: "/api/health",
+	healthFailureCount: 3,
+	healthRecoveryCount: 2,
+	cpuThresholdPercent: 85,
+	cpuSustainMinutes: 5,
+	memoryThresholdPercent: 85,
+	memorySustainMinutes: 5,
+	resourceRecoveryCount: 3,
+	resourceRecoveryMargin: 5,
+	startupGraceMs: 120 * 1e3,
+	requestTimeoutSeconds: 5
+};
+const notificationPayloadText = (value, field) => {
+	const text = `${typeof value === "string" ? value : ""}`.trim();
+	if (!text) throw new Error(`Payload de notification invalide : champ ${field} absent.`);
+	return text;
+};
+const normalizeMonitoringNotificationPayload = (value) => {
+	let parsed = value;
+	try {
+		if (typeof value === "string") parsed = JSON.parse(value);
+		else if (value && typeof value === "object") parsed = JSON.parse(JSON.stringify(value));
+	} catch {
+		throw new Error("Payload de notification invalide.");
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Payload de notification invalide.");
+	const payload = parsed;
+	const type = notificationPayloadText(payload.type, "type");
+	const phase = notificationPayloadText(payload.phase, "phase");
+	if (![
+		"health",
+		"cpu",
+		"memory",
+		"backup",
+		"disk",
+		"latency",
+		"backup-check",
+		"test"
+	].includes(type)) throw new Error("Payload de notification invalide : type inconnu.");
+	if (![
+		"opened",
+		"resolved",
+		"test"
+	].includes(phase)) throw new Error("Payload de notification invalide : phase inconnue.");
+	return {
+		title: notificationPayloadText(payload.title, "title"),
+		message: notificationPayloadText(payload.message, "message"),
+		instanceId: notificationPayloadText(payload.instanceId, "instanceId"),
+		instanceName: notificationPayloadText(payload.instanceName, "instanceName"),
+		type,
+		phase,
+		occurredAt: notificationPayloadText(payload.occurredAt, "occurredAt")
+	};
+};
+const normalizeHealthPath = (value) => {
+	const path = `${typeof value === "string" ? value : ""}`.trim();
+	if (!path || path.length > 200) throw new Error("Le chemin de santé doit contenir entre 1 et 200 caractères.");
+	if (!path.startsWith("/") || path.startsWith("//") || /[\u0000-\u001f\u007f]/.test(path)) throw new Error("Le chemin de santé doit être un chemin relatif commençant par /.");
+	if (/^[^?#]*\\/.test(path) || /^\/\w+:\/\//i.test(path)) throw new Error("Le chemin de santé est invalide.");
+	return path;
+};
+const normalizeWebhook = (value) => `${typeof value === "string" ? value : ""}`.trim();
+const normalizeDiscordWebhook = (value) => {
+	const url = normalizeWebhook(value);
+	if (!url) return "";
+	if (url.length > 2e3 || !/^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/[0-9]+\/[A-Za-z0-9._-]+$/.test(url)) throw new Error("L'URL Discord doit être une URL officielle https://discord.com/api/webhooks/…");
+	return url;
+};
+const normalizeSlackWebhook = (value) => {
+	const url = normalizeWebhook(value);
+	if (!url) return "";
+	if (url.length > 2e3 || !/^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(url)) throw new Error("L'URL Slack doit être une URL officielle https://hooks.slack.com/services/…");
+	return url;
+};
+const evaluateHealthSignal = (state, healthy, failuresRequired, recoveriesRequired = MONITORING_DEFAULTS.healthRecoveryCount) => {
+	const next = { ...state };
+	let transition = null;
+	if (healthy) {
+		next.failureStreak = 0;
+		next.successStreak += 1;
+		if (state.incidentOpen && next.successStreak >= recoveriesRequired) {
+			next.incidentOpen = false;
+			transition = "resolve";
+		}
+	} else {
+		next.successStreak = 0;
+		next.failureStreak += 1;
+		if (!state.incidentOpen && next.failureStreak >= failuresRequired) {
+			next.incidentOpen = true;
+			transition = "open";
+		}
+	}
+	return {
+		state: next,
+		transition
+	};
+};
+const evaluateThresholdSignal = (state, value, threshold, highSamplesRequired, normalSamplesRequired = MONITORING_DEFAULTS.resourceRecoveryCount, recoveryMargin = MONITORING_DEFAULTS.resourceRecoveryMargin) => {
+	const next = { ...state };
+	let transition = null;
+	if (value >= threshold) {
+		next.highStreak += 1;
+		next.normalStreak = 0;
+		if (!state.incidentOpen && next.highStreak >= highSamplesRequired) {
+			next.incidentOpen = true;
+			transition = "open";
+		}
+	} else if (value <= Math.max(0, threshold - recoveryMargin)) {
+		next.highStreak = 0;
+		next.normalStreak += 1;
+		if (state.incidentOpen && next.normalStreak >= normalSamplesRequired) {
+			next.incidentOpen = false;
+			transition = "resolve";
+		}
+	} else {
+		next.highStreak = 0;
+		next.normalStreak = 0;
+	}
+	return {
+		state: next,
+		transition
+	};
+};
+const classifyHealthError = (error) => {
+	const message = `${error}`.toLowerCase();
+	if (message.includes("timeout") || message.includes("deadline exceeded")) return "timeout";
+	if (message.includes("no such host") || message.includes("dns") || message.includes("resolve")) return "dns";
+	if (message.includes("tls") || message.includes("certificate") || message.includes("x509")) return "tls";
+	if (message.includes("connect") || message.includes("network") || message.includes("refused")) return "network";
+	return "unknown";
+};
+const monitoringRetryDelayMs = (attempts) => {
+	const delayMinutes = [
+		0,
+		1,
+		5,
+		15,
+		60
+	];
+	return delayMinutes[Math.min(Math.max(0, attempts), delayMinutes.length - 1)] * 60 * 1e3;
+};
+const MONITORING_MAX_DELIVERY_ATTEMPTS = 5;
+const shouldRetryMonitoringDelivery = (phase, attempts) => phase !== "test" && attempts < 5;
+const formatMonitoringPercent = (value) => `${Math.round(value * 10) / 10}`.replace(".", ",");
+const monitoringHistoryRanges = {
+	"24h": {
+		durationMs: 1440 * 60 * 1e3,
+		bucketSeconds: 60
+	},
+	"7d": {
+		durationMs: 10080 * 60 * 1e3,
+		bucketSeconds: 600
+	},
+	"30d": {
+		durationMs: 720 * 60 * 60 * 1e3,
+		bucketSeconds: 3600
+	}
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/deploymentFailureEmail.ts
+const ID$2 = /^[a-z0-9]{15}$/;
+const DEPLOYMENT_EMAIL_MAX_BYTES = 1024 * 1024;
+/** No shell, symlink, special file or unbounded read; every directory is opened without following links. */
+const DEPLOYMENT_EMAIL_LOG_READER = String.raw`
+import sys,os,stat,json,re,signal
+signal.signal(signal.SIGALRM,lambda *_:sys.exit(1));signal.alarm(5)
+limit=1048576;fds=[]
+try:
+ root=sys.argv[1];ident=sys.argv[2]
+ if not root.startswith('/')or not re.fullmatch(r'[a-z0-9]{15}',ident):raise ValueError()
+ parts=root.split('/')[1:]
+ if any(part in ('.','..')for part in parts):raise ValueError()
+ fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY);fds.append(fd)
+ for part in [p for p in parts if p]+['logs']:
+  fd=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd);fds.append(fd)
+ fd=os.open(ident+'.log',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);fds.append(fd)
+ info=os.fstat(fd)
+ if not stat.S_ISREG(info.st_mode):raise ValueError()
+ offset=max(0,info.st_size-limit);os.lseek(fd,offset,os.SEEK_SET);data=b''
+ while len(data)<limit:
+  chunk=os.read(fd,limit-len(data))
+  if not chunk:break
+  data+=chunk
+ if offset:
+  newline=data.find(b'\n');data=data[newline+1:]if newline>=0 else b''
+ print(json.dumps({'text':data.decode('utf-8','replace'),'truncated':bool(offset)},ensure_ascii=True))
+except Exception:print(json.dumps({'unavailable':True}))
+finally:
+ for fd in reversed(fds):os.close(fd)
+`;
+/** Same literal public settings as the worker. A secret name always wins, even for a short literal. */
+const deploymentPublicConfiguration = (name, value, auto = false) => {
+	if (/(?:^|_)(?:SECRET|PASSWORD|TOKEN|KEY|AUTH|CREDENTIALS?)(?:_|$)/.test(name)) return false;
+	if (auto && name.startsWith("RAILPACK_")) return true;
+	if (name.startsWith("NEXT_PUBLIC_")) return true;
+	if (["PGSSLMODE", "DATABASE_SSL"].includes(name)) return [
+		"disable",
+		"allow",
+		"prefer",
+		"require",
+		"verify-ca",
+		"verify-full",
+		"true",
+		"false"
+	].includes(value);
+	if (name === "NODE_ENV" || name.endsWith("_ENVIRONMENT")) return [
+		"production",
+		"development",
+		"test",
+		"staging",
+		"preview"
+	].includes(value);
+	if (name.endsWith("_ENABLED")) return [
+		"true",
+		"false",
+		"0",
+		"1"
+	].includes(value);
+	return (name === "PORT" || /_(?:CONCURRENCY|TIMEOUT_MS)$/.test(name)) && /^[0-9]{1,7}$/.test(value);
+};
+const cleanControls = (text) => text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\r\n/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "");
+const secretValues = (snapshot, current) => {
+	const values = [];
+	const add = (value) => {
+		if (typeof value !== "string" || !value) return;
+		values.push(value, cleanControls(value));
+		for (const line of value.split(/\r?\n/)) if (line.trim().length >= 12) values.push(line.trim());
+	};
+	for (const state of [snapshot, current]) {
+		if (!state || typeof state !== "object" || Array.isArray(state)) throw Error("Invalid environment");
+		const env = state.env || {};
+		if (typeof env !== "object" || Array.isArray(env)) throw Error("Invalid environment");
+		for (const [name, entry] of Object.entries(env)) {
+			if (!entry || typeof entry.value !== "string") throw Error("Invalid environment");
+			if (!deploymentPublicConfiguration(name, entry.value, state.runtime?.kind === "auto")) add(entry.value);
+		}
+		add(state.runtime?.registry?.password);
+		add(state.ci?.registry?.password);
+	}
+	return [...new Set(values.filter(Boolean))].sort((a, b) => b.length - a.length);
+};
+/** One substitution pass: a short password cannot repeatedly expand the replacement marker. */
+const sanitizeDeploymentEmailLog = (text, snapshot, current) => {
+	const secrets = secretValues(snapshot, current), pattern = secrets.length ? new RegExp(["\\[masqué\\]", ...secrets.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))].join("|"), "g") : null;
+	const cleaned = cleanControls(text).replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[masqué]@").replace(/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|x-access-token:[^\s@]+)/g, "[masqué]");
+	return pattern ? cleaned.replace(pattern, "[masqué]") : cleaned;
+};
+const oneLine = (value, limit = 180) => cleanControls(typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().slice(0, limit);
+/** Existing application only; deletion/suspension must also stop queued copies of its deployment logs. */
+const deploymentEmailApplication = (appId, store = $app) => {
+	if (!ID$2.test(appId || "")) return null;
+	try {
+		const app = store.findRecordById("web_apps", appId);
+		if (app.getString("deletionId") || [
+			"deleting",
+			"deleted",
+			"suspended"
+		].includes(app.getString("status"))) return null;
+		if (store.findRecordById("users", app.getString("uid")).getString("suspension")) return null;
+		return app;
+	} catch {
+		return null;
+	}
+};
+const failureJob = (appId, jobId, store) => {
+	if (!ID$2.test(appId || "") || !ID$2.test(jobId || "")) return null;
+	try {
+		const row = store.findRecordById("web_deployments", jobId);
+		return row.getString("appId") === appId && row.getString("status") === "failed" && ["deploy", "ci-deploy"].includes(row.getString("action")) ? row : null;
+	} catch {
+		return null;
+	}
+};
+/** Job metadata comes only from its frozen snapshot, never pending app configuration or an event payload. */
+const deploymentFailureDetails = (job) => {
+	let snapshot = null;
+	try {
+		snapshot = decryptWebValue(job.getString("snapshotEncrypted"));
+	} catch {}
+	const repository = oneLine(snapshot?.config?.repository), branch = oneLine(snapshot?.config?.branch), commit = job.getString("commit");
+	return {
+		deploymentId: job.id,
+		action: job.getString("action"),
+		stage: oneLine(job.getString("stage"), 100),
+		finishedAt: job.getString("finishedAt"),
+		repository: /^(?:git:)?[A-Za-z0-9][A-Za-z0-9_./:@+-]{0,249}$/.test(repository) ? repository : "",
+		branch: branch && !/[\s~^:?*\[\\]/.test(branch) ? branch : "",
+		commit: /^[a-f0-9]{40,64}$/.test(commit) ? commit : ""
+	};
+};
+/** UTF-8 tail bounded after masking as well (short secret replacements can make the text grow). */
+const boundedDeploymentAttachment = (text, truncated) => {
+	const marker = "[Journal tronqué : seules les dernières lignes sont jointes.]\n", budget = DEPLOYMENT_EMAIL_MAX_BYTES - 248;
+	let bytes = 0, start = text.length;
+	while (start > 0) {
+		const code = text.charCodeAt(start - 1);
+		const width = code < 128 ? 1 : code < 2048 ? 2 : code >= 56320 && code <= 57343 && start > 1 ? 4 : 3;
+		if (bytes + width > budget) break;
+		bytes += width;
+		start -= width === 4 ? 2 : 1;
+	}
+	if (start > 0) {
+		const newline = text.indexOf("\n", start);
+		text = newline < 0 ? "" : text.slice(newline + 1);
+		truncated = true;
+	}
+	return (truncated ? marker : "") + text;
+};
+const deploymentFailureAttachment = (row, payload, test, store = $app) => {
+	const fallback = {
+		filename: `deployment-${ID$2.test(row.id) ? row.id : "invalid00000000"}.log`,
+		text: "Journal indisponible. Consultez le déploiement dans le dashboard.\n",
+		details: null
+	};
+	if (test) return {
+		...fallback,
+		text: "Journal fictif de test : la commande de construction a échoué (code 1).\n"
+	};
+	const app = deploymentEmailApplication(row.getString("scope") === "platform" ? payload.details?.appId : row.getString("appId"), store), job = app && failureJob(app.id, payload.details?.deploymentId, store);
+	if (!app || !job || payload.application?.id !== app.id) return fallback;
+	const metadata = deploymentFailureDetails(job);
+	const result = {
+		...fallback,
+		filename: `deployment-${app.id}-${job.id}.log`,
+		details: {
+			...metadata,
+			stage: "",
+			summary: "Détails indisponibles. Consultez le dashboard."
+		}
+	};
+	try {
+		const encrypted = job.getString("snapshotEncrypted");
+		if (!encrypted) return result;
+		const snapshot = decryptWebValue(encrypted), current = {
+			env: resolveWebEnvironment(app, store).env,
+			runtime: snapshot?.runtime
+		};
+		result.details.stage = oneLine(sanitizeDeploymentEmailLog(metadata.stage, snapshot, current), 100);
+		result.details.summary = oneLine(sanitizeDeploymentEmailLog(job.getString("error"), snapshot, current), 300);
+		const log = JSON.parse(toString($os.cmd("python3", "-c", DEPLOYMENT_EMAIL_LOG_READER, webRoot(), job.id).combinedOutput()));
+		if (log.unavailable || typeof log.text !== "string") return result;
+		result.text = boundedDeploymentAttachment(sanitizeDeploymentEmailLog(log.text, snapshot, current), !!log.truncated);
+		return result;
+	} catch {
+		return result;
+	}
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/recovery.ts
+const DRIVER = "/opt/pockethost-web/web_platform_recovery_service.py";
+const run = (operation, input = {}) => {
+	const configured = $os.getenv("WEB_PLATFORM_RECOVERY_RUNNER") || DRIVER;
+	if (!configured.startsWith("/") || /[\r\n\0]/.test(configured)) throw new BadRequestError("Le service de reprise n’est pas configuré.");
+	try {
+		const response = JSON.parse(toString($os.cmd("python3", configured, "api", operation, JSON.stringify(input)).output()));
+		if (!response || ![
+			200,
+			202,
+			400,
+			409,
+			503
+		].includes(response.status) || !response.response || typeof response.response !== "object") throw new Error();
+		return response;
+	} catch {
+		if (operation === "status") return {
+			status: 200,
+			response: {
+				configured: false,
+				worker: { online: false },
+				settings: { enabled: false },
+				unavailable: true
+			}
+		};
+		throw new BadRequestError("Le service de reprise ne peut pas confirmer la demande. Actualisez son état avant de réessayer.");
+	}
+};
+const webPlatformRecoveryApi = run;
+const plain = (input, keys) => {
+	if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => !keys.includes(key))) throw new BadRequestError("Options de reprise invalides.");
+};
+const audit$1 = (actorId, action, response, details = {}) => {
+	const row = new Record($app.findCollectionByNameOrId("web_platform_recovery_audit"));
+	row.set("actorId", actorId);
+	row.set("action", action);
+	row.set("jobId", typeof response.job?.id === "string" ? response.job.id.slice(0, 128) : "");
+	row.set("details", details);
+	$app.save(row);
+};
+const HandleWebPlatformRecoveryStatus = (e) => {
+	requirePlatformAdmin(e);
+	const result = run("status");
+	return webJson(e, result.response, result.status);
+};
+const HandleWebPlatformRecoveryRuns = (e) => {
+	requirePlatformAdmin(e);
+	const raw = e.request.url.query().get("page") || "1";
+	if (!/^\d{1,6}$/.test(raw) || Number(raw) < 1 || Number(raw) > 1e5) throw new BadRequestError("Page de reprise invalide.");
+	const result = run("runs", { page: Number(raw) });
+	return webJson(e, result.response, result.status);
+};
+const HandleWebPlatformRecoverySettings = (e) => {
+	const actor = requirePlatformAdmin(e), input = webInput(e);
+	plain(input, [
+		"enabled",
+		"hourUTC",
+		"minuteUTC",
+		"retention",
+		"runToday"
+	]);
+	if (input.runToday !== void 0 && typeof input.runToday !== "boolean") throw new BadRequestError("Option « aujourd’hui » invalide.");
+	if (typeof input.enabled !== "boolean" || !Number.isInteger(input.hourUTC) || input.hourUTC < 0 || input.hourUTC > 23 || !Number.isInteger(input.minuteUTC) || input.minuteUTC < 0 || input.minuteUTC > 59 || !Number.isInteger(input.retention) || input.retention < 1 || input.retention > 30) throw new BadRequestError("Horaire UTC et rétention de 1 à 30 captures requis.");
+	const result = run("settings", {
+		...input,
+		actorId: actor.id
+	});
+	if (result.status < 300) audit$1(actor.id, "settings", result.response, input);
+	return webJson(e, result.response, result.status);
+};
+const HandleWebPlatformRecoveryCapture = (e) => {
+	const actor = requirePlatformAdmin(e);
+	plain(webInput(e), []);
+	const result = run("capture", { actorId: actor.id });
+	if (result.status < 300) audit$1(actor.id, "capture", result.response);
+	return webJson(e, result.response, result.status);
+};
+const HandleWebPlatformRecoveryDrill = (e) => {
+	const actor = requirePlatformAdmin(e);
+	plain(webInput(e), []);
+	const backupId = e.request.pathValue("backupId");
+	if (!/^[a-f0-9]{32}$/.test(backupId || "")) throw new BadRequestError("Capture de reprise invalide.");
+	const result = run("drill", {
+		backupId,
+		actorId: actor.id
+	});
+	if (result.status < 300) audit$1(actor.id, "drill", result.response, { backupId });
+	return webJson(e, result.response, result.status);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/notifications.ts
+const SETTINGS$3 = "web_notification_settings", DELIVERIES = "web_notification_deliveries", OUTBOX = "web_alert_events", PLATFORM = "web_platform_notification_settings";
+/** Conservé pour les imports existants ; la liste et les libellés vivent dans common/webNotifications. */
+const WEB_NOTIFICATION_EVENTS = [...WEB_NOTIFICATION_EVENTS$1];
+const PLATFORM_EVENTS = [...WEB_PLATFORM_EVENTS];
+const label = (event) => WEB_NOTIFICATION_LABELS[event] || WEB_NOTIFICATION_LABELS.test;
+const HOUR = 36e5;
+/** Alertes automatiques et résumés : 12 par canal et par heure. Les tests manuels ont leurs propres plafonds. */
+const AUTO_PER_HOUR = 12, TESTS_PER_CHANNEL_HOUR = 10, TESTS_PER_USER_HOUR = 20;
+/** Analyse des sources au plus toutes les 15 s (les réclamations du worker ont lieu toutes les 3 s). */
+const SCAN_EVERY = 15e3;
+/**
+* Première occurrence de l'heure toujours transmise, même plafond atteint (une rafale d'autres alertes ne la masque
+* pas).
+*/
+const CRITICAL = [
+	"deployment_failed",
+	"backup_failed",
+	"certificate_failed",
+	"health_degraded",
+	"runtime_stopped"
+];
+/**
+* Capacité de l'hôte : jamais transmise aux canaux des clients. Réservée aux applications opérées par la plateforme
+* (legacy, ou projet dont tous les membres sont superAdmins), et sans aucune mesure. Le canal plateforme la reçoit.
+*/
+const PLATFORM_ONLY = ["disk_low", "disk_recovered"];
+/** Copies optionnelles des échecs d'applications vers le canal plateforme. */
+const COPIED = [
+	"health_degraded",
+	"deployment_failed",
+	"backup_failed"
+];
+const DEPLOYMENT_FAILURES = ["deployment_failed", "app_deployment_failed"];
+const RATE_LIMITED = "Notification regroupée par la limite de fréquence.";
+const WORKER_DOWN_AFTER = 18e4;
+const stamp$4 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
+const id$3 = (value) => {
+	if (typeof value !== "string" || !/^[a-z0-9]{15}$/.test(value)) throw new BadRequestError("Notification invalide.");
+	return value;
+};
+const defaults$1 = () => ({
+	webhook: {
+		enabled: false,
+		url: "",
+		secret: "",
+		format: "generic"
+	},
+	email: {
+		enabled: false,
+		recipients: [],
+		projectAdmins: false
+	},
+	events: [...WEB_NOTIFICATION_DEFAULT_EVENTS],
+	cooldownSeconds: 300,
+	copyAppEvents: false
+});
+const platformDefaults = () => ({
+	...defaults$1(),
+	events: [...WEB_PLATFORM_DEFAULT_EVENTS]
+});
+const merge = (base, stored) => ({
+	...base,
+	...stored,
+	webhook: {
+		...base.webhook,
+		...stored?.webhook || {}
+	},
+	email: {
+		...base.email,
+		...stored?.email || {}
+	}
+});
+const find$2 = (appId, store = $app) => {
+	try {
+		return store.findFirstRecordByFilter(SETTINGS$3, "appId={:id}", { id: appId });
+	} catch {
+		return null;
+	}
+};
+const config$1 = (row, platform = false) => {
+	const base = platform ? platformDefaults() : defaults$1();
+	const stored = row?.getString("configEncrypted") ? decryptWebValue(row.getString("configEncrypted")) : null;
+	return stored ? merge(base, stored) : base;
+};
+const platformCollection = (store = $app) => {
+	try {
+		store.findCollectionByNameOrId(PLATFORM);
+		return true;
+	} catch {
+		return false;
+	}
+};
+/** Ligne unique du canal plateforme, créée désactivée au premier besoin. */
+const platformRow = (store = $app) => {
+	try {
+		return store.findFirstRecordByFilter(PLATFORM, "key=\"platform\"");
+	} catch {
+		const row = new Record(store.findCollectionByNameOrId(PLATFORM));
+		row.set("key", "platform");
+		row.set("enabled", false);
+		row.set("revision", $security.randomString(24));
+		store.save(row);
+		return row;
+	}
+};
+const projectOf = (appId, store = $app) => {
+	try {
+		return store.findFirstRecordByFilter("web_app_environments", "appId={:id}", { id: appId }).getString("projectId");
+	} catch {
+		return "";
+	}
+};
+const userOf = (id, store) => {
+	try {
+		return store.findRecordById("users", id);
+	} catch {
+		return null;
+	}
+};
+const verifiedEmail = (user) => user && user.getBool("verified") && !user.getString("suspension") ? user.getString("email").toLowerCase() : "";
+/**
+* Destinataires autorisés : adresses vérifiées des membres actuels du projet, et des superAdmins. Le dashboard n'est
+* jamais un relais vers des adresses tierces. Pour une application de projet, l'enregistrement n'accepte en plus que
+* l'adresse de son auteur (aucune énumération des comptes de la plateforme) ; l'envoi accepte aussi les superAdmins.
+*/
+const allowedRecipients = (appId, store, author) => {
+	const emails = /* @__PURE__ */ new Set(), projectId = projectOf(appId, store);
+	if (projectId) for (const member of store.findRecordsByFilter(WEB_MEMBERS, "project={:project}", "", 1e3, 0, { project: projectId })) emails.add(verifiedEmail(userOf(member.getString("user"), store)));
+	if (author) emails.add(verifiedEmail(author));
+	if (!author || !projectId) {
+		for (const admin of store.findRecordsByFilter("users", "superAdmin=true && verified=true", "", 500, 0)) if (isWebPlatformAdmin(admin)) emails.add(verifiedEmail(admin));
+	}
+	emails.delete("");
+	return emails;
+};
+/**
+* Destinataires implicites : owners et administrateurs actuels du projet de l'application (comptes vérifiés, non
+* suspendus, non désabonnés ; 10 au plus). Résolus à chaque envoi : un membre retiré ne reçoit plus rien.
+*/
+const projectAdmins = (appId, store = $app) => {
+	const projectId = projectOf(appId, store);
+	if (!projectId) return [];
+	return store.findRecordsByFilter(WEB_MEMBERS, "project={:p} && (role=\"owner\" || role=\"admin\")", "created", 10, 0, { p: projectId }).map((member) => userOf(member.getString("user"), store)).filter((user) => user && !user.getBool("unsubscribe")).map((user) => verifiedEmail(user)).filter(Boolean);
+};
+const deliverableRecipients = (appId, recipients, store = $app) => {
+	const allowed = allowedRecipients(appId, store);
+	return recipients.filter((address) => allowed.has(address.toLowerCase()));
+};
+/** Destinataires effectifs d'une application : explicites + owners/admins si demandé, revalidés à l'envoi. */
+const recipientsOf = (value, appId, store = $app) => {
+	const explicit = [...value.email.recipients].map((address) => address.toLowerCase());
+	return deliverableRecipients(appId, [...new Set([...explicit, ...value.email.projectAdmins ? projectAdmins(appId, store) : []])], store).slice(0, 15);
+};
+/** Canal plateforme : adresses saisies par un superAdmin (opérateurs), sans filtre de projet. */
+const recipientsFor = (scope, value, appId, store = $app) => scope === "platform" ? [...value.email.recipients] : recipientsOf(value, appId, store);
+/** The operator who configured a platform channel must still have platform authority at delivery time. */
+const platformSettingActive = (settings, store = $app) => isWebPlatformAdmin(userOf(settings.getString("actorId"), store));
+/** Opérée par la plateforme : legacy (superAdmins seulement) ou projet sans aucun membre client. */
+const platformOperated = (appId, store) => {
+	const projectId = projectOf(appId, store);
+	if (!projectId) return true;
+	return store.findRecordsByFilter(WEB_MEMBERS, "project={:project}", "", 1e3, 0, { project: projectId }).every((member) => isWebPlatformAdmin(userOf(member.getString("user"), store)));
+};
+/** Nom d'application sans lien ni nom de domaine : il est choisi par le client et ne doit pas servir d'hameçon. */
+const safeName = (value) => (typeof value === "string" ? value : "").replace(/[\r\n\t]/g, " ").replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, " ").replace(/\S*[a-z0-9-]\.[a-z]{2,}\S*/gi, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "Site web";
+const smtpAvailable = () => {
+	const settings = $app.settings();
+	return !!(settings.smtp?.enabled && settings.smtp.host && settings.meta?.senderAddress);
+};
+const healthState = (appId) => {
+	try {
+		const profile = $app.findRecordsByFilter("web_runtime_profiles", "appId={:id}", "", 1, 0, { id: appId })[0];
+		if (profile && JSON.parse(profile.getString("profile") || "{}").kind === "worker") return "not_applicable";
+	} catch {}
+	try {
+		return $app.findRecordsByFilter("web_app_health", "appId={:id}", "", 1, 0, { id: appId })[0]?.getBool("enabled") ? "enabled" : "disabled";
+	} catch {
+		return "disabled";
+	}
+};
+/**
+* Les alertes appartiennent à l'application, pas à leur auteur : actives tant que l'application existe dans un projet
+* (legacy : tant que l'auteur reste superAdmin). Toute modification exige notifications.manage à l'écriture.
+*/
+const settingActive = (actorId, appId, store = $app) => webAppSettingActive(appId, actorId, store);
+const channels = (value) => {
+	const host = /^https:\/\/([^/]+)/.exec(value.webhook.url)?.[1] || "";
+	return {
+		webhook: {
+			enabled: value.webhook.enabled,
+			configured: !!value.webhook.url,
+			endpointHost: host,
+			hasSecret: !!value.webhook.secret,
+			format: value.webhook.format || "generic"
+		},
+		email: {
+			enabled: value.email.enabled,
+			configured: !!value.email.recipients.length || !!value.email.projectAdmins,
+			recipients: value.email.recipients,
+			projectAdmins: !!value.email.projectAdmins
+		},
+		events: value.events,
+		cooldownSeconds: value.cooldownSeconds,
+		smtpAvailable: smtpAvailable()
+	};
+};
+const response = (row, appId) => {
+	const value = config$1(row), view = channels(value), projectId = projectOf(appId);
+	return {
+		revision: row?.getString("revision") || "",
+		...view,
+		email: {
+			...view.email,
+			projectAdminCount: projectAdmins(appId).length
+		},
+		inProject: !!projectId,
+		platformOperated: platformOperated(appId, $app),
+		healthMonitoring: healthState(appId),
+		paused: !!row && row.getBool("enabled") && !settingActive(row.getString("actorId"), appId),
+		pausedLegacy: !!row && !row.getBool("enabled") && (value.webhook.enabled || value.email.enabled)
+	};
+};
+const requireWorker$3 = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const expected = $os.getenv("WEB_APPS_WORKER_SECRET");
+	if (expected.length < 32 || !$security.equal(expected, e.request.header.get("X-Web-Worker") || "")) throw new UnauthorizedError();
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
+};
+const metadata$3 = (row) => ({
+	id: row.id,
+	channel: row.getString("channel"),
+	event: row.getString("event"),
+	status: row.getString("status"),
+	attempts: row.getInt("attempts"),
+	nextAttemptAt: row.getString("nextAttemptAt"),
+	created: row.getString("created"),
+	sentAt: row.getString("sentAt"),
+	httpStatus: row.getInt("httpStatus"),
+	lastError: row.getString("lastError"),
+	trigger: row.getString("trigger")
+});
+const validUrl = (value) => typeof value === "string" && value.length <= 2e3 && /^https:\/\/(?=.{1,253}(?::443)?(?:\/|$))(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}(?::443)?(?:\/[^\s#]*)?$/.test(value) && !/[\r\n\0]/.test(value);
+const validEmail = (address) => typeof address === "string" && address.length <= 254 && /^\S+@[^\s@]+\.[^\s@]+$/.test(address) && !/[\r\n\0]/.test(address);
+/**
+* Validation commune des canaux (application et plateforme). Retourne le secret généré, affiché une seule fois. Slack
+* et Discord ne vérifient aucune signature : aucun secret n'est exigé ni généré pour eux (un secret déjà enregistré est
+* conservé pour un retour au format générique).
+*/
+const applyChannels = (input, value, recipientCheck, canEmail) => {
+	let generatedSecret = "";
+	for (const channel of ["webhook", "email"]) if (input[channel] !== void 0) {
+		const body = input[channel];
+		if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") throw new BadRequestError("Canal invalide.");
+		if (body.remove === true) {
+			value[channel] = defaults$1()[channel];
+			continue;
+		}
+		if (channel === "webhook") {
+			if (Object.keys(body).some((key) => ![
+				"enabled",
+				"url",
+				"secret",
+				"remove",
+				"format",
+				"rotateSecret"
+			].includes(key))) throw new BadRequestError("Options webhook invalides.");
+			if (body.format !== void 0) {
+				if (!WEB_WEBHOOK_FORMATS.includes(body.format)) throw new BadRequestError("Format de webhook invalide.");
+				value.webhook.format = body.format;
+			}
+			if (body.url !== void 0 && body.url !== "") {
+				if (!validUrl(body.url)) throw new BadRequestError("Utilisez une URL HTTPS publique sur le port 443, sans identifiant.");
+				value.webhook.url = body.url;
+			}
+			const format = value.webhook.format || "generic";
+			if (value.webhook.url && format !== "generic") try {
+				value.webhook.url = format === "slack" ? normalizeSlackWebhook(value.webhook.url) : normalizeDiscordWebhook(value.webhook.url);
+			} catch (error) {
+				throw new BadRequestError(typeof error?.message === "string" ? error.message : "Webhook invalide.");
+			}
+			if (body.rotateSecret !== void 0 && typeof body.rotateSecret !== "boolean") throw new BadRequestError("Options webhook invalides.");
+			if (body.secret !== void 0 && body.secret !== "") {
+				if (typeof body.secret !== "string" || body.secret.length < 16 || body.secret.length > 256 || /[\r\n\0]/.test(body.secret)) throw new BadRequestError("Secret webhook de 16 à 256 caractères requis.");
+				value.webhook.secret = body.secret;
+			} else if (body.rotateSecret === true) {
+				if (!value.webhook.url) throw new BadRequestError("Enregistrez le webhook avant de changer son secret.");
+				if (format !== "generic") throw new BadRequestError("Slack et Discord ne vérifient pas de signature : aucun secret à renouveler.");
+				value.webhook.secret = generatedSecret = $security.randomString(48);
+			} else if (value.webhook.url && !value.webhook.secret && format === "generic") value.webhook.secret = generatedSecret = $security.randomString(48);
+			if (body.enabled && !value.webhook.url) throw new BadRequestError("Renseignez le webhook avant de l’activer.");
+			value.webhook.enabled = body.enabled;
+		} else {
+			if (Object.keys(body).some((key) => ![
+				"enabled",
+				"recipients",
+				"remove",
+				"projectAdmins"
+			].includes(key))) throw new BadRequestError("Options email invalides.");
+			if (body.recipients !== void 0) {
+				if (!Array.isArray(body.recipients) || body.recipients.length > 5 || !body.recipients.every(validEmail)) throw new BadRequestError("Indiquez au maximum cinq adresses email valides.");
+				recipientCheck(body.recipients);
+				value.email.recipients = [...new Set(body.recipients)];
+			}
+			if (body.projectAdmins !== void 0) {
+				if (typeof body.projectAdmins !== "boolean") throw new BadRequestError("Options email invalides.");
+				value.email.projectAdmins = body.projectAdmins;
+			}
+			if (body.enabled && (!canEmail() || !smtpAvailable())) throw new BadRequestError("Configurez SMTP et au moins un destinataire avant d’activer les emails.");
+			value.email.enabled = body.enabled;
+		}
+	}
+	if (input.cooldownSeconds !== void 0) {
+		if (!Number.isInteger(input.cooldownSeconds) || input.cooldownSeconds < 60 || input.cooldownSeconds > 86400) throw new BadRequestError("Le délai de regroupement doit être compris entre 60 et 86 400 secondes.");
+		value.cooldownSeconds = input.cooldownSeconds;
+	}
+	return generatedSecret;
+};
+/** Ré-enregistrer ne perd pas d'événements : le point de départ n'est remis à zéro qu'à l'activation. */
+const saveSettings = (row, old, actorId, value, tx) => {
+	const wasEnabled = !!old?.getBool("enabled"), nowEnabled = value.webhook.enabled || value.email.enabled;
+	row.set("actorId", actorId);
+	row.set("revision", $security.randomString(24));
+	row.set("configEncrypted", encryptWebValue(value));
+	row.set("enabled", nowEnabled);
+	if (!old || !row.getString("activatedAt") || !wasEnabled && nowEnabled) {
+		row.set("activatedAt", stamp$4());
+		row.set("sourceCursors", {});
+	}
+	row.set("scanAfter", stamp$4(Date.now() - SCAN_EVERY));
+	tx.save(row);
+};
+/**
+* Changement d'équipe (rattachement hors de la lignée du dernier projet quitté) : les canaux appartenaient à l'équipe
+* précédente. Webhook (URL, secret, format) et destinataires effacés, envois coupés, nouvelle révision (les livraisons
+* en file sont annulées) et curseurs remis à zéro : la nouvelle équipe enregistre ses propres canaux et ne reçoit pas
+* l'historique de l'application.
+*/
+const resetWebNotificationChannels = (appId, actorId, store) => {
+	const row = find$2(appId, store);
+	if (!row) return false;
+	const value = config$1(row), base = defaults$1(), configured = row.getBool("enabled") || !!value.webhook.url || !!value.email.recipients.length || !!value.email.projectAdmins;
+	value.webhook = base.webhook;
+	value.email = base.email;
+	row.set("actorId", actorId);
+	row.set("revision", $security.randomString(24));
+	row.set("configEncrypted", encryptWebValue(value));
+	row.set("enabled", false);
+	row.set("activatedAt", "");
+	row.set("sourceCursors", {});
+	store.save(row);
+	return configured;
+};
+const HandleWebNotificationsGet = (e) => {
+	const app = requireWebAppPermission(e, "notifications.manage").app;
+	return webJson(e, response(find$2(app.id), app.id));
+};
+const HandleWebNotificationsPut = (e) => {
+	const { user: actor, app: found } = requireWebAppPermission(e, "notifications.manage"), app = found, input = webInput(e);
+	let result, generatedSecret = "";
+	if (Object.keys(input).some((key) => ![
+		"revision",
+		"webhook",
+		"email",
+		"events",
+		"cooldownSeconds"
+	].includes(key))) throw new BadRequestError("Options de notification invalides.");
+	$app.runInTransaction((tx) => {
+		const old = find$2(app.id, tx), value = config$1(old);
+		if (input.revision !== (old?.getString("revision") || "")) throw new BadRequestError("Les canaux ont changé. Rechargez leur configuration.");
+		generatedSecret = applyChannels(input, value, (recipients) => {
+			const allowed = allowedRecipients(app.id, tx, actor);
+			if (recipients.some((address) => !allowed.has(address.toLowerCase()))) throw new BadRequestError("Chaque destinataire doit être l’adresse vérifiée d’un membre du projet, ou la vôtre.");
+		}, () => recipientsOf(value, app.id, tx).length > 0);
+		if (input.events !== void 0) {
+			if (!Array.isArray(input.events) || input.events.some((event) => !WEB_NOTIFICATION_EVENTS.includes(event))) throw new BadRequestError("Types d’alerte invalides.");
+			value.events = [...new Set(input.events)];
+		}
+		const row = old || new Record(tx.findCollectionByNameOrId(SETTINGS$3));
+		row.set("appId", app.id);
+		saveSettings(row, old, actor.id, value, tx);
+		result = row;
+	});
+	return webJson(e, {
+		...response(result, app.id),
+		...generatedSecret ? { generatedSecret } : {}
+	});
+};
+const dashboardBase = () => ($os.getenv("APP_URL") || `https://${$os.getenv("APP_HOST") || "app." + ($os.getenv("APEX_DOMAIN") || "monappli.re")}`).trim().replace(/\/+$/, "");
+const dashboardLink = (appId, tab) => `${dashboardBase()}/applications/${appId}${tab ? "?tab=" + encodeURIComponent(tab) : ""}`;
+const platformLink = (event) => `${dashboardBase()}/applications${event.startsWith("recovery_") ? "/recovery" : ""}`;
+const enqueue$2 = (settings, app, event, eventKey, details, store, trigger = "auto", only = "", requestedBy = "", scope = "app") => {
+	const platform = scope === "platform", value = config$1(settings, platform), text = label(event), domain = app ? JSON.parse(app.getString("config") || "{}").generatedDomain || "" : "", payload = {
+		version: 2,
+		event,
+		occurredAt: (/* @__PURE__ */ new Date()).toISOString(),
+		title: text.title,
+		message: text.sentence,
+		application: app ? {
+			id: app.id,
+			name: safeName(app.getString("name")),
+			url: domain ? `https://${domain}` : "",
+			dashboardUrl: dashboardLink(app.id, text.tab)
+		} : null,
+		...app ? {} : { dashboardUrl: platformLink(event) },
+		platform: { host: $os.getenv("APP_HOST") || $os.getenv("APEX_DOMAIN") || "" },
+		details
+	};
+	const created = [];
+	if (trigger === "auto" && !value.events.includes(event)) return created;
+	if (!platform && app && PLATFORM_ONLY.includes(event) && !platformOperated(app.id, store)) return created;
+	const appId = platform ? "" : app.id;
+	for (const channel of ["webhook", "email"]) {
+		if (only && only !== channel) continue;
+		const recipients = channel === "email" ? recipientsFor(scope, value, appId, store) : [];
+		if (channel === "webhook" ? !value.webhook.url : !recipients.length) continue;
+		if (trigger !== "test" && !value[channel].enabled) continue;
+		const key = $security.sha256(eventKey), fingerprint = $security.sha256(channel === "webhook" ? value.webhook.url : [...recipients].sort().join(","));
+		if (store.findRecordsByFilter(DELIVERIES, "scope={:scope} && appId={:app} && channel={:channel} && eventKey={:key}", "", 1, 0, {
+			scope: platform ? "platform" : "",
+			app: appId,
+			channel,
+			key
+		}).length) continue;
+		if (!platform && PLATFORM_ONLY.includes(event) && store.findRecordsByFilter(DELIVERIES, "event={:event} && eventKey={:key} && fingerprint={:fingerprint}", "", 1, 0, {
+			event,
+			key,
+			fingerprint
+		}).length) continue;
+		let rate = false;
+		if (trigger === "auto" && !(channel === "email" && DEPLOYMENT_FAILURES.includes(event))) {
+			const sent = (filter, since, limit) => store.findRecordsByFilter(DELIVERIES, `settingsId={:id} && channel={:channel} && created>={:since} && status!="suppressed" && trigger!="test"${filter}`, "-created", limit, 0, {
+				id: settings.id,
+				channel,
+				event,
+				since: stamp$4(since)
+			}).length;
+			const cooled = sent(" && event={:event}", Date.now() - value.cooldownSeconds * 1e3, 1) > 0, full = sent("", Date.now() - HOUR, AUTO_PER_HOUR) >= AUTO_PER_HOUR;
+			rate = cooled || full && !(CRITICAL.includes(event) && !sent(" && event={:event}", Date.now() - HOUR, 1));
+		}
+		const row = new Record(store.findCollectionByNameOrId(DELIVERIES));
+		for (const [name, item] of Object.entries({
+			scope: platform ? "platform" : "",
+			appId,
+			settingsId: settings.id,
+			settingsRevision: settings.getString("revision"),
+			actorId: settings.getString("actorId"),
+			channel,
+			event,
+			eventKey: key,
+			fingerprint,
+			payload,
+			trigger,
+			requestedBy,
+			rateLimited: rate,
+			status: rate ? "suppressed" : "pending",
+			nextAttemptAt: stamp$4(),
+			lastError: rate ? RATE_LIMITED : ""
+		})) row.set(name, item);
+		store.save(row);
+		created.push(row);
+	}
+	return created;
+};
+/**
+* Événement poussé (sans source à scanner) : runtime arrêté, planification de sauvegarde en échec, tâche suspendue,
+* worker injoignable, échec de reprise… Idempotent par (scope, appId, clé) ; ne lève jamais d'erreur pour ne pas faire
+* échouer la transaction de déploiement, de sauvegarde ou de tâche qui l'émet.
+*/
+const emitWebAlert = (store, scope, appId, event, key, details = {}) => {
+	try {
+		const eventKey = $security.sha256(key);
+		if (store.findRecordsByFilter(OUTBOX, "scope={:scope} && appId={:app} && eventKey={:key}", "", 1, 0, {
+			scope,
+			app: appId,
+			key: eventKey
+		}).length) return false;
+		const row = new Record(store.findCollectionByNameOrId(OUTBOX));
+		row.set("scope", scope);
+		row.set("appId", scope === "platform" ? "" : appId);
+		row.set("event", event);
+		row.set("eventKey", eventKey);
+		row.set("details", details);
+		store.save(row);
+		return true;
+	} catch {
+		return false;
+	}
+};
+/** Résumé d'erreur : une ligne, 160 caractères, sans valeurs d'environnement, jetons ni identifiants d'URL. */
+const webAlertSummary = (text, app, store = $app) => {
+	let value = `${text || ""}`.split(/\r?\n/).find((line) => line.trim()) || "";
+	const secrets = [];
+	const collect = (env) => {
+		for (const entry of Object.values(env || {})) if (typeof entry?.value === "string" && entry.value.length >= 4) secrets.push(entry.value);
+	};
+	if (app) {
+		try {
+			collect(decryptWebValue(app.getString("envEncrypted")));
+		} catch {}
+		try {
+			collect(decryptWebValue(store.findRecordById("web_deployments", app.getString("activeDeployment")).getString("snapshotEncrypted"))?.env);
+		} catch {}
+	}
+	for (const secret of [...new Set(secrets)].sort((a, b) => b.length - a.length)) value = value.split(secret).join("[masqué]");
+	return value.replace(/https?:\/\/[^\s/@]+@/g, "https://[masqué]@").replace(/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|x-access-token:[^\s@]+)/g, "[masqué]").replace(/[A-Za-z0-9+/=_-]{40,}/g, "[masqué]").replace(/\s+/g, " ").trim().slice(0, 160);
+};
+/** Valeurs fictives d'exercice, sans aucun secret : les destinataires testent leur routage par type d'alerte. */
+const sampleDetails = (event) => ({
+	health_degraded: {
+		status: "degraded",
+		httpStatus: 503,
+		summary: "Exemple : le contrôle de santé répond HTTP 503."
+	},
+	health_recovered: {
+		status: "healthy",
+		httpStatus: 200,
+		summary: "Exemple : le site répond à nouveau HTTP 200."
+	},
+	deployment_failed: {
+		deploymentId: "test00000000000",
+		stage: "Construction",
+		summary: "Exemple : la commande de build a échoué (code 1)."
+	},
+	backup_failed: {
+		backupId: "test00000000000",
+		summary: "Exemple : la copie S3 de la sauvegarde a échoué."
+	},
+	runtime_stopped: {
+		deploymentId: "test00000000000",
+		reason: "cache_or_disk",
+		summary: "Exemple : arrêt par la plateforme."
+	},
+	task_failed: {
+		taskName: "Exemple",
+		status: "failed",
+		exitCode: 1,
+		summary: "Exemple : la tâche a quitté avec le code 1."
+	},
+	certificate_expiring: { summary: "Exemple : un certificat expire dans 10 jours." },
+	certificate_failed: { summary: "Exemple : le renouvellement du certificat a échoué." },
+	disk_low: { summary: "Exemple : réserve disque sous 15 Gio." },
+	disk_recovered: { summary: "Exemple : réserve disque rétablie." }
+})[event] || { summary: "Notification de test." };
+const escape = (value) => value.replace(/[&<>"']/g, (char) => ({
+	"&": "&amp;",
+	"<": "&lt;",
+	">": "&gt;",
+	"\"": "&quot;",
+	"'": "&#39;"
+})[char]);
+const settingsOf = (row, store = $app) => {
+	if (row.getString("scope") === "platform") return platformCollection(store) ? platformRow(store) : null;
+	return find$2(row.getString("appId"), store);
+};
+const deploymentTargetActive = (row, store = $app) => {
+	if (row.getString("trigger") === "test" || !DEPLOYMENT_FAILURES.includes(row.getString("event"))) return true;
+	try {
+		const payload = JSON.parse(row.getString("payload") || "{}");
+		return !!deploymentEmailApplication(row.getString("scope") === "platform" ? payload.details?.appId : row.getString("appId"), store);
+	} catch {
+		return false;
+	}
+};
+/**
+* Envoi email d'une livraison (route du worker, test synchrone, chien de garde quand le worker est arrêté). Revalide le
+* canal, la révision et, pour une application, les droits et les destinataires. Idempotent (emailSentAt).
+*/
+const sendDeliveryEmail = (row) => {
+	const platform = row.getString("scope") === "platform", settings = settingsOf(row), value = config$1(settings, platform), appId = row.getString("appId");
+	if (row.getString("channel") !== "email" || !settings || settings.getString("revision") !== row.getString("settingsRevision") || platform && !platformSettingActive(settings) || !deploymentTargetActive(row) || row.getString("trigger") !== "test" && (!settings.getBool("enabled") || !value.email.enabled) || !platform && !settingActive(row.getString("actorId"), appId) || !smtpAvailable()) throw new BadRequestError("Le canal email n’est plus disponible.");
+	if (row.getString("emailSentAt")) return;
+	const recipients = recipientsFor(row.getString("scope"), value, appId);
+	if (!recipients.length) throw new BadRequestError("Aucun destinataire enregistré n’est encore membre vérifié du projet.");
+	const payload = JSON.parse(row.getString("payload") || "{}"), text = label(payload.event || row.getString("event")), settingsMail = $app.settings(), host = $os.getenv("APP_HOST") || $os.getenv("APEX_DOMAIN") || "", name = payload.application ? safeName(payload.application?.name) : `Plateforme${host ? " " + host : ""}`, test = row.getString("trigger") === "test" || payload.details?.drill === true, details = payload.details || {}, attachment = DEPLOYMENT_FAILURES.includes(row.getString("event")) ? deploymentFailureAttachment(row, payload, test) : null, deployment = attachment?.details, detail = (attachment && !test ? deployment?.summary || "Détails indisponibles. Consultez le dashboard." : "") || typeof details.summary === "string" && details.summary || [
+		details.stage,
+		details.backupId,
+		details.deploymentId,
+		details.taskName
+	].filter((item) => typeof item === "string" && item)[0] || "", open = payload.application?.dashboardUrl || payload.dashboardUrl || "", manage = platform ? `${dashboardBase()}/applications/recovery` : dashboardLink(appId, "notifications"), lines = [
+		text.title + (test ? " (test)" : ""),
+		text.sentence,
+		payload.application ? `Application : ${name}${payload.application.url ? ` (${payload.application.url})` : ""}` : name,
+		`Date : ${payload.occurredAt || (/* @__PURE__ */ new Date()).toISOString()} UTC`,
+		...deployment ? [
+			`Déploiement : ${deployment.deploymentId}`,
+			...deployment.repository ? [`Dépôt : ${deployment.repository}`] : [],
+			...deployment.branch ? [`Branche : ${deployment.branch}`] : [],
+			...deployment.commit ? [`Commit : ${deployment.commit}`] : [],
+			...deployment.stage ? [`Phase : ${deployment.stage}`] : [],
+			...deployment.finishedAt ? [`Fin du déploiement : ${deployment.finishedAt} UTC`] : []
+		] : [],
+		...detail ? [`Détail : ${`${detail}`.replace(/\s+/g, " ").slice(0, 300)}`] : [],
+		...attachment ? ["Journal du déploiement en pièce jointe (1 Mio maximum, valeurs sensibles masquées)."] : [],
+		...open ? [`Ouvrir dans le dashboard : ${open}`] : [],
+		`Gérer ces alertes : ${manage}`,
+		`— ${WEB_ALERT_BRAND}${host ? " · " + host : ""}`
+	];
+	const base = dashboardBase(), linkable = (value) => value === base || value.startsWith(`${base}/`);
+	const html = lines.map((line) => {
+		const match = /^(.*?: )(\S+)$/.exec(line);
+		return match && linkable(match[2]) ? `${escape(match[1])}<a href="${escape(match[2])}">${escape(match[2])}</a>` : escape(line);
+	}).join("<br>");
+	let reader;
+	try {
+		if (attachment) reader = $filesystem.fileFromBytes(attachment.text, attachment.filename).reader.open();
+		$app.newMailClient().send(new MailerMessage({
+			from: {
+				address: settingsMail.meta.senderAddress,
+				name: settingsMail.meta.senderName || "Kolab Hosting"
+			},
+			to: recipients.map((address) => ({ address })),
+			subject: `[${WEB_ALERT_BRAND}] ${test ? "TEST · " : ""}${text.title} · ${name}`.replace(/[\r\n]/g, " "),
+			text: lines.join("\n"),
+			html: `<p>${html}</p>`,
+			headers: { "Message-ID": `<ph-web-${row.id}@${$os.getenv("APEX_DOMAIN") || "localhost"}>` },
+			...attachment && reader ? { attachments: { [attachment.filename]: reader } } : {}
+		}));
+	} catch {
+		throw new BadRequestError("Le serveur SMTP a refusé cet envoi.");
+	} finally {
+		reader?.close();
+	}
+	row.set("emailSentAt", stamp$4());
+	$app.save(row);
+};
+/** Envoi synchrone d'un test (application ou plateforme) : résultat réel du canal, attendu 12 s au plus. */
+const runTest = (e, settings, app, scope, input, userId) => {
+	let row;
+	$app.runInTransaction((tx) => {
+		const since = stamp$4(Date.now() - HOUR), count = (filter, limit) => tx.findRecordsByFilter(DELIVERIES, filter + " && trigger=\"test\" && created>={:since}", "", limit, 0, {
+			scope: scope === "platform" ? "platform" : "",
+			app: app?.id || "",
+			channel: input.channel,
+			user: userId,
+			since
+		}).length;
+		if (count("scope={:scope} && appId={:app} && channel={:channel}", TESTS_PER_CHANNEL_HOUR) >= TESTS_PER_CHANNEL_HOUR) throw new TooManyRequestsError("Dix tests par heure et par canal au maximum. Réessayez plus tard.");
+		if (count("requestedBy={:user}", TESTS_PER_USER_HOUR) >= TESTS_PER_USER_HOUR) throw new TooManyRequestsError("Vingt tests d’alerte par heure et par compte au maximum. Réessayez plus tard.");
+		const event = input.event === void 0 ? "test" : input.event;
+		row = enqueue$2(settings, app, event, "test:" + $security.randomString(32), {
+			drill: true,
+			...sampleDetails(event)
+		}, tx, "test", input.channel, userId, scope)[0];
+		if (!row) throw new BadRequestError("Ce canal n’a aucun destinataire valide.");
+		if (input.channel === "email") {
+			row.set("status", "sending");
+			row.set("attempts", 1);
+			row.set("leaseAt", stamp$4());
+			tx.save(row);
+		}
+	});
+	let current = $app.findRecordById(DELIVERIES, row.id);
+	if (input.channel === "email") {
+		try {
+			sendDeliveryEmail(current);
+			current = $app.findRecordById(DELIVERIES, row.id);
+			current.set("status", "sent");
+			current.set("sentAt", stamp$4());
+			current.set("lastError", "");
+		} catch (error) {
+			current = $app.findRecordById(DELIVERIES, row.id);
+			current.set("status", "failed");
+			const raw = error?.message;
+			current.set("lastError", typeof raw === "string" && raw.trim() ? raw.slice(0, 300) : "Envoi SMTP impossible.");
+		}
+		$app.save(current);
+	} else {
+		const deadline = Date.now() + 12e3;
+		while (["pending", "sending"].includes(current.getString("status")) && Date.now() < deadline) {
+			sleep(300);
+			current = $app.findRecordById(DELIVERIES, row.id);
+		}
+	}
+	const done = [
+		"sent",
+		"failed",
+		"suppressed"
+	].includes(current.getString("status"));
+	return webJson(e, {
+		result: metadata$3(current),
+		done
+	}, done ? 200 : 202);
+};
+const testInput = (e, events) => {
+	const input = webInput(e);
+	if (Object.keys(input).some((key) => !["channel", "event"].includes(key))) throw new BadRequestError("Test invalide.");
+	if (input.event !== void 0 && input.event !== "test" && !events.includes(input.event)) throw new BadRequestError("Type d’alerte invalide.");
+	return input;
+};
+const HandleWebNotificationTest = (e) => {
+	const { user, app: found } = requireWebAppPermission(e, "alerts.test"), app = found, input = testInput(e, WEB_NOTIFICATION_EVENTS), settings = find$2(app.id);
+	if (!settings || !["webhook", "email"].includes(input.channel)) throw new BadRequestError("Enregistrez d’abord le canal à tester.");
+	const value = config$1(settings);
+	if (input.channel === "webhook" ? !value.webhook.url : !recipientsOf(value, app.id).length || !smtpAvailable()) throw new BadRequestError(input.channel === "email" && value.email.recipients.length ? "Aucun destinataire enregistré n’est encore membre vérifié du projet." : "Ce canal n’est pas configuré.");
+	if (!value[input.channel].enabled) throw new BadRequestError("Activez et enregistrez ce canal avant de l’essayer.");
+	if (PLATFORM_ONLY.includes(input.event) && !platformOperated(app.id, $app)) throw new BadRequestError("Cette alerte est réservée aux applications opérées par la plateforme.");
+	return runTest(e, settings, app, "app", input, user.id);
+};
+const HandleWebNotificationHistory = (e) => {
+	const app = requireWebAppPermission(e, "logs.read").app, query = e.request.url.query();
+	if (query.get("id")) return webJson(e, {
+		items: $app.findRecordsByFilter(DELIVERIES, "appId={:app} && id={:id} && scope!=\"platform\"", "", 1, 0, {
+			app: app.id,
+			id: id$3(query.get("id"))
+		}).map(metadata$3),
+		page: 1,
+		hasMore: false
+	});
+	const page = Math.max(1, Math.min(1e5, Math.floor(Number(query.get("page")) || 1))), rows = $app.findRecordsByFilter(DELIVERIES, "appId={:id} && scope!=\"platform\"", "-created,-id", 21, (page - 1) * 20, { id: app.id });
+	return webJson(e, {
+		items: rows.slice(0, 20).map(metadata$3),
+		page,
+		hasMore: rows.length > 20
+	});
+};
+/** Lecture incrémentale d'une source : (timeField, id) strictement après le curseur, 200 lignes au plus. */
+const takeRows = (store, cursors, start, collection, filter, timeField, params = {}) => {
+	const cursor = cursors[collection] || {
+		at: start,
+		id: ""
+	};
+	const rows = store.findRecordsByFilter(collection, `${filter} && (${timeField}>{:at} || (${timeField}={:at} && id>{:cursor}))`, `${timeField},id`, 200, 0, {
+		...params,
+		at: cursor.at,
+		cursor: cursor.id
+	});
+	if (rows.length) cursors[collection] = {
+		at: rows[rows.length - 1].getString(timeField),
+		id: rows[rows.length - 1].id
+	};
+	return rows;
+};
+const scan = (settings, context, store) => {
+	if (!settingActive(settings.getString("actorId"), settings.getString("appId"), store)) {
+		settings.set("scanAfter", stamp$4());
+		store.save(settings);
+		return;
+	}
+	const app = store.findRecordById("web_apps", settings.getString("appId")), until = stamp$4();
+	const cursors = JSON.parse(settings.getString("sourceCursors") || "{}");
+	const take = (collection, filter, timeField) => takeRows(store, cursors, settings.getString("activatedAt") || until, collection, `appId={:app} && ${filter}`, timeField, { app: app.id });
+	const copy = context.platform?.getBool("enabled") ? config$1(context.platform, true) : null;
+	const emit = (event, key, details) => {
+		enqueue$2(settings, app, event, key, details, store);
+		if (copy?.copyAppEvents && COPIED.includes(event) && (event !== "deployment_failed" || details.finishedAt && details.finishedAt >= context.platform.getString("activatedAt") && deploymentEmailApplication(app.id, store))) enqueue$2(context.platform, event === "deployment_failed" ? app : null, "app_" + event, "copy:" + app.id + ":" + key, {
+			...details,
+			appId: app.id,
+			appName: safeName(app.getString("name"))
+		}, store, "auto", "", "", "platform");
+	};
+	for (const row of take("web_app_health_events", "id!=\"\"", "created")) if (row.getString("status") === "degraded") emit("health_degraded", "health:" + row.id, {
+		status: "degraded",
+		httpStatus: row.getInt("httpStatus"),
+		reason: row.getString("reason")
+	});
+	else if (row.getString("status") === "healthy" && row.getString("fromStatus") === "degraded") emit("health_recovered", "health:" + row.id, {
+		status: "healthy",
+		httpStatus: row.getInt("httpStatus")
+	});
+	for (const row of take("web_deployments", "status=\"failed\"", "finishedAt")) {
+		if (["deploy", "ci-deploy"].includes(row.getString("action")) && !deploymentEmailApplication(app.id, store)) continue;
+		emit(row.getString("action") === "domain" ? "certificate_failed" : "deployment_failed", "deployment:" + row.id, {
+			deploymentId: row.id,
+			status: "failed",
+			action: row.getString("action"),
+			stage: row.getString("stage"),
+			summary: webAlertSummary(row.getString("error"), app, store),
+			...["deploy", "ci-deploy"].includes(row.getString("action")) ? deploymentFailureDetails(row) : {}
+		});
+	}
+	for (const row of take("web_app_backups", "(status=\"failed\" || s3State=\"failed\") && status!=\"deleting\" && status!=\"deleted\" && operation!=\"delete\" && trigger!=\"platform\"", "updated")) emit("backup_failed", "backup:" + row.id, {
+		backupId: row.id,
+		trigger: row.getString("trigger"),
+		local: row.getString("status") === "failed",
+		s3: row.getString("s3State") === "failed",
+		summary: webAlertSummary(row.getString("status") === "failed" ? row.getString("error") : row.getString("s3Error"), app, store)
+	});
+	for (const row of take(OUTBOX, "scope=\"app\"", "created")) emit(row.getString("event"), "outbox:" + row.getString("eventKey"), JSON.parse(row.getString("details") || "{}"));
+	for (const row of take("web_task_runs", "(status=\"failed\" || status=\"timed_out\")", "finishedAt")) emit("task_failed", "task:" + row.id, {
+		taskName: row.getString("taskName").slice(0, 80),
+		status: row.getString("status"),
+		exitCode: row.getInt("exitCode"),
+		trigger: row.getString("trigger")
+	});
+	for (const row of store.findRecordsByFilter("web_app_domains", "appId={:id} && status=\"active\" && certificateExpiresAt!=\"\" && certificateExpiresAt<={:expiry}", "certificateExpiresAt", 100, 0, {
+		id: app.id,
+		expiry: stamp$4(Date.now() + 30 * 864e5)
+	})) emit("certificate_expiring", "certificate:" + row.id + ":" + row.getString("certificateExpiresAt"), {
+		domain: row.getString("host"),
+		expiresAt: row.getString("certificateExpiresAt")
+	});
+	const host = context.host;
+	if (host && host.low !== settings.getBool("diskLow")) {
+		emit(host.low ? "disk_low" : "disk_recovered", "disk:" + host.low + ":" + host.changedAt, {});
+		settings.set("diskLow", host.low);
+	}
+	digest(settings, app, store);
+	settings.set("sourceCursors", cursors);
+	settings.set("scanAfter", until);
+	store.save(settings);
+};
+/** Une notification par canal et par heure close résume les alertes regroupées par la limite de fréquence. */
+const digest = (settings, app, store, scope = "app") => {
+	const end = Math.floor(Date.now() / HOUR) * HOUR, start = end - HOUR;
+	for (const channel of ["webhook", "email"]) {
+		const rows = store.findRecordsByFilter(DELIVERIES, "settingsId={:id} && channel={:channel} && rateLimited=true && created>={:from} && created<{:to}", "created", 500, 0, {
+			id: settings.id,
+			channel,
+			from: stamp$4(start),
+			to: stamp$4(end)
+		});
+		if (!rows.length) continue;
+		const events = {};
+		for (const row of rows) events[row.getString("event")] = (events[row.getString("event")] || 0) + 1;
+		enqueue$2(settings, app, "alerts_grouped", "digest:" + stamp$4(start), {
+			count: rows.length,
+			events,
+			from: new Date(start).toISOString(),
+			to: new Date(end).toISOString()
+		}, store, "digest", channel, "", scope);
+	}
+};
+/** Outbox plateforme → livraisons du canal plateforme (curseurs gardés sur la ligne plateforme). */
+const scanPlatformOutbox = (p, store) => {
+	if (!p.getBool("enabled") || !platformSettingActive(p, store)) return false;
+	const cursors = JSON.parse(p.getString("sourceCursors") || "{}"), start = p.getString("activatedAt") || stamp$4(), rows = takeRows(store, cursors, start, OUTBOX, "scope=\"platform\"", "created");
+	let advanced = rows.length > 0;
+	const value = config$1(p, true);
+	if (value.copyAppEvents && value.events.includes("app_deployment_failed")) {
+		const jobs = takeRows(store, cursors, start, "web_deployments", "status=\"failed\" && (action=\"deploy\" || action=\"ci-deploy\")", "finishedAt");
+		advanced ||= jobs.length > 0;
+		for (const job of jobs) {
+			const app = deploymentEmailApplication(job.getString("appId"), store);
+			if (!app) continue;
+			enqueue$2(p, app, "app_deployment_failed", `copy:${app.id}:deployment:${job.id}`, {
+				...deploymentFailureDetails(job),
+				appId: app.id,
+				appName: safeName(app.getString("name")),
+				status: "failed",
+				summary: webAlertSummary(job.getString("error"), app, store)
+			}, store, "auto", "", "", "platform");
+		}
+	}
+	digest(p, null, store, "platform");
+	if (!advanced) return false;
+	for (const row of rows) enqueue$2(p, null, row.getString("event"), "outbox:" + row.getString("eventKey"), JSON.parse(row.getString("details") || "{}"), store, "auto", "", "", "platform");
+	p.set("sourceCursors", cursors);
+	p.set("scanAfter", stamp$4());
+	return true;
+};
+/** Battement du worker, état disque de l'hôte et outbox plateforme, dans la transaction de réclamation. */
+const scanPlatform = (disk, store) => {
+	if (!platformCollection(store)) return {
+		host: null,
+		platform: null
+	};
+	const p = platformRow(store);
+	let changed = false;
+	if (!p.getString("lastClaimAt") || Date.now() - Date.parse(p.getString("lastClaimAt")) > 3e4) {
+		p.set("lastClaimAt", stamp$4());
+		changed = true;
+	}
+	if (p.getBool("workerDown")) {
+		p.set("workerDown", false);
+		emitWebAlert(store, "platform", "", "worker_recovered", "worker-up:" + stamp$4(), {});
+		changed = true;
+	}
+	if (disk !== void 0) {
+		const low = disk < 15 * 1024 ** 3;
+		if (low !== p.getBool("diskLow") || !p.getString("diskChangedAt")) {
+			const transition = low !== p.getBool("diskLow");
+			p.set("diskLow", low);
+			p.set("diskChangedAt", stamp$4());
+			if (transition) emitWebAlert(store, "platform", "", low ? "disk_low" : "disk_recovered", "disk:" + low + ":" + p.getString("diskChangedAt"), { freeBytes: disk });
+			changed = true;
+		}
+	}
+	if (scanPlatformOutbox(p, store)) changed = true;
+	if (changed) store.save(p);
+	return {
+		host: p.getString("diskChangedAt") ? {
+			low: p.getBool("diskLow"),
+			changedAt: p.getString("diskChangedAt")
+		} : null,
+		platform: p
+	};
+};
+const lease$2 = (input, store = $app) => {
+	const row = store.findRecordById(DELIVERIES, id$3(input.id));
+	if (row.getString("status") !== "sending" || typeof input.proof !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.proof) || !$security.equal(row.getString("leaseHash"), $security.sha256(input.proof))) throw new UnauthorizedError("Envoi invalide.");
+	return row;
+};
+/** Webhook du canal plateforme, gardé en mémoire par le worker pour « contrôleur injoignable ». */
+const platformWebhook = (store) => {
+	if (!platformCollection(store)) return null;
+	const p = platformRow(store);
+	if (!p.getBool("enabled")) return null;
+	const value = config$1(p, true);
+	if (!value.webhook.enabled || !value.webhook.url || !value.events.includes("controller_unreachable")) return null;
+	return {
+		url: value.webhook.url,
+		secret: value.webhook.secret || "",
+		format: value.webhook.format || "generic",
+		host: $os.getenv("APP_HOST") || ""
+	};
+};
+const HandleWebNotificationClaim = (e) => {
+	requireWorker$3(e);
+	const input = webInput(e);
+	if (input.diskFreeBytes !== void 0 && (!Number.isSafeInteger(input.diskFreeBytes) || input.diskFreeBytes < 0)) throw new BadRequestError("Mesure disque invalide.");
+	let result = null, hook = null;
+	$app.runInTransaction((tx) => {
+		for (const old of tx.findRecordsByFilter(DELIVERIES, "created<{:cutoff}", "created", 500, 0, { cutoff: stamp$4(Date.now() - 30 * 864e5) })) tx.delete(old);
+		try {
+			for (const old of tx.findRecordsByFilter(OUTBOX, "created<{:cutoff}", "created", 500, 0, { cutoff: stamp$4(Date.now() - 30 * 864e5) })) tx.delete(old);
+		} catch {}
+		let context = {
+			host: null,
+			platform: null
+		};
+		try {
+			context = scanPlatform(input.diskFreeBytes, tx);
+		} catch {}
+		for (const settings of tx.findRecordsByFilter(SETTINGS$3, "enabled=true && scanAfter<={:due}", "scanAfter", 200, 0, { due: stamp$4(Date.now() - SCAN_EVERY) })) try {
+			scan(settings, context, tx);
+		} catch {}
+		for (const row of tx.findRecordsByFilter(DELIVERIES, "status=\"sending\" && leaseAt<{:stale}", "leaseAt", 100, 0, { stale: stamp$4(Date.now() - 6e4) })) {
+			row.set("status", row.getInt("attempts") >= 3 || row.getString("trigger") === "test" ? "failed" : "pending");
+			row.set("leaseHash", "");
+			row.set("nextAttemptAt", stamp$4(Date.now() + 3e4));
+			row.set("lastError", "Le délai de confirmation de l’envoi a expiré.");
+			tx.save(row);
+		}
+		const rows = tx.findRecordsByFilter(DELIVERIES, "status=\"pending\" && nextAttemptAt<={:now}", "created,id", 100, 0, { now: stamp$4() });
+		for (const row of rows) {
+			if (Date.parse(row.getString("created")) < Date.now() - 864e5) {
+				row.set("status", "suppressed");
+				row.set("lastError", "Cette notification a expiré après 24 heures.");
+				tx.save(row);
+				continue;
+			}
+			const platform = row.getString("scope") === "platform", settings = settingsOf(row, tx), value = config$1(settings, platform), channel = row.getString("channel");
+			if (!settings || platform && !platformSettingActive(settings, tx) || !deploymentTargetActive(row, tx) || (platform ? !settings.getBool("enabled") && row.getString("trigger") !== "test" : false) || !platform && !settingActive(row.getString("actorId"), row.getString("appId"), tx) || settings.getString("revision") !== row.getString("settingsRevision") || row.getString("trigger") !== "test" && !value[channel].enabled) {
+				row.set("status", "suppressed");
+				row.set("lastError", "Le canal ou les droits ont changé avant cet envoi.");
+				tx.save(row);
+				continue;
+			}
+			if (channel === "email" && !smtpAvailable()) {
+				row.set("status", "failed");
+				row.set("lastError", "SMTP est indisponible sur la plateforme.");
+				tx.save(row);
+				continue;
+			}
+			if (channel === "email" && !recipientsFor(row.getString("scope"), value, row.getString("appId"), tx).length) {
+				row.set("status", "failed");
+				row.set("lastError", "Aucun destinataire enregistré n’est encore membre vérifié du projet.");
+				tx.save(row);
+				continue;
+			}
+			const proof = $security.randomString(80);
+			row.set("status", "sending");
+			row.set("attempts", row.getInt("attempts") + 1);
+			row.set("leaseAt", stamp$4());
+			row.set("leaseHash", $security.sha256(proof));
+			tx.save(row);
+			result = {
+				id: row.id,
+				proof,
+				channel,
+				scope: platform ? "platform" : "app",
+				trigger: row.getString("trigger"),
+				payload: JSON.parse(row.getString("payload") || "{}"),
+				...channel === "webhook" ? {
+					url: value.webhook.url,
+					secret: value.webhook.secret,
+					format: value.webhook.format || "generic"
+				} : {}
+			};
+			break;
+		}
+		try {
+			hook = platformWebhook(tx);
+		} catch {}
+	});
+	return webJson(e, {
+		job: result,
+		platformWebhook: hook
+	});
+};
+const ERROR_CLASSES = [
+	"",
+	"url_refused",
+	"dns",
+	"dns_timeout",
+	"address_refused",
+	"connect",
+	"tls",
+	"timeout",
+	"redirect",
+	"rate_limited",
+	"http_4xx",
+	"http_5xx",
+	"format",
+	"payload",
+	"send",
+	"smtp"
+];
+const CLASS_MESSAGES = {
+	tls: "Certificat TLS du webhook invalide.",
+	dns: "Nom de domaine du webhook introuvable.",
+	dns_timeout: "Résolution DNS du webhook trop lente.",
+	address_refused: "Le webhook pointe vers une adresse privée : refusé.",
+	url_refused: "URL de webhook refusée (HTTPS public sur le port 443 uniquement).",
+	rate_limited: "Le canal limite le débit (HTTP 429).",
+	redirect: "Le webhook répond par une redirection : non suivie.",
+	http_4xx: "Le canal a refusé la notification (HTTP 4xx).",
+	http_5xx: "Le canal est en erreur (HTTP 5xx).",
+	connect: "Connexion au webhook impossible.",
+	timeout: "Le webhook ne répond pas dans le délai.",
+	smtp: "Envoi SMTP impossible.",
+	format: "Le format du webhook ne correspond pas à son URL (Slack/Discord officiels)."
+};
+const CODE_MESSAGES = {
+	ssrf: "Le webhook doit pointer exclusivement vers une adresse HTTPS publique.",
+	timeout: "Le canal n’a pas répondu dans le délai prévu.",
+	smtp: "Le serveur SMTP a refusé cet envoi.",
+	invalid_format: "Le format du webhook ne correspond pas à son URL (Slack/Discord officiels)."
+};
+const HandleWebNotificationReport = (e) => {
+	requireWorker$3(e);
+	const input = webInput(e);
+	if (typeof input.success !== "boolean" || !Number.isInteger(input.httpStatus) || input.httpStatus < 0 || input.httpStatus > 599 || input.errorClass !== void 0 && !ERROR_CLASSES.includes(input.errorClass) || input.durationMs !== void 0 && (!Number.isInteger(input.durationMs) || input.durationMs < 0 || input.durationMs > 6e4) || input.final !== void 0 && typeof input.final !== "boolean") throw new BadRequestError("Compte rendu invalide.");
+	$app.runInTransaction((tx) => {
+		const row = lease$2(input, tx);
+		row.set("httpStatus", input.httpStatus);
+		row.set("leaseHash", "");
+		if (input.success) {
+			row.set("status", "sent");
+			row.set("sentAt", stamp$4());
+			row.set("lastError", "");
+		} else {
+			const permanent = input.final === true || row.getString("trigger") === "test" || row.getInt("attempts") >= 3 || ["ssrf", "invalid_format"].includes(input.errorCode);
+			row.set("status", permanent ? "failed" : "pending");
+			row.set("nextAttemptAt", stamp$4(Date.now() + 3e4 * 2 ** (row.getInt("attempts") - 1)));
+			row.set("lastError", CODE_MESSAGES[input.errorCode === "invalid_format" || input.errorCode === "ssrf" ? input.errorCode : ""] || CLASS_MESSAGES[input.errorClass] || CODE_MESSAGES[input.errorCode] || "Le canal a refusé la notification ou ne répond pas.");
+		}
+		tx.save(row);
+	});
+	return webJson(e, { ok: true });
+};
+const HandleWebNotificationEmail = (e) => {
+	requireWorker$3(e);
+	sendDeliveryEmail(lease$2(webInput(e)));
+	return webJson(e, { sent: true });
+};
+/** Chien de garde (cron, chaque minute) : worker muet, emails plateforme sans worker, état du service de reprise. */
+const HandleWebAlertWatchdog = () => {
+	if (!webEnabled() || !platformCollection()) return;
+	let workerDown = false, checkRecovery = false, activatedAt = "";
+	$app.runInTransaction((tx) => {
+		const p = platformRow(tx), lastClaim = p.getString("lastClaimAt"), last = Date.parse(lastClaim || "");
+		if (last && Date.now() - last > WORKER_DOWN_AFTER && !p.getBool("workerDown")) {
+			p.set("workerDown", true);
+			emitWebAlert(tx, "platform", "", "worker_unresponsive", "worker-down:" + lastClaim, { lastClaimAt: lastClaim });
+		}
+		workerDown = p.getBool("workerDown");
+		if (workerDown) scanPlatformOutbox(p, tx);
+		const checked = Date.parse(p.getString("recoveryCheckedAt") || "");
+		if (!checked || Date.now() - checked > 15 * 6e4) {
+			p.set("recoveryCheckedAt", stamp$4());
+			checkRecovery = true;
+		}
+		activatedAt = p.getString("activatedAt");
+		tx.save(p);
+	});
+	if (workerDown) for (const row of $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\" && channel=\"email\" && status=\"pending\" && nextAttemptAt<={:now}", "created", 5, 0, { now: stamp$4() })) {
+		row.set("status", "sending");
+		row.set("attempts", row.getInt("attempts") + 1);
+		row.set("leaseAt", stamp$4());
+		$app.save(row);
+		try {
+			sendDeliveryEmail(row);
+			const sent = $app.findRecordById(DELIVERIES, row.id);
+			sent.set("status", "sent");
+			sent.set("sentAt", stamp$4());
+			sent.set("lastError", "");
+			$app.save(sent);
+		} catch (error) {
+			const failed = $app.findRecordById(DELIVERIES, row.id);
+			failed.set("status", failed.getInt("attempts") >= 3 ? "failed" : "pending");
+			failed.set("nextAttemptAt", stamp$4(Date.now() + 6e4 * 2 ** (failed.getInt("attempts") - 1)));
+			failed.set("lastError", CLASS_MESSAGES.smtp);
+			$app.save(failed);
+		}
+	}
+	if (checkRecovery) try {
+		recoveryWatch(activatedAt);
+	} catch (error) {
+		console.log("web alert watchdog: recovery status unavailable", `${error?.message || error}`.slice(0, 200));
+	}
+};
+/**
+* Filet de sécurité de la route poussée par le service de reprise : mêmes clés (`platform-recovery:<runId>`), donc un
+* seul événement par exécution, que la poussée soit arrivée ou non.
+*/
+const recoveryWatch = (activatedAt) => {
+	const status = webPlatformRecoveryApi("status").response;
+	if (!status || status.unavailable || !status.configured) return;
+	const since = Date.parse(activatedAt || "") || 0;
+	if (status.settings?.enabled && !status.worker?.online) emitWebAlert($app, "platform", "", "recovery_service_offline", "recovery-offline:" + (status.worker?.lastSeenAt || "never"), {});
+	const finished = Date.parse(status.latest?.finishedAt || "");
+	if (status.settings?.enabled && finished && Date.now() - finished > 36 * HOUR) emitWebAlert($app, "platform", "", "recovery_capture_stale", "recovery-stale:" + status.latest.id, { latestId: `${status.latest.id}`.slice(0, 64) });
+	const runs = webPlatformRecoveryApi("runs", { page: 1 }).response?.items;
+	for (const run of Array.isArray(runs) ? runs : []) {
+		if (!run || run.status !== "failed" || !/^[a-f0-9]{32}$/.test(run.id || "")) continue;
+		if (since && Date.parse(run.finishedAt || "") < since) continue;
+		emitWebAlert($app, "platform", "", "recovery_failed", "platform-recovery:" + run.id, {
+			runId: run.id,
+			operation: ["capture", "drill"].includes(run.operation) ? run.operation : "",
+			stage: `${run.stage || ""}`.slice(0, 80),
+			summary: `${run.error || ""}`.slice(0, 160)
+		});
+	}
+};
+const RECOVERY_ERRORS = [
+	"CONFIGURATION",
+	"INSUFFICIENT_SPACE",
+	"DEPENDENCIES_NOT_READY",
+	"VERIFICATION"
+];
+/** Poussée du service de reprise (X-Web-Worker, boucle locale) : un échec de capture ou de test. Idempotente. */
+const HandleWebPlatformRecoveryEvent = (e) => {
+	requireWorker$3(e);
+	const input = webInput(e);
+	if (!(input.version === 1 && input.event === "recovery_failed" && typeof input.runId === "string" && /^platform-recovery:[a-f0-9]{32}$/.test(input.eventKey || "") && input.eventKey === "platform-recovery:" + input.runId && typeof input.platform === "string" && /^[a-z0-9][a-z0-9-]{0,40}$/.test(input.platform) && ["capture", "drill"].includes(input.operation) && [
+		"manual",
+		"scheduled",
+		"cli"
+	].includes(input.trigger) && typeof input.stage === "string" && input.stage.length <= 20 && RECOVERY_ERRORS.includes(input.errorCode) && typeof input.occurredAt === "string" && !isNaN(Date.parse(input.occurredAt)) && typeof input.message === "string" && input.message.length <= 200)) throw new BadRequestError("Événement de reprise invalide.");
+	if (!platformCollection()) throw new BadRequestError("Alertes de la plateforme non installées.");
+	$app.runInTransaction((tx) => {
+		emitWebAlert(tx, "platform", "", "recovery_failed", input.eventKey, {
+			runId: input.runId,
+			operation: input.operation,
+			trigger: input.trigger,
+			stage: input.stage,
+			errorCode: input.errorCode,
+			summary: input.message.replace(/\s+/g, " ").slice(0, 160)
+		});
+	});
+	return webJson(e, { accepted: true }, 202);
+};
+const platformResponse = (row) => {
+	const value = config$1(row, true), last = row.getString("lastClaimAt");
+	return {
+		revision: row.getString("configEncrypted") ? row.getString("revision") : "",
+		...channels(value),
+		copyAppEvents: !!value.copyAppEvents,
+		availableEvents: PLATFORM_EVENTS,
+		worker: {
+			lastClaimAt: last,
+			down: row.getBool("workerDown") || !!last && Date.now() - Date.parse(last) > WORKER_DOWN_AFTER
+		},
+		disk: {
+			low: row.getBool("diskLow"),
+			changedAt: row.getString("diskChangedAt")
+		},
+		recovery: { checkedAt: row.getString("recoveryCheckedAt") }
+	};
+};
+const requirePlatformChannel = (e) => {
+	const actor = requirePlatformAdmin(e);
+	if (!platformCollection()) throw new BadRequestError("Alertes de la plateforme non installées.");
+	return actor;
+};
+const HandleWebPlatformNotificationsGet = (e) => {
+	requirePlatformChannel(e);
+	let row;
+	$app.runInTransaction((tx) => {
+		row = platformRow(tx);
+	});
+	return webJson(e, platformResponse(row));
+};
+const HandleWebPlatformNotificationsPut = (e) => {
+	const actor = requirePlatformChannel(e), input = webInput(e);
+	if (Object.keys(input).some((key) => ![
+		"revision",
+		"webhook",
+		"email",
+		"events",
+		"cooldownSeconds",
+		"copyAppEvents",
+		"useOperator"
+	].includes(key))) throw new BadRequestError("Options de notification invalides.");
+	let result, generatedSecret = "";
+	$app.runInTransaction((tx) => {
+		const row = platformRow(tx), saved = !!row.getString("configEncrypted"), value = config$1(row, true);
+		if (input.revision !== (saved ? row.getString("revision") : "")) throw new BadRequestError("Les canaux ont changé. Rechargez leur configuration.");
+		if (input.useOperator !== void 0 && typeof input.useOperator !== "boolean") throw new BadRequestError("Options email invalides.");
+		if (input.useOperator === true && input.email && !input.email.recipients?.length && !value.email.recipients.length) {
+			const own = verifiedEmail(actor);
+			if (own) input.email = {
+				...input.email,
+				recipients: [own]
+			};
+		}
+		generatedSecret = applyChannels(input, value, () => {}, () => value.email.recipients.length > 0);
+		if (input.events !== void 0) {
+			if (!Array.isArray(input.events) || input.events.some((event) => !PLATFORM_EVENTS.includes(event))) throw new BadRequestError("Types d’alerte invalides.");
+			value.events = [...new Set(input.events)];
+		}
+		if (input.copyAppEvents !== void 0) {
+			if (typeof input.copyAppEvents !== "boolean") throw new BadRequestError("Options de notification invalides.");
+			value.copyAppEvents = input.copyAppEvents;
+		}
+		saveSettings(row, saved ? row : null, actor.id, value, tx);
+		result = row;
+	});
+	return webJson(e, {
+		...platformResponse(result),
+		...generatedSecret ? { generatedSecret } : {}
+	});
+};
+const HandleWebPlatformNotificationTest = (e) => {
+	const actor = requirePlatformChannel(e), input = testInput(e, PLATFORM_EVENTS), row = platformRow();
+	if (!row.getString("configEncrypted") || !["webhook", "email"].includes(input.channel)) throw new BadRequestError("Enregistrez d’abord le canal à tester.");
+	const value = config$1(row, true);
+	if (input.channel === "webhook" ? !value.webhook.url : !value.email.recipients.length || !smtpAvailable()) throw new BadRequestError("Ce canal n’est pas configuré.");
+	if (!value[input.channel].enabled) throw new BadRequestError("Activez et enregistrez ce canal avant de l’essayer.");
+	return runTest(e, row, null, "platform", input, actor.id);
+};
+const HandleWebPlatformNotificationHistory = (e) => {
+	requirePlatformChannel(e);
+	const query = e.request.url.query();
+	if (query.get("id")) return webJson(e, {
+		items: $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\" && id={:id}", "", 1, 0, { id: id$3(query.get("id")) }).map(metadata$3),
+		page: 1,
+		hasMore: false
+	});
+	const page = Math.max(1, Math.min(1e5, Math.floor(Number(query.get("page")) || 1))), rows = $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\"", "-created,-id", 21, (page - 1) * 20);
+	return webJson(e, {
+		items: rows.slice(0, 20).map(metadata$3),
+		page,
+		hasMore: rows.length > 20
+	});
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/environments.ts
+const slugOf = (value) => {
+	if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,59}$/.test(value)) throw new BadRequestError("Nom court attendu : lettres minuscules, chiffres et tirets.");
+	return value;
+};
+const permanent = (value) => {
+	webEnvironmentName(value);
+	if (value === "preview") throw new BadRequestError("Les previews sont créées uniquement par le cycle des pull requests autorisées.");
+	return value;
+};
+const assertSlug = (projectId, slug, store, except = "") => {
+	if (store.findRecordsByFilter("web_app_environments", "projectId={:id} && slug={:slug} && id!={:except}", "", 1, 0, {
+		id: projectId,
+		slug,
+		except
+	}).length) throw new BadRequestError("Ce nom d’environnement est déjà utilisé dans le projet.");
+};
+const PERMANENT_MAX = 10;
+/** Environnements permanents d'un projet (les previews ont leur propre quota) : création, rattachement, déplacement. */
+const assertPermanentCapacity = (projectId, store) => {
+	if (store.countRecords("web_app_environments", $dbx.exp("environment!='preview' AND projectId={:id}", { id: projectId })) >= PERMANENT_MAX) throw new BadRequestError("Dix environnements permanents maximum par projet.");
+};
+const membershipView = (row, store) => {
+	let app = null;
+	try {
+		if (row.getString("appId")) app = store.findRecordById("web_apps", row.getString("appId"));
+	} catch {}
+	return {
+		id: row.id,
+		appId: row.getString("appId"),
+		projectId: row.getString("projectId"),
+		environment: row.getString("environment"),
+		slug: row.getString("slug"),
+		state: row.getString("state"),
+		sourceAppId: row.getString("sourceAppId"),
+		previewNumber: row.getInt("previewNumber"),
+		expiresAt: row.getString("expiresAt"),
+		app: app ? serializeWebApp(app) : null
+	};
+};
+const HandleWebAppEnvironments = (e) => {
+	const app = requireWebAppPermission(e, "app.read").app, member = webMembership(app.id);
+	if (!member) return webJson(e, {
+		project: null,
+		membership: null,
+		items: [],
+		legacy: true
+	});
+	const project = webProject(member.getString("projectId")), rows = $app.findRecordsByFilter("web_app_environments", "projectId={:id}", "environment,slug", 200, 0, { id: project.id });
+	const resolved = resolveWebEnvironment(app), localNames = new Set(Object.keys(decryptWebValue(app.getString("envEncrypted"))));
+	return webJson(e, {
+		project: webProjectView(project),
+		membership: membershipView(member, $app),
+		items: rows.map((row) => membershipView(row, $app)),
+		legacy: false,
+		effectiveVariables: Object.keys(resolved.env).sort().map((name) => ({
+			name,
+			build: resolved.env[name].build,
+			runtime: resolved.env[name].runtime,
+			overriddenLocally: localNames.has(name)
+		})),
+		resolutionRevision: resolved.context.revision
+	});
+};
+const HandleWebAppProjectCreate = (e) => {
+	const user = requirePlatformAdmin(e), source = findWebApp(e.request.pathValue("id")), input = webInput(e), environment = permanent(input.environment);
+	if (typeof input.name !== "string" || !input.name.trim() || input.name.trim().length > 80) throw new BadRequestError("Nom de projet requis (80 caractères maximum).");
+	let project;
+	$app.runInTransaction((tx) => {
+		if (webMembership(source.id, tx)) throw new BadRequestError("Cette application appartient déjà à un projet.");
+		const app = tx.findRecordById("web_apps", source.id), row = new Record(tx.findCollectionByNameOrId("web_projects"));
+		row.set("name", input.name.trim());
+		row.set("repository", webConfig(app).repository);
+		row.set("actorId", user.id);
+		row.set("previewMax", 3);
+		row.set("previewTtlHours", 24);
+		tx.save(row);
+		bindWebGitSourceProject(webConfig(app), row.id, tx, app.id);
+		const member = new Record(tx.findCollectionByNameOrId("web_app_environments"));
+		member.set("projectId", row.id);
+		member.set("appId", app.id);
+		member.set("environment", environment);
+		member.set("slug", slugOf(input.slug || environment));
+		member.set("state", "active");
+		tx.save(member);
+		auditWebProject(row.id, user.id, "project-created", {
+			appId: app.id,
+			environment
+		}, tx);
+		project = webProjectView(row);
+	});
+	return webJson(e, { project }, 201);
+};
+/**
+* Rattache une application sans projet à `project` (relue dans `tx`) : même dépôt (sauf groupe de sites), source Git,
+* nom court libre, version publiée produite dans ce projet, variables aplaties d'une autre équipe retirées
+* (`keepVariables` : conservées), canaux d'alerte réinitialisés si l'équipe change. Partagé par la route historique et
+* PUT /api/web-apps/{id}/project.
+*/
+const attachWebAppToProject = (app, project, input, user, tx) => {
+	const { environment, slug } = input;
+	if (webMembership(app.id, tx)) throw new BadRequestError("Détachez d’abord cette application de son projet actuel.");
+	const current = tx.findRecordById("web_apps", app.id);
+	if (!webProjectRepositoryMatches(current, project, tx)) throw new BadRequestError("Le projet et l’application doivent utiliser le même dépôt.");
+	bindWebGitSourceProject(webConfig(current), project.id, tx, app.id);
+	assertSlug(project.id, slug, tx);
+	assertPermanentCapacity(project.id, tx);
+	let active = null;
+	try {
+		active = tx.findRecordById("web_deployments", current.getString("activeDeployment"));
+	} catch {}
+	if (active && !webHistoryInScope(current, webDeploymentOrigin(active), tx, project.id) && (current.getString("status") !== "stopped" || tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length)) throw new BadRequestError("Arrêtez l’application avant de la rattacher : sa version publiée vient d’un autre projet. Redéployez-la ensuite depuis ce projet.");
+	const detached = webAppDetachment(app.id, tx), sameTeam = !!detached && webProjectLineage(project.id, tx).includes(detached.getString("projectId")), shared = detached && !sameTeam ? JSON.parse(detached.getString("details") || "{}").sharedVariables || [] : [];
+	const notificationsReset = !sameTeam && resetWebNotificationChannels(app.id, user.id, tx);
+	const local = decryptWebValue(current.getString("envEncrypted")), stripped = input.keepVariables === true ? [] : shared.filter((name) => Object.prototype.hasOwnProperty.call(local, name));
+	if (stripped.length) {
+		for (const name of stripped) delete local[name];
+		current.set("envEncrypted", encryptWebValue(local));
+		tx.save(current);
+	}
+	const row = new Record(tx.findCollectionByNameOrId("web_app_environments"));
+	row.set("projectId", project.id);
+	row.set("appId", app.id);
+	row.set("environment", environment);
+	row.set("slug", slug);
+	row.set("state", "active");
+	tx.save(row);
+	auditWebProject(project.id, user.id, "application-attached", {
+		appId: app.id,
+		environment,
+		...shared.length ? {
+			strippedVariables: stripped,
+			keptVariables: shared.filter((name) => !stripped.includes(name))
+		} : {},
+		...notificationsReset ? { notificationsReset: true } : {}
+	}, tx);
+	return {
+		stripped,
+		notificationsReset
+	};
+};
+const HandleWebAppProjectAttach = (e) => {
+	const user = requirePlatformAdmin(e), app = findWebApp(e.request.pathValue("id")), input = webInput(e), environment = permanent(input.environment), slug = slugOf(input.slug || environment);
+	if (input.keepVariables !== void 0 && typeof input.keepVariables !== "boolean") throw new BadRequestError("Le choix de conservation des variables doit être explicite.");
+	$app.runInTransaction((tx) => {
+		if (webMembership(app.id, tx)) throw new BadRequestError("Détachez d’abord cette application de son projet actuel.");
+		attachWebAppToProject(app, webProject(input.projectId, tx), {
+			environment,
+			slug,
+			keepVariables: input.keepVariables
+		}, user, tx);
+	});
+	return HandleWebAppEnvironments(e);
+};
+/**
+* Sort l'application de son projet : variables partagées aplaties dans ses variables locales (noms renvoyés, jamais les
+* valeurs), audit `application-detached`, source Git réconciliée. Partagé par la route historique et PUT
+* /api/web-apps/{id}/project.
+*/
+const detachWebAppFromProject = (app, user, tx) => {
+	const current = tx.findRecordById("web_apps", app.id), member = webMembership(app.id, tx);
+	if (!member) throw new BadRequestError("Cette application n’appartient pas à un projet.");
+	if (member.getString("environment") === "preview") throw new BadRequestError("Une preview temporaire doit être fermée par son cycle de pull request.");
+	const local = decryptWebValue(current.getString("envEncrypted")), resolved = resolveWebEnvironment(current, tx).env, sharedVariables = Object.keys(resolved).filter((name) => !Object.prototype.hasOwnProperty.call(local, name));
+	current.set("envEncrypted", encryptWebValue(resolved));
+	tx.save(current);
+	auditWebProject(member.getString("projectId"), user.id, "application-detached", {
+		appId: app.id,
+		sharedVariables
+	}, tx);
+	tx.delete(member);
+	reconcileWebGitSourceProject(current, tx);
+	return sharedVariables;
+};
+const HandleWebAppProjectDetach = (e) => {
+	const user = requirePlatformAdmin(e), app = findWebApp(e.request.pathValue("id"));
+	$app.runInTransaction((tx) => {
+		detachWebAppFromProject(app, user, tx);
+	});
+	return webJson(e, { detached: true });
+};
+const createWebEnvironment = (project, source, input, actorId, store, preview) => {
+	const sourceMember = webMembership(source.id, store), environment = preview ? "preview" : permanent(input.environment), slug = slugOf(preview ? `pr-${preview.number}` : input.slug || environment);
+	if (sourceMember?.getString("projectId") !== project.id || sourceMember.getString("environment") === "preview") throw new BadRequestError("Choisissez une application permanente de ce projet comme modèle.");
+	if (input.copyVariables !== void 0 && typeof input.copyVariables !== "boolean") throw new BadRequestError("Le choix de copie des variables doit être explicite.");
+	if (preview && input.copyVariables) throw new BadRequestError("Les variables du modèle ne sont jamais copiées vers une preview.");
+	const branch = `${input.branch || webConfig(source).branch}`;
+	if (!/^[A-Za-z0-9_./-]{1,200}$/.test(branch) || branch.includes("..")) throw new BadRequestError("Branche invalide.");
+	const name = `${input.name || `${source.getString("name")} · ${slug}`}`.trim();
+	if (!name || name.length > 80) throw new BadRequestError("Nom d’application requis (80 caractères maximum).");
+	assertSlug(project.id, slug, store, preview?.existing?.id);
+	if (!preview) {
+		assertPermanentCapacity(project.id, store);
+		assertWebSiteCapacity(store);
+	}
+	const app = new Record(store.findCollectionByNameOrId("web_apps")), config = {
+		...webConfig(source),
+		branch,
+		autoDeploy: preview ? false : false
+	};
+	delete config.generatedDomain;
+	app.set("name", name);
+	app.set("uid", source.getString("uid") || actorId);
+	app.set("status", "stopped");
+	app.set("config", config);
+	app.set("envEncrypted", encryptWebValue(input.copyVariables ? decryptWebValue(source.getString("envEncrypted")) : {}));
+	store.save(app);
+	config.generatedDomain = `web-${app.id}.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`;
+	app.set("config", config);
+	store.save(app);
+	const resources = webEnvironmentResources(source, store);
+	const profile = new Record(store.findCollectionByNameOrId("web_runtime_profiles"));
+	profile.set("appId", app.id);
+	profile.set("profile", resources.profile);
+	profile.set("registryEncrypted", "");
+	profile.set("revision", $security.randomString(24));
+	store.save(profile);
+	if (resources.volumes.length) {
+		const storage = new Record(store.findCollectionByNameOrId("web_storage_settings"));
+		storage.set("appId", app.id);
+		storage.set("volumes", resources.volumes);
+		storage.set("retention", 7);
+		storage.set("revision", $security.randomString(24));
+		store.save(storage);
+	}
+	const row = preview?.existing || new Record(store.findCollectionByNameOrId("web_app_environments"));
+	row.set("projectId", project.id);
+	row.set("appId", app.id);
+	row.set("environment", environment);
+	row.set("slug", slug);
+	row.set("state", "active");
+	row.set("sourceAppId", source.id);
+	row.set("previewNumber", preview?.number || 0);
+	row.set("expiresAt", preview?.expiresAt || "");
+	store.save(row);
+	auditWebProject(project.id, actorId, preview ? "preview-created" : "environment-cloned", {
+		appId: app.id,
+		sourceAppId: source.id,
+		environment,
+		variablesCopied: input.copyVariables === true
+	}, store);
+	return app;
+};
+const HandleWebEnvironmentClone = (e) => {
+	const { user, app: source } = requireWebAppPermission(e, "environments.manage"), input = webInput(e);
+	let app;
+	$app.runInTransaction((tx) => {
+		const member = webMembership(source.id, tx);
+		if (!member) throw new BadRequestError("Créez ou choisissez d’abord un projet.");
+		app = serializeWebApp(createWebEnvironment(webProject(member.getString("projectId"), tx), tx.findRecordById("web_apps", source.id), input, user.id, tx));
+	});
+	return webJson(e, { app }, 201);
+};
+const normalized = (value) => Array.isArray(value) ? value.map(normalized) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalized(value[key])])) : value === void 0 ? null : value;
+const canonical = (value) => JSON.stringify(normalized(value));
+const buildFingerprint = (config, env) => {
+	const c = { ...config };
+	for (const key of [
+		"branch",
+		"generatedDomain",
+		"healthPath",
+		"autoDeploy",
+		"repositoryId",
+		"githubConnectionId"
+	]) delete c[key];
+	return $security.sha256(canonical([c, Object.fromEntries(Object.keys(env).filter((name) => env[name].build).sort().map((name) => [name, env[name].value]))]));
+};
+const promotionPlan = (source, target, store) => {
+	const a = webMembership(source.id, store), b = webMembership(target.id, store);
+	if (!a || !b || source.id === target.id || a.getString("projectId") !== b.getString("projectId") || b.getString("environment") === "preview" || b.getString("state") !== "active") throw new BadRequestError("Choisissez un autre environnement permanent du même projet comme cible.");
+	if (webProject(a.getString("projectId"), store).getBool("multiRepository") && !webSameSiteFamily(source, target, a, b)) throw new BadRequestError("Choisissez comme cible un environnement du même site (même dépôt ou cloné depuis la source).");
+	let published;
+	try {
+		published = store.findRecordById("web_deployments", source.getString("activeDeployment"));
+	} catch {
+		throw new BadRequestError("Publiez une version de la source avant de la promouvoir.");
+	}
+	const snapshot = decryptWebValue(published.getString("snapshotEncrypted")), result = JSON.parse(published.getString("result") || "{}"), resolved = resolveWebEnvironment(target, store);
+	if (published.getString("status") !== "ready" || published.getString("appId") !== source.id || !/^[a-f0-9]{40}$/.test(published.getString("commit")) || !snapshot?.env || !snapshot?.config) throw new BadRequestError("Publiez une version valide de l’environnement source avant de la promouvoir.");
+	assertWebDeploymentInScope(source, published, store);
+	const image = /^sha256:[a-f0-9]{64}$/.test(result.imageId || "") ? result.imageId : /^sha256:[a-f0-9]{64}$/.test(result.image || "") ? result.image : "";
+	const { registry: _registry, ...publicSourceRuntime } = snapshot.runtime || {}, sourceRuntime = validateRuntimeProfile(publicSourceRuntime), targetResources = webEnvironmentResources(target, store);
+	const reusableRuntime = sourceRuntime.kind !== "compose" && targetResources.profile.kind !== "compose" && canonical(sourceRuntime) === canonical(targetResources.profile) && canonical(snapshot.storage || []) === canonical(targetResources.volumes);
+	return {
+		sourceDeploymentId: published.id,
+		commit: published.getString("commit"),
+		sourceBranch: `${snapshot.config.branch || ""}`,
+		image,
+		mode: image && reusableRuntime && result.available !== false && buildFingerprint(snapshot.config, snapshot.env) === buildFingerprint(webConfig(target), resolved.env) ? "image" : "build",
+		revision: currentWebEnvironmentRevision(target, store),
+		resolved
+	};
+};
+const promotionToken = (actorId, sourceId, targetId, plan, expiresAt) => $security.hs256(JSON.stringify([
+	actorId,
+	sourceId,
+	targetId,
+	plan.sourceDeploymentId,
+	plan.commit,
+	plan.mode,
+	plan.revision,
+	expiresAt
+]), $os.getenv("WEB_APPS_MASTER_KEY"));
+/** Promouvoir publie sur la cible : app.deploy est exigé sur la source ET sur la cible (même projet, déjà imposé). */
+const promotionTarget = (e, targetAppId) => requireWebPermission(e, { appId: webProjectId(targetAppId) }, "app.deploy").app;
+const HandleWebEnvironmentPromotionPreview = (e) => {
+	const { user, app: source } = requireWebAppPermission(e, "app.deploy"), target = promotionTarget(e, webInput(e).targetAppId), plan = promotionPlan(source, target, $app), expiresAt = new Date(Date.now() + 10 * 6e4).toISOString();
+	return webJson(e, {
+		targetAppId: target.id,
+		sourceDeploymentId: plan.sourceDeploymentId,
+		commit: plan.commit,
+		mode: plan.mode,
+		revision: plan.revision,
+		expiresAt,
+		previewToken: promotionToken(user.id, source.id, target.id, plan, expiresAt),
+		variableNames: Object.keys(plan.resolved.env).sort(),
+		warning: plan.mode === "image" ? "L’image vérifiée sera adaptée à la cible et démarrée avec les variables de la cible." : "Le commit sera reconstruit avec les variables de construction et d’exécution de la cible. Les valeurs de la source ne sont pas copiées."
+	});
+};
+const HandleWebEnvironmentPromote = (e) => {
+	const { user, app: source } = requireWebAppPermission(e, "app.deploy"), input = webInput(e);
+	promotionTarget(e, input.targetAppId);
+	assertWebGithubRate(source.id, user.id);
+	let deployment;
+	$app.runInTransaction((tx) => {
+		const from = tx.findRecordById("web_apps", source.id), target = tx.findRecordById("web_apps", webProjectId(input.targetAppId)), plan = promotionPlan(from, target, tx);
+		if (input.revision !== plan.revision || typeof input.expiresAt !== "string" || Date.parse(input.expiresAt) <= Date.now() || Date.parse(input.expiresAt) > Date.now() + 10 * 6e4 || typeof input.previewToken !== "string" || !$security.equal(input.previewToken, promotionToken(user.id, from.id, target.id, plan, input.expiresAt))) throw new BadRequestError("La source ou la cible a changé. Préparez un nouvel aperçu de promotion.");
+		if (tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: target.id }).length) throw new BadRequestError("La cible a déjà un traitement en cours.");
+		target.set("desiredCommit", plan.commit);
+		tx.save(target);
+		const resolved = resolveWebEnvironment(target, tx), promotion = {
+			sourceAppId: from.id,
+			sourceDeploymentId: plan.sourceDeploymentId,
+			sourceBranch: plan.sourceBranch,
+			expectedTargetRevision: currentWebEnvironmentRevision(target, tx)
+		};
+		const row = queueWebDeployment(target, plan.mode === "image" ? "promote" : "deploy", user.id, {
+			commit: plan.commit,
+			env: resolved.env,
+			projectEnvironment: resolved.context,
+			...plan.mode === "image" ? { rollbackResult: {
+				imageSource: plan.image,
+				sourceAppId: from.id
+			} } : {},
+			promotion
+		}, tx);
+		auditWebProject(webMembership(target.id, tx).getString("projectId"), user.id, "environment-promoted", {
+			sourceAppId: from.id,
+			targetAppId: target.id,
+			commit: plan.commit,
+			mode: plan.mode
+		}, tx);
+		deployment = serializeWebDeployment(row);
+	});
+	return webJson(e, { deployment }, 202);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/previews.ts
+const activeFilter = "environment=\"preview\" && (state=\"active\" || state=\"closing\")";
+const activeSql = "environment='preview' AND state IN ('active','closing')";
+const timestamp$1 = () => (/* @__PURE__ */ new Date()).toISOString();
+const repositoryOf$1 = (body) => {
+	const name = body.repository?.full_name;
+	if (typeof name !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(name) || name.length > 250) throw new BadRequestError("Dépôt de pull request invalide.");
+	return name;
+};
+const closePreview = (membership, reason, actorId, store) => {
+	if (membership.getString("state") === "closed") return;
+	const app = store.findRecordById("web_apps", membership.getString("appId"));
+	if (membership.getString("environment") !== "preview") throw new BadRequestError("Seule une preview peut être nettoyée automatiquement.");
+	for (const job of store.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1e3, 0, { id: app.id })) {
+		if (job.getString("action") === "preview-remove") continue;
+		if (job.getString("status") === "queued") {
+			job.set("status", "cancelled");
+			job.set("stage", "Preview fermée");
+			job.set("finishedAt", timestamp$1());
+		} else if (job.getString("action") === "deploy") job.set("cancelRequested", true);
+		store.save(job);
+	}
+	membership.set("state", "closing");
+	membership.set("expiresAt", timestamp$1());
+	store.save(membership);
+	if (!store.findRecordsByFilter("web_deployments", "appId={:id} && action=\"preview-remove\" && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) queueWebDeployment(app, "preview-remove", actorId, {
+		env: {},
+		preview: {
+			appId: app.id,
+			sourceAppId: membership.getString("sourceAppId"),
+			isPreview: true
+		}
+	}, store);
+	auditWebProject(membership.getString("projectId"), actorId, "preview-closing", {
+		appId: app.id,
+		number: membership.getInt("previewNumber"),
+		reason
+	}, store);
+};
+const assertWebPreviewRemovalJob = (app, snapshot, store = $app) => {
+	const membership = webMembership(app.id, store);
+	if (!membership || membership.getString("environment") !== "preview" || membership.getString("state") !== "closing" || snapshot?.preview?.isPreview !== true || snapshot.preview.appId !== app.id || snapshot.preview.sourceAppId !== membership.getString("sourceAppId") || snapshot.preview.sourceAppId === app.id) throw new BadRequestError("Nettoyage refusé : cette application n’est pas une preview fermée autorisée.");
+};
+/** Application modèle des previews d'un projet, ou null si elle est introuvable. */
+const previewTemplate = (project, store = $app) => {
+	try {
+		return store.findRecordById("web_apps", project.getString("previewSourceAppId"));
+	} catch {
+		return null;
+	}
+};
+/**
+* Connexion GitHub de l'application modèle d'un projet : '' pour un modèle « Dépôt Git », null pour un modèle
+* introuvable (les deux cas sont distingués).
+*/
+const previewSourceConnection = (project, store = $app) => {
+	const template = previewTemplate(project, store);
+	return template ? resolvedConnectionId(webConfig(template)) : null;
+};
+/** Connexion de l'application d'une preview encore ouverte ('' : aucune, ou application « Dépôt Git »). */
+const previewAppConnection = (member, store = $app) => {
+	if (!member || member.getString("state") === "closed" || !member.getString("appId")) return "";
+	try {
+		return resolvedConnectionId(webConfig(store.findRecordById("web_apps", member.getString("appId"))));
+	} catch {
+		return "";
+	}
+};
+/**
+* Connexion qui gouverne les previews d'un projet pour une livraison : celle du modèle GitHub App ; à défaut (modèle «
+* Dépôt Git » ou introuvable), celle de l'application de la preview elle-même. Une livraison d'une autre connexion
+* n'agit jamais sur ces previews.
+*/
+const previewGoverningConnection = (template, member, store) => {
+	const config = template ? webConfig(template) : null;
+	return config && config.source !== "git" ? resolvedConnectionId(config) : previewAppConnection(member, store);
+};
+/** Une preview ouverte du projet est servie par cette connexion (modèle « Dépôt Git » ou introuvable). */
+const openPreviewOnConnection = (projectId, connectionId, store = $app) => store.findRecordsByFilter("web_app_environments", "projectId={:project} && environment=\"preview\" && state!=\"closed\"", "", 100, 0, { project: projectId }).some((member) => previewAppConnection(member, store) === connectionId);
+/**
+* Only call after GitHub signature and installation checks in the public webhook. `onlyProjectId` limits a manual
+* refresh to the requesting member's project (other teams may share the repository). `connectionId` : connexion qui a
+* reçu la livraison ; seuls les projets dont le modèle est sur cette connexion sont concernés, et la PR est relue avec
+* ses identifiants.
+*/
+const handleWebPreviewWebhook = (body, delivery, onlyProjectId = "", connectionId = GITHUB_PRINCIPAL) => {
+	if (!webEnabled()) throw new NotFoundError();
+	if (!/^[A-Za-z0-9-]{1,100}$/.test(delivery || "")) throw new BadRequestError("Livraison GitHub invalide.");
+	const repository = repositoryOf$1(body), number = Number(body.number || body.pull_request?.number);
+	if (!Number.isSafeInteger(number) || number < 1 || number > 1e8) throw new BadRequestError("Numéro de pull request invalide.");
+	try {
+		$app.findFirstRecordByFilter("web_preview_deliveries", "deliveryId={:delivery}", { delivery });
+		return {
+			accepted: true,
+			duplicate: true,
+			queued: 0,
+			closed: 0
+		};
+	} catch {}
+	if (![
+		"opened",
+		"reopened",
+		"synchronize",
+		"ready_for_review",
+		"closed",
+		"converted_to_draft"
+	].includes(body.action)) return {
+		accepted: true,
+		ignored: true,
+		queued: 0,
+		closed: 0
+	};
+	const projects = $app.findRecordsByFilter("web_projects", "previewEnabled=true", "", 1e3, 0).filter((row) => {
+		if (row.getString("repository").toLowerCase() !== repository.toLowerCase()) return false;
+		if (onlyProjectId && row.id !== onlyProjectId) return false;
+		const source = previewSourceConnection(row);
+		if (source) return source === connectionId;
+		return openPreviewOnConnection(row.id, connectionId);
+	});
+	if (!projects.length) return {
+		accepted: true,
+		ignored: true,
+		queued: 0,
+		closed: 0
+	};
+	const pr = webGithub("pull-request", {
+		repository,
+		number
+	}, connectionId), base = pr.base?.repo, head = pr.head?.repo;
+	const baseMatches = String(base?.full_name || "").toLowerCase() === repository.toLowerCase();
+	const trusted = baseMatches && Number(base?.id) > 0 && Number(base?.id) === Number(head?.id) && String(head?.full_name || "").toLowerCase() === repository.toLowerCase() && ["OWNER", "MEMBER"].includes(pr.author_association || pr.authorAssociation);
+	const closed = pr.state === "closed" || pr.draft === true;
+	const commit = pr.head?.sha, branch = pr.head?.ref;
+	if (!baseMatches || !closed && trusted && (!/^[a-f0-9]{40}$/.test(commit || "") || !/^[A-Za-z0-9_./-]{1,200}$/.test(branch || "") || branch.includes(".."))) throw new BadRequestError("État autoritatif de la pull request invalide.");
+	let queued = 0, removed = 0, wasDuplicate = false, note = trusted ? "" : "Preview refusée : auteur OWNER/MEMBER et même dépôt requis.";
+	$app.runInTransaction((tx) => {
+		try {
+			tx.findFirstRecordByFilter("web_preview_deliveries", "deliveryId={:delivery}", { delivery });
+			wasDuplicate = true;
+			return;
+		} catch {}
+		for (const original of projects) {
+			const project = webProject(original.id, tx);
+			if (!project.getBool("previewEnabled") || project.getString("repository").toLowerCase() !== repository.toLowerCase()) continue;
+			let member = null;
+			try {
+				member = tx.findFirstRecordByFilter("web_app_environments", "projectId={:project} && environment=\"preview\" && previewNumber={:number}", {
+					project: project.id,
+					number
+				});
+			} catch {}
+			const template = previewTemplate(project, tx);
+			if (previewGoverningConnection(template, member, tx) !== connectionId) {
+				if (!template) note = "Le modèle de preview est introuvable.";
+				else if (webConfig(template).source === "git") note = "Les aperçus de pull request nécessitent la source GitHub App.";
+				else note = "Le modèle de preview utilise une autre connexion GitHub.";
+				continue;
+			}
+			if (closed) {
+				if (member && member.getString("state") !== "closed") {
+					closePreview(member, pr.draft ? "draft" : "pull-request-closed", "", tx);
+					removed++;
+				}
+				continue;
+			}
+			if (!trusted) {
+				if (member && member.getString("state") === "active") {
+					closePreview(member, "trust-revoked", "", tx);
+					removed++;
+				}
+				continue;
+			}
+			if (member?.getString("state") === "closing") {
+				note = "Nettoyage de la preview en cours. Relancez la synchronisation après sa fermeture.";
+				continue;
+			}
+			if (!template) {
+				note = "Le modèle de preview est introuvable.";
+				continue;
+			}
+			const source = template, sourceMember = webMembership(source.id, tx);
+			if (sourceMember?.getString("projectId") !== project.id || sourceMember.getString("environment") === "preview") {
+				note = "Le modèle de preview doit être un environnement permanent du projet.";
+				continue;
+			}
+			if (webConfig(source).source === "git") {
+				note = "Les aperçus de pull request nécessitent la source GitHub App.";
+				continue;
+			}
+			if (resolvedConnectionId(webConfig(source)) !== connectionId) {
+				note = "Le modèle de preview utilise une autre connexion GitHub.";
+				continue;
+			}
+			const expiresAt = new Date(Date.now() + (project.getInt("previewTtlHours") || 24) * 36e5).toISOString();
+			let app;
+			if (!member || member.getString("state") === "closed") {
+				const projectCount = tx.countRecords("web_app_environments", $dbx.exp(`${activeSql} AND projectId={:id}`, { id: project.id })), globalCount = tx.countRecords("web_app_environments", $dbx.exp(activeSql));
+				if (projectCount >= (project.getInt("previewMax") || 3) || globalCount >= 10 || webSitesFull(tx)) {
+					note = "Quota de previews atteint. Fermez une preview ou attendez son nettoyage.";
+					continue;
+				}
+				app = createWebEnvironment(project, source, {
+					branch,
+					name: `${source.getString("name").slice(0, 60)} · PR #${number}`,
+					copyVariables: false
+				}, "", tx, {
+					number,
+					expiresAt,
+					existing: member || void 0
+				});
+				member = webMembership(app.id, tx);
+			} else {
+				app = tx.findRecordById("web_apps", member.getString("appId"));
+				const config = {
+					...webConfig(source),
+					branch,
+					generatedDomain: webConfig(app).generatedDomain,
+					autoDeploy: false
+				};
+				app.set("config", config);
+				tx.save(app);
+				member.set("expiresAt", expiresAt);
+				tx.save(member);
+			}
+			if (app.getString("desiredCommit") === commit) continue;
+			for (const running of tx.findRecordsByFilter("web_deployments", "appId={:id} && action=\"deploy\" && status=\"running\"", "", 100, 0, { id: app.id })) {
+				running.set("cancelRequested", true);
+				tx.save(running);
+			}
+			queueWebDeployment(app, "deploy", "", { commit }, tx);
+			queued++;
+			auditWebProject(project.id, "", "preview-synchronized", {
+				appId: app.id,
+				number,
+				commit
+			}, tx);
+		}
+		const row = new Record(tx.findCollectionByNameOrId("web_preview_deliveries"));
+		row.set("deliveryId", delivery);
+		row.set("repository", repository);
+		row.set("previewNumber", number);
+		row.set("connectionId", connectionId);
+		row.set("status", queued ? "queued" : removed ? "closing" : "ignored");
+		row.set("note", note || (removed ? "Preview fermée." : queued ? "Preview isolée ajoutée à la file." : "Aucun changement à déployer."));
+		tx.save(row);
+	});
+	return {
+		accepted: true,
+		duplicate: wasDuplicate,
+		queued,
+		closed: removed,
+		note
+	};
+};
+const HandleWebPreviewRefresh = (e) => {
+	const access = requireWebProjectPermission(e, "previews.manage"), project = access.project, number = Number(e.request.pathValue("number"));
+	assertWebGithubRate(project.id, access.user.id);
+	return webJson(e, handleWebPreviewWebhook({
+		repository: { full_name: project.getString("repository") },
+		number,
+		action: "synchronize"
+	}, "manual-" + $security.randomStringWithAlphabet(30, "abcdefghijklmnopqrstuvwxyz0123456789"), access.platform ? "" : project.id, previewSourceConnection(project) || "default"), 202);
+};
+const HandleWebPreviewClose = (e) => {
+	const { user, project } = requireWebPermission(e, {
+		projectId: e.request.pathValue("projectId"),
+		environmentId: e.request.pathValue("previewId")
+	}, "previews.manage");
+	$app.runInTransaction((tx) => {
+		const member = tx.findRecordById("web_app_environments", e.request.pathValue("previewId"));
+		if (member.getString("projectId") !== project.id || member.getString("environment") !== "preview") throw new NotFoundError("Preview introuvable.");
+		closePreview(member, "manual", user.id, tx);
+	});
+	return webJson(e, { closing: true }, 202);
+};
+const HandleWebPreviewMaintenance = () => {
+	if (!webEnabled()) return;
+	$app.runInTransaction((tx) => {
+		const rows = tx.findRecordsByFilter("web_app_environments", activeFilter, "", 100, 0);
+		for (const row of rows) {
+			if (row.getString("state") === "active" && (!Number.isFinite(Date.parse(row.getString("expiresAt"))) || Date.parse(row.getString("expiresAt")) <= Date.now())) closePreview(row, "ttl-expired", "", tx);
+			if (row.getString("state") !== "closing") continue;
+			const appId = row.getString("appId"), finished = tx.findRecordsByFilter("web_deployments", "appId={:id} && action=\"preview-remove\" && status=\"ready\"", "-created", 1, 0, { id: appId })[0];
+			if (!finished || JSON.parse(finished.getString("result") || "{}").removed !== true) continue;
+			const app = tx.findRecordById("web_apps", appId);
+			assertWebPreviewRemovalJob(app, decryptWebValue(finished.getString("snapshotEncrypted")), tx);
+			if (tx.findRecordsByFilter("web_app_backups", "appId={:id} && status!=\"deleted\"", "", 1, 0, { id: appId }).length) continue;
+			for (const collection of [
+				"web_app_domains",
+				"web_app_health",
+				"web_app_health_events",
+				"web_scheduled_tasks",
+				"web_task_runs",
+				"web_terminal_sessions",
+				"web_environment_audit",
+				"web_app_backup_settings",
+				"web_app_backups",
+				"web_runtime_profiles",
+				"web_storage_settings",
+				"web_storage_jobs",
+				"web_deployments"
+			]) for (const record of tx.findRecordsByFilter(collection, "appId={:id}", "", 1e4, 0, { id: appId })) tx.delete(record);
+			tx.delete(app);
+			row.set("state", "closed");
+			row.set("appId", "");
+			tx.save(row);
+			auditWebProject(row.getString("projectId"), "", "preview-removed", {
+				appId,
+				number: row.getInt("previewNumber")
+			}, tx);
+		}
+	});
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/githubConnections.ts
+/**
+* Plusieurs connexions GitHub App par serveur. Une connexion = une GitHub App installée sur un compte ou une
+* organisation, stockée chiffrée dans `web_app_settings` :
+*
+* - `key = "github"` : connexion principale (`default`), ligne historique intacte, webhook legacy
+*   `/api/web-apps/github/webhook` ;
+* - `key = "github:<15 car.>"` : connexions supplémentaires, webhook `/api/web-apps/github/webhook/<id>`.
+*
+* Le blob chiffré garde le format historique et reçoit `meta` ({label, disabled, createdAt, createdBy}) ; l'ancien code
+* ne lit que des champs nommés. `web_apps.config.githubConnectionId` absent = connexion principale.
+*
+* Aucune réponse ne contient `privateKey`, `webhookSecret` ni `valueEncrypted`.
+*/
+const GITHUB_PRINCIPAL = "default";
+/** Identifiant de connexion accepté partout (principale ou supplémentaire). */
+const GITHUB_CONNECTION_ID = /^(default|[a-z0-9]{15})$/;
+/** Identifiant d'une connexion supplémentaire (chemin `/webhook/{connectionId}`). */
+const GITHUB_EXTRA_CONNECTION_ID = /^[a-z0-9]{15}$/;
+const GITHUB_CONNECTION_MAX = 10;
+const GITHUB_PRINCIPAL_LABEL = "Connexion principale";
+const SETTINGS$2 = "web_app_settings";
+const SESSIONS = "web_github_setup_sessions";
+const KEY = /^github(:[a-z0-9]{15})?$/;
+const UNAVAILABLE$1 = "Connexion GitHub introuvable ou désactivée.";
+const DUPLICATE = "Cette GitHub App est déjà connectée.";
+/** `default` -> `github`, `<id>` -> `github:<id>`. Lève une 400 pour tout autre identifiant. */
+const githubSettingsKey = (id) => {
+	if (!GITHUB_CONNECTION_ID.test(`${id}`)) throw new BadRequestError("Connexion GitHub invalide.");
+	return id === "default" ? "github" : `github:${id}`;
+};
+/** Clé `web_app_settings` -> identifiant de connexion ('' si la clé n'est pas une connexion GitHub). */
+const githubConnectionIdOfKey = (key) => !KEY.test(`${key}`) ? "" : key === "github" ? GITHUB_PRINCIPAL : key.slice(7);
+/** Connexion utilisée par une configuration d'application : '' pour une source « Dépôt Git ». */
+const resolvedConnectionId = (config) => config?.source === "git" ? "" : typeof config?.githubConnectionId === "string" && config.githubConnectionId || "default";
+const githubConnectionConfigured = (value) => !!(value?.githubAppId && value?.githubInstallationId && value?.privateKey && value?.webhookSecret);
+/** Métadonnées lues (la ligne principale historique n'a pas de `meta`). */
+const githubConnectionMeta = (id, value) => {
+	const meta = value?.meta && typeof value.meta === "object" ? value.meta : {};
+	return {
+		label: (typeof meta.label === "string" && meta.label ? meta.label : id === "default" ? GITHUB_PRINCIPAL_LABEL : `${value?.ownerLogin || value?.githubAppSlug || "Connexion GitHub"}`).slice(0, 60),
+		disabled: meta.disabled === true,
+		createdAt: typeof meta.createdAt === "string" ? meta.createdAt : "",
+		createdBy: typeof meta.createdBy === "string" ? meta.createdBy : ""
+	};
+};
+/** Libellé saisi : 1 à 60 caractères, sans caractère de contrôle ni retour à la ligne. */
+const githubConnectionLabel = (value) => {
+	const label = typeof value === "string" ? value.trim() : "";
+	if (typeof value !== "string" || !label || label.length > 60 || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(value)) throw new BadRequestError("Libellé de connexion : 1 à 60 caractères, sans retour à la ligne.");
+	return label;
+};
+/** URL du webhook de la connexion (legacy pour la principale). */
+const githubWebhookUrl = (id) => {
+	return `https://${$os.getenv("APP_HOST") || `app.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`}/api/web-apps/github/webhook${id === "default" ? "" : `/${id}`}`;
+};
+/** Seuls champs transmis au lecteur GitHub : ni `meta` ni `webhookSecret`. */
+const githubReaderConfig = (value) => {
+	const config = {};
+	for (const name of [
+		"githubAppId",
+		"githubAppSlug",
+		"githubInstallationId",
+		"privateKey",
+		"ownerId",
+		"ownerLogin"
+	]) if (value?.[name] !== void 0 && value[name] !== null && value[name] !== "") config[name] = `${value[name]}`;
+	return config;
+};
+const connectionOf = (row) => {
+	const key = row.getString("key"), id = githubConnectionIdOfKey(key), value = decryptWebValue(row.getString("valueEncrypted")) || {};
+	return {
+		id,
+		key,
+		row,
+		value,
+		meta: githubConnectionMeta(id, value)
+	};
+};
+/** Ligne d'une connexion, ou null. Filtre toujours paramétré. */
+const githubConnectionRow = (id, store = $app) => {
+	if (!GITHUB_CONNECTION_ID.test(`${id}`)) return null;
+	try {
+		return store.findFirstRecordByFilter(SETTINGS$2, "key = {:key}", { key: githubSettingsKey(id) });
+	} catch {
+		return null;
+	}
+};
+/** Toutes les connexions, déchiffrées, dans l'ordre de création. */
+const listWebGithubConnections = (store = $app) => store.findRecordsByFilter(SETTINGS$2, "", "created", 50, 0).filter((row) => KEY.test(row.getString("key"))).map(connectionOf);
+/**
+* Connexion demandée. `allowMissing` : la principale absente donne une configuration vide (le lecteur répond
+* `configured:false`, comme avant). Id explicite inconnu, ou connexion désactivée sans `allowDisabled` : 400.
+*/
+const webGithubConnection = (id = GITHUB_PRINCIPAL, store = $app, opts = {}) => {
+	const target = `${id || "default"}`;
+	if (!GITHUB_CONNECTION_ID.test(target)) throw new BadRequestError(UNAVAILABLE$1);
+	const row = githubConnectionRow(target, store);
+	if (!row) {
+		if (target === "default" && opts.allowMissing) return {
+			id: target,
+			key: "github",
+			row: null,
+			value: {},
+			meta: githubConnectionMeta(target, {})
+		};
+		throw new BadRequestError(UNAVAILABLE$1);
+	}
+	const connection = connectionOf(row);
+	if (connection.meta.disabled && !opts.allowDisabled) throw new BadRequestError(UNAVAILABLE$1);
+	return connection;
+};
+/** Capacités publiques : un nombre seulement (jamais de libellé, visibles des membres de projet). */
+const webGithubCapability = (store = $app) => {
+	let connections = [];
+	try {
+		connections = listWebGithubConnections(store);
+	} catch {}
+	const usable = connections.filter((c) => !c.meta.disabled && githubConnectionConfigured(c.value));
+	return {
+		githubConfigured: usable.length > 0,
+		githubConnectionCount: usable.length
+	};
+};
+/**
+* Une application (ou un instantané de job) utilise la connexion `id`. Les applications implicites comptent pour
+* `default`.
+*/
+const githubConnectionUses = (config, id) => !!config && config.source !== "git" && !!`${config.repository || ""}` && resolvedConnectionId(config) === id;
+/** Parcourt TOUTES les lignes (pages de 500, ordre stable par id) : aucun plafond fixe ne fausse un décompte. */
+const eachWebRecord = (store, collection, filter, visit, params = {}) => {
+	for (let offset = 0;; offset += 500) {
+		const rows = store.findRecordsByFilter(collection, filter, "id", 500, offset, params);
+		for (const row of rows) visit(row);
+		if (rows.length < 500) return;
+	}
+};
+/** Applications et jobs en file ou en cours rattachés à la connexion. */
+const githubConnectionUsage = (id, store = $app) => {
+	const apps = /* @__PURE__ */ new Set();
+	eachWebRecord(store, "web_apps", "", (row) => {
+		if (githubConnectionUses(webConfig(row), id)) apps.add(row.id);
+	});
+	let jobCount = 0;
+	eachWebRecord(store, "web_deployments", "status = \"queued\" || status = \"running\"", (job) => {
+		let snapshot = {};
+		try {
+			snapshot = decryptWebValue(job.getString("snapshotEncrypted")) || {};
+		} catch {}
+		if (githubConnectionUses(snapshot.config, id)) {
+			jobCount++;
+			apps.add(job.getString("appId"));
+		}
+	});
+	return {
+		appCount: apps.size,
+		jobCount
+	};
+};
+/** Unicité de l'App et de l'installation entre connexions (à appeler dans la transaction d'écriture). */
+const assertGithubConnectionUnique = (store, githubAppId, githubInstallationId, exceptKey = "") => {
+	const appId = `${githubAppId || ""}`, installationId = `${githubInstallationId || ""}`;
+	for (const c of listWebGithubConnections(store)) {
+		if (c.key === exceptKey) continue;
+		if (appId && `${c.value.githubAppId || ""}` === appId || installationId && `${c.value.githubInstallationId || ""}` === installationId) throw new BadRequestError(DUPLICATE);
+	}
+};
+/** Nouvel identifiant libre de connexion supplémentaire. */
+const newGithubConnectionId = (existing = []) => {
+	for (let i = 0; i < 10; i++) {
+		const id = $security.randomStringWithAlphabet(15, "abcdefghijklmnopqrstuvwxyz0123456789");
+		if (!existing.includes(id)) return id;
+	}
+	throw new BadRequestError("Identifiant de connexion indisponible. Réessayez.");
+};
+const writeWebGithubConnection = (store, id, value) => {
+	const row = githubConnectionRow(id, store) || new Record(store.findCollectionByNameOrId(SETTINGS$2));
+	row.set("key", githubSettingsKey(id));
+	row.set("valueEncrypted", encryptWebValue(value));
+	store.save(row);
+	return row;
+};
+/**
+* Cible d'une session de l'assistant. Session antérieure à la mise à jour (sans `connectionId`, `legacy`) : la
+* principale, remplacée si elle existe, créée sinon (comportement de l'ancien code).
+*/
+const githubSessionTarget = (info) => typeof info?.connectionId === "string" && GITHUB_CONNECTION_ID.test(info.connectionId) ? {
+	connectionId: info.connectionId,
+	mode: info.mode === "replace" ? "replace" : "add",
+	legacy: false
+} : {
+	connectionId: GITHUB_PRINCIPAL,
+	mode: "replace",
+	legacy: true
+};
+/**
+* Livraisons GitHub App sans connexion (enregistrées par l'ancien code pendant un retour arrière du code seul, la
+* migration étant déjà appliquée) : rattachées à la principale, seule connexion de l'ancien code. Les livraisons «
+* Dépôt Git » (`git-…`) gardent ''. Idempotent, appelé au démarrage et par la maintenance.
+*/
+const normalizeWebDeliveryConnections = (store = $app) => {
+	try {
+		store.db().newQuery("UPDATE web_webhook_deliveries SET connectionId = 'default' WHERE connectionId = '' AND deliveryId NOT LIKE 'git-%'").execute();
+	} catch {}
+};
+const githubConnectionLastDelivery = (id, store = $app) => {
+	try {
+		const last = store.findRecordsByFilter("web_webhook_deliveries", "connectionId = {:id}", "-created", 1, 0, { id })[0];
+		return last ? {
+			at: last.getString("lastReceivedAt") || last.getString("created"),
+			status: last.getString("status")
+		} : null;
+	} catch {
+		return null;
+	}
+};
+/** Sérialisation sans secret. */
+const serializeWebGithubConnection = (c, extra = {}) => ({
+	id: c.id,
+	label: c.meta.label,
+	isPrincipal: c.id === GITHUB_PRINCIPAL,
+	disabled: c.meta.disabled,
+	configured: githubConnectionConfigured(c.value),
+	app: {
+		id: `${c.value.githubAppId || ""}`,
+		slug: `${c.value.githubAppSlug || ""}`,
+		owner: `${c.value.ownerLogin || ""}`
+	},
+	installationId: `${c.value.githubInstallationId || ""}`,
+	hasPrivateKey: !!c.value.privateKey,
+	hasWebhookSecret: !!c.value.webhookSecret,
+	webhookUrl: githubWebhookUrl(c.id),
+	appCount: extra.appCount || 0,
+	lastDelivery: extra.lastDelivery || null
+});
+/** Validations de la saisie manuelle (mêmes règles que PUT /settings). Les secrets absents sont conservés. */
+const applyCredentials = (target, input) => {
+	for (const name of ["githubAppId", "githubInstallationId"]) if (input[name] !== void 0 && input[name] !== null) {
+		if (!/^\d{1,20}$/.test(`${input[name]}`)) throw new BadRequestError("Identifiant GitHub invalide.");
+		target[name] = `${input[name]}`;
+	}
+	if (input.githubAppSlug !== void 0 && input.githubAppSlug !== null) {
+		if (typeof input.githubAppSlug !== "string" || !/^[a-z0-9-]{0,100}$/.test(input.githubAppSlug)) throw new BadRequestError("Nom GitHub App invalide.");
+		target.githubAppSlug = input.githubAppSlug;
+	}
+	if (input.privateKey) {
+		if (typeof input.privateKey !== "string" || !/^-----BEGIN (RSA )?PRIVATE KEY-----/.test(input.privateKey) || input.privateKey.length > 2e4) throw new BadRequestError("Clé privée PEM invalide.");
+		target.privateKey = input.privateKey;
+	}
+	if (input.webhookSecret) {
+		if (typeof input.webhookSecret !== "string" || input.webhookSecret.length < 32 || input.webhookSecret.length > 256) throw new BadRequestError("Secret webhook : 32 à 256 caractères.");
+		target.webhookSecret = input.webhookSecret;
+	}
+	return target;
+};
+/** Identifiant du chemin, contrôlé APRÈS requirePlatformAdmin (403 avant toute résolution). */
+const pathConnectionId = (e) => {
+	const id = e.request.pathValue("connectionId");
+	if (!GITHUB_CONNECTION_ID.test(id)) throw new NotFoundError("Connexion GitHub introuvable.");
+	return id;
+};
+/** GET /api/web-apps/github/connections — plateforme. */
+const HandleWebGithubConnectionsList = (e) => {
+	requirePlatformAdmin(e);
+	const connections = listWebGithubConnections($app), counts = {};
+	eachWebRecord($app, "web_apps", "", (row) => {
+		const config = webConfig(row), id = resolvedConnectionId(config);
+		if (githubConnectionUses(config, id)) counts[id] = (counts[id] || 0) + 1;
+	});
+	return webJson(e, {
+		items: connections.map((c) => serializeWebGithubConnection(c, {
+			appCount: counts[c.id] || 0,
+			lastDelivery: githubConnectionLastDelivery(c.id)
+		})),
+		max: 10
+	});
+};
+/** POST /api/web-apps/github/connections — saisie manuelle. Sans connexion principale, la connexion créée la devient. */
+const HandleWebGithubConnectionCreate = (e) => {
+	const user = requirePlatformAdmin(e), input = webInput(e), label = input.label === void 0 || input.label === null || input.label === "" ? "" : githubConnectionLabel(input.label), value = applyCredentials({}, input);
+	if (!value.githubAppId || !value.githubInstallationId || !value.privateKey || !value.webhookSecret) throw new BadRequestError("Renseignez l’App ID, l’Installation ID, la clé privée PEM et le secret webhook.");
+	let id = "";
+	$app.runInTransaction((tx) => {
+		const all = listWebGithubConnections(tx);
+		if (all.length >= 10) throw new BadRequestError(`${10} connexions GitHub maximum.`);
+		assertGithubConnectionUnique(tx, value.githubAppId, value.githubInstallationId);
+		id = all.some((c) => c.id === "default") ? newGithubConnectionId(all.map((c) => c.id)) : GITHUB_PRINCIPAL;
+		writeWebGithubConnection(tx, id, {
+			...value,
+			meta: {
+				label: label || (id === "default" ? "Connexion principale" : value.githubAppSlug || "Connexion GitHub"),
+				disabled: false,
+				createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+				createdBy: user.id
+			}
+		});
+	});
+	return webJson(e, {
+		connection: serializeWebGithubConnection(webGithubConnection(id, $app, { allowDisabled: true })),
+		max: 10
+	}, 201);
+};
+/** PATCH /api/web-apps/github/connections/{connectionId} — renommer, (dés)activer, corriger les identifiants. */
+const HandleWebGithubConnectionUpdate = (e) => {
+	requirePlatformAdmin(e);
+	const id = pathConnectionId(e), input = webInput(e), label = input.label === void 0 ? void 0 : githubConnectionLabel(input.label);
+	if (input.disabled !== void 0 && typeof input.disabled !== "boolean") throw new BadRequestError("Le choix d’activation doit être explicite.");
+	$app.runInTransaction((tx) => {
+		const row = githubConnectionRow(id, tx);
+		if (!row) throw new NotFoundError("Connexion GitHub introuvable.");
+		const current = connectionOf(row), value = applyCredentials({ ...current.value }, input);
+		if (input.githubAppId !== void 0 || input.githubInstallationId !== void 0) assertGithubConnectionUnique(tx, value.githubAppId, value.githubInstallationId, current.key);
+		if (label !== void 0 || input.disabled !== void 0) value.meta = {
+			...current.meta,
+			...label !== void 0 ? { label } : {},
+			...input.disabled !== void 0 ? { disabled: input.disabled } : {}
+		};
+		writeWebGithubConnection(tx, id, value);
+	});
+	return webJson(e, { connection: serializeWebGithubConnection(webGithubConnection(id, $app, { allowDisabled: true }), {
+		appCount: githubConnectionUsage(id).appCount,
+		lastDelivery: githubConnectionLastDelivery(id)
+	}) });
+};
+/** DELETE /api/web-apps/github/connections/{connectionId} — refusé tant qu'une application ou un job l'utilise. */
+const HandleWebGithubConnectionDelete = (e) => {
+	requirePlatformAdmin(e);
+	const id = pathConnectionId(e);
+	let manageUrl = "";
+	$app.runInTransaction((tx) => {
+		const row = githubConnectionRow(id, tx);
+		if (!row) throw new NotFoundError("Connexion GitHub introuvable.");
+		const { appCount } = githubConnectionUsage(id, tx);
+		if (appCount) throw new BadRequestError(`Cette connexion GitHub est encore utilisée par ${appCount} application(s). Rattachez-les à une autre connexion avant de la supprimer.`);
+		let slug = "";
+		try {
+			slug = `${connectionOf(row).value.githubAppSlug || ""}`;
+		} catch {}
+		manageUrl = /^[a-z0-9-]{1,100}$/.test(slug) ? `https://github.com/apps/${slug}` : "";
+		let sessions = [];
+		try {
+			sessions = tx.findRecordsByFilter(SESSIONS, "status != \"completed\" && status != \"cancelled\"", "", 500, 0);
+		} catch {}
+		for (const session of sessions) {
+			let info = {};
+			try {
+				info = JSON.parse(session.getString("publicInfo") || "{}") || {};
+			} catch {}
+			const target = githubSessionTarget(info);
+			if (target.mode !== "replace" || target.connectionId !== id) continue;
+			session.set("status", "cancelled");
+			session.set("pendingEncrypted", "");
+			tx.save(session);
+		}
+		tx.delete(row);
+	});
+	return webJson(e, {
+		deleted: true,
+		notice: "Supprimez aussi la GitHub App sur GitHub.",
+		manageUrl
+	});
+};
+const repositoryOf = (body) => typeof body?.repository?.full_name === "string" && body.repository.full_name.length <= 250 && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repository.full_name) ? body.repository.full_name.slice(0, 250) : "";
+const branchOf = (body) => typeof body?.ref === "string" && body.ref.startsWith("refs/heads/") && body.ref.length <= 211 ? body.ref.slice(11) : "";
+/** Application déployée automatiquement par un push de cette connexion sur ce dépôt et cette branche. */
+const pushTarget = (row, repository, branch, connectionId, store) => {
+	const c = webConfig(row);
+	return c.source !== "git" && c.autoDeploy && webSourceBuildSupported(row, store) && `${c.repository || ""}`.toLowerCase() === repository.toLowerCase() && c.branch === branch && resolvedConnectionId(c) === connectionId;
+};
+/** Livraison déjà vue : compteur de doublons. True si elle existait. */
+const bumpDuplicate = (tx, delivery) => {
+	let row;
+	try {
+		row = tx.findFirstRecordByFilter("web_webhook_deliveries", "deliveryId={:id}", { id: delivery });
+	} catch {}
+	if (!row) return false;
+	row.set("duplicateCount", Math.min(1e5, row.getInt("duplicateCount") + 1));
+	row.set("lastReceivedAt", (/* @__PURE__ */ new Date()).toISOString());
+	tx.save(row);
+	return true;
+};
+/**
+* Webhook GitHub App d'une connexion. Routage par le chemin seulement (`default` = chemin legacy), puis UNE HMAC avec
+* le secret de cette seule ligne : ligne inconnue, id mal formé, secret vide ou mauvaise signature donnent la même 401.
+* La désactivation n'est révélée qu'après une signature valide (200 ignoré, livraison enregistrée).
+*/
+const webGithubWebhookFor = (e, connectionId) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const row = GITHUB_CONNECTION_ID.test(`${connectionId}`) ? githubConnectionRow(connectionId) : null;
+	let value = {};
+	if (row) try {
+		value = decryptWebValue(row.getString("valueEncrypted")) || {};
+	} catch {
+		value = {};
+	}
+	const secret = typeof value.webhookSecret === "string" ? value.webhookSecret : "", raw = readerToString(e.request.body), signature = e.request.header.get("X-Hub-Signature-256") || "", deliveryHeader = e.request.header.get("X-GitHub-Delivery") || "";
+	const mac = $security.hs256(raw, secret || $security.randomString(48));
+	if (!(!!row && !!secret && raw.length <= 1e7 && $security.equal("sha256=" + mac, signature))) throw new UnauthorizedError("Signature GitHub invalide.");
+	if (!/^[A-Za-z0-9-]{1,100}$/.test(deliveryHeader)) throw new BadRequestError("Livraison invalide.");
+	const delivery = `gh-${connectionId}-${$security.sha256(raw)}`, event = (e.request.header.get("X-GitHub-Event") || "").slice(0, 60), body = JSON.parse(raw), repository = repositoryOf(body), branch = branchOf(body);
+	if (githubConnectionMeta(connectionId, value).disabled) {
+		let duplicate = false;
+		$app.runInTransaction((tx) => {
+			if (bumpDuplicate(tx, delivery)) {
+				duplicate = true;
+				return;
+			}
+			const seen = new Record(tx.findCollectionByNameOrId("web_webhook_deliveries"));
+			seen.set("deliveryId", delivery);
+			seen.set("connectionId", connectionId);
+			seen.set("event", event);
+			seen.set("repository", repository);
+			seen.set("branch", branch);
+			seen.set("payloadCommit", /^[a-f0-9]{40}$/.test(body.after || "") ? body.after : "");
+			seen.set("resolvedCommit", "");
+			seen.set("lastReceivedAt", (/* @__PURE__ */ new Date()).toISOString());
+			seen.set("queued", 0);
+			seen.set("status", "ignored");
+			seen.set("note", "Connexion GitHub désactivée : aucun déploiement.");
+			tx.save(seen);
+		});
+		return webJson(e, {
+			accepted: true,
+			ignored: true,
+			...duplicate ? { duplicate: true } : {}
+		});
+	}
+	const installation = `${value.githubInstallationId || ""}`;
+	if (event === "pull_request") {
+		if (!installation || `${body.installation?.id || ""}` !== installation) throw new ForbiddenError("Installation GitHub inconnue.");
+		return webJson(e, handleWebPreviewWebhook(body, delivery, "", connectionId));
+	}
+	let early = false;
+	$app.runInTransaction((tx) => {
+		early = bumpDuplicate(tx, delivery);
+	});
+	if (early) return webJson(e, {
+		accepted: true,
+		duplicate: true
+	});
+	const ignored = event !== "push" || body.deleted === true || !branch;
+	if (!ignored && (!installation || `${body.installation?.id || ""}` !== installation)) throw new ForbiddenError("Installation GitHub inconnue.");
+	if (!ignored && !/^[a-f0-9]{40}$/.test(body.after || "")) throw new BadRequestError("Commit invalide.");
+	const matching = ignored ? [] : $app.findRecordsByFilter("web_apps", "", "", 500, 0).filter((app) => pushTarget(app, repository, branch, connectionId, $app));
+	let head = ignored ? "" : body.after;
+	if (matching.length && value.privateKey && value.githubAppId && installation) head = webGithub("commit", {
+		repository,
+		branch
+	}, connectionId).sha;
+	if (!ignored && !/^[a-f0-9]{40}$/.test(head)) throw new BadRequestError("Commit GitHub invalide.");
+	let queued = 0, wasDuplicate = false;
+	$app.runInTransaction((tx) => {
+		if (bumpDuplicate(tx, delivery)) {
+			wasDuplicate = true;
+			return;
+		}
+		const seen = new Record(tx.findCollectionByNameOrId("web_webhook_deliveries"));
+		seen.set("deliveryId", delivery);
+		seen.set("connectionId", connectionId);
+		seen.set("event", event);
+		seen.set("repository", repository);
+		seen.set("branch", branch);
+		seen.set("payloadCommit", /^[a-f0-9]{40}$/.test(body.after || "") ? body.after : "");
+		seen.set("resolvedCommit", head);
+		seen.set("lastReceivedAt", (/* @__PURE__ */ new Date()).toISOString());
+		if (!ignored) {
+			for (const app of tx.findRecordsByFilter("web_apps", "", "", 500, 0)) if (pushTarget(app, repository, branch, connectionId, tx) && queueWebGitPush(tx, app, head)) queued++;
+		}
+		seen.set("queued", queued);
+		seen.set("status", queued ? "queued" : "ignored");
+		seen.set("note", queued ? "Déploiement ajouté à la file." : ignored ? body.deleted ? "Suppression de branche : aucun déploiement." : "Événement sans déploiement." : !matching.length ? "Aucune application automatique ne correspond à ce dépôt et à cette branche." : "Cette version est déjà publiée ou en cours de déploiement.");
+		tx.save(seen);
+	});
+	return webJson(e, {
+		accepted: true,
+		queued,
+		...wasDuplicate ? { duplicate: true } : {}
+	}, ignored || wasDuplicate ? 200 : 202);
+};
+/** POST /api/web-apps/github/webhook/{connectionId} — public, HMAC. `default` n'est jamais routé par ce chemin. */
+const HandleWebGithubConnectionWebhook = (e) => {
+	const id = e.request.pathValue("connectionId");
+	return webGithubWebhookFor(e, GITHUB_EXTRA_CONNECTION_ID.test(id) ? id : "");
+};
+/**
+* Normalise `githubConnectionId` dans une configuration validée (appelé par validateConfig d'api.ts). '' ou 'default'
+* -> clé absente ; source git -> clé absente ; sinon la connexion doit exister et être active SI la valeur change.
+*/
+const applyWebGithubConnectionConfig = (config, input, existing = {}, git = false, store = $app) => {
+	if (git) {
+		delete config.githubConnectionId;
+		return config;
+	}
+	const raw = input?.githubConnectionId === void 0 ? existing?.githubConnectionId : input.githubConnectionId, id = raw === void 0 || raw === null || raw === "" || raw === "default" ? "" : `${raw}`;
+	if (!id) {
+		delete config.githubConnectionId;
+		return config;
+	}
+	if (!GITHUB_EXTRA_CONNECTION_ID.test(id)) throw new BadRequestError("Connexion GitHub invalide.");
+	if (id !== `${existing?.githubConnectionId || ""}`) webGithubConnection(id, store);
+	config.githubConnectionId = id;
+	return config;
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/storage.ts
+const SETTINGS$1 = "web_storage_settings", JOBS$1 = "web_storage_jobs";
+const name = /^[a-z][a-z0-9-]{0,30}$/, id$2 = /^[a-z0-9]{15}$/;
+const timestamp = () => (/* @__PURE__ */ new Date()).toISOString();
+const setting$1 = (appId, store = $app) => store.findRecordsByFilter(SETTINGS$1, "appId={:id}", "", 1, 0, { id: appId })[0];
+const storageWorkerSnapshot = (app, store = $app) => {
+	const row = setting$1(app.id, store);
+	return row ? JSON.parse(row.getString("volumes") || "[]") : [];
+};
+const volumesOf = (row) => row ? JSON.parse(row.getString("volumes") || "[]") : [];
+const validate$1 = (value) => {
+	if (!Array.isArray(value) || value.length > 4) throw new BadRequestError("Quatre volumes au maximum par site.");
+	const seen = /* @__PURE__ */ new Set(), targets = [];
+	const volumes = value.map((item) => {
+		if (!item || typeof item !== "object" || Object.keys(item).some((k) => ![
+			"name",
+			"target",
+			"sizeMiB",
+			"readOnly"
+		].includes(k)) || typeof item.name !== "string" || !name.test(item.name) || seen.has(item.name)) throw new BadRequestError("Nom de volume invalide ou dupliqué.");
+		if (typeof item.target !== "string" || !/^\/(?:data|mnt|app\/(?:data|uploads|storage))(?:\/[A-Za-z0-9_.-]+)*$/.test(item.target) || item.target.split("/").some((part) => part === ".." || part === ".") || targets.some((target) => item.target === target || item.target.startsWith(target + "/") || target.startsWith(item.target + "/"))) throw new BadRequestError("Cible de volume invalide ou recouvrant un autre volume.");
+		const sizeMiB = item.sizeMiB ?? 256, readOnly = item.readOnly ?? false;
+		if (!Number.isInteger(sizeMiB) || sizeMiB < 16 || sizeMiB > 2048 || typeof readOnly !== "boolean") throw new BadRequestError("Volume attendu entre 16 et 2048 Mio.");
+		seen.add(item.name);
+		targets.push(item.target);
+		return {
+			name: item.name,
+			target: item.target,
+			sizeMiB,
+			readOnly
+		};
+	});
+	if (volumes.reduce((n, item) => n + item.sizeMiB, 0) > 4096) throw new BadRequestError("Le budget total des volumes est limité à 4 Gio.");
+	return volumes;
+};
+const runtime = (appId) => {
+	try {
+		const value = JSON.parse(toString($os.readFile(webRoot() + "/storage-status.json"))).applications?.[appId];
+		if (value && Date.now() - Date.parse(value.checkedAt) < 6e4) return value;
+	} catch {}
+	return {
+		available: false,
+		volumes: []
+	};
+};
+const view = (app) => {
+	const row = setting$1(app.id);
+	return {
+		volumes: volumesOf(row),
+		revision: row?.getString("revision") || "",
+		retention: row?.getInt("retention") || 7,
+		runtime: runtime(app.id),
+		limits: {
+			maxVolumes: 4,
+			maxVolumeMiB: 2048,
+			maxTotalMiB: 4096,
+			hardQuota: false
+		},
+		snapshotRequiresPause: true
+	};
+};
+const serialize$4 = (row) => ({
+	id: row.id,
+	name: row.getString("name"),
+	operation: row.getString("operation"),
+	status: row.getString("status"),
+	created: row.getString("created"),
+	startedAt: row.getString("startedAt"),
+	finishedAt: row.getString("finishedAt"),
+	error: row.getString("error"),
+	result: JSON.parse(row.getString("result") || "{}")
+});
+const worker$2 = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const secret = $os.getenv("WEB_APPS_WORKER_SECRET");
+	if (secret.length < 32 || !$security.equal(secret, e.request.header.get("X-Web-Worker") || "")) throw new UnauthorizedError();
+	if (!webDirectLoopback(e)) throw new ForbiddenError();
+};
+const currentVolume = (app, volumeName, store = $app) => {
+	if (!name.test(volumeName)) throw new BadRequestError("Volume invalide.");
+	const row = setting$1(app.id, store), volume = volumesOf(row).find((item) => item.name === volumeName);
+	if (!volume) throw new BadRequestError("Volume non enregistré.");
+	return {
+		row,
+		volume
+	};
+};
+const busy$1 = (appId, store = $app) => store.findRecordsByFilter(JOBS$1, "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: appId }).length > 0;
+const HandleWebStorageGet = (e) => webJson(e, view(requireWebAppPermission(e, "app.read").app));
+const HandleWebStorageUpdate = (e) => {
+	const app = requireWebAppPermission(e, "storage.manage").app, input = webInput(e), volumes = validate$1(input.volumes), retention = input.retention ?? 7;
+	if (!Number.isInteger(retention) || retention < 1 || retention > 14) throw new BadRequestError("Rétention attendue de 1 à 14 snapshots.");
+	$app.runInTransaction((tx) => {
+		let row = setting$1(app.id, tx);
+		if (input.revision !== void 0 && input.revision !== (row?.getString("revision") || "")) throw new BadRequestError("La configuration du stockage a changé. Rechargez la page.");
+		if (busy$1(app.id, tx)) throw new BadRequestError("Une opération de stockage est en cours.");
+		const status = runtime(app.id);
+		for (const item of volumes) if ((status.volumes?.find((value) => value.name === item.name))?.usedBytes > item.sizeMiB * 1024 ** 2) throw new BadRequestError("La limite choisie est inférieure aux données déjà présentes.");
+		if (!row) {
+			row = new Record(tx.findCollectionByNameOrId(SETTINGS$1));
+			row.set("appId", app.id);
+		}
+		row.set("volumes", volumes);
+		row.set("retention", retention);
+		row.set("revision", $security.randomString(24));
+		tx.save(row);
+	});
+	return webJson(e, view(app));
+};
+const HandleWebStorageRestorePreview = (e) => {
+	const access = requireWebAppPermission(e, "storage.manage"), actor = access.user, app = access.app, volumeName = e.request.pathValue("name"), input = webInput(e), current = currentVolume(app, volumeName);
+	if (!id$2.test(input.backupId || "")) throw new BadRequestError("Snapshot invalide.");
+	const source = $app.findRecordById(JOBS$1, input.backupId);
+	if (source.getString("appId") !== app.id || source.getString("name") !== volumeName || source.getString("operation") !== "backup" || source.getString("status") !== "ready") throw new BadRequestError("Snapshot indisponible pour ce volume.");
+	const result = JSON.parse(source.getString("result") || "{}"), token = $security.randomString(64), expiresAt = new Date(Date.now() + 10 * 6e4).toISOString(), row = new Record($app.findCollectionByNameOrId(JOBS$1));
+	row.set("appId", app.id);
+	row.set("actorId", actor.id);
+	row.set("name", volumeName);
+	row.set("operation", "restore");
+	row.set("status", "preview");
+	row.set("snapshotEncrypted", encryptWebValue({
+		volume: current.volume,
+		backup: result,
+		revision: current.row.getString("revision"),
+		deploymentId: app.getString("activeDeployment"),
+		previewHash: $security.sha256(token),
+		expiresAt
+	}));
+	$app.save(row);
+	return webJson(e, {
+		previewId: row.id,
+		previewToken: token,
+		expiresAt,
+		backup: {
+			id: source.id,
+			name: volumeName,
+			created: source.getString("created"),
+			dataBytes: result.dataBytes
+		},
+		willPause: true
+	});
+};
+const HandleWebStorageAction = (e) => {
+	const access = requireWebAppPermission(e, "storage.manage"), actor = access.user, app = access.app, volumeName = e.request.pathValue("name"), operation = e.request.pathValue("operation"), input = webInput(e);
+	if (!["backup", "restore"].includes(operation)) throw new BadRequestError("Opération de stockage inconnue.");
+	let job;
+	$app.runInTransaction((tx) => {
+		const current = currentVolume(app, volumeName, tx);
+		if (busy$1(app.id, tx)) throw new BadRequestError("Une opération de stockage est déjà en cours sur ce site.");
+		let row;
+		if (operation === "restore") {
+			if (!id$2.test(input.previewId || "") || typeof input.previewToken !== "string" || !/^[A-Za-z0-9]{64}$/.test(input.previewToken)) throw new BadRequestError("Prévisualisez la restauration avant de la confirmer.");
+			row = tx.findRecordById(JOBS$1, input.previewId);
+			const snapshot = decryptWebValue(row.getString("snapshotEncrypted"));
+			if (row.getString("status") !== "preview" || row.getString("actorId") !== actor.id || row.getString("appId") !== app.id || row.getString("name") !== volumeName || snapshot.backup?.backupId !== input.backupId || snapshot.revision !== current.row.getString("revision") || snapshot.deploymentId !== app.getString("activeDeployment") || Date.parse(snapshot.expiresAt) < Date.now() || !$security.equal(snapshot.previewHash, $security.sha256(input.previewToken))) throw new BadRequestError("Aperçu expiré ou configuration modifiée.");
+			if (!access.platform) assertWebDeploymentInScope(app, tx.findRecordById("web_deployments", app.getString("activeDeployment")), tx);
+			delete snapshot.previewHash;
+			delete snapshot.expiresAt;
+			row.set("snapshotEncrypted", encryptWebValue(snapshot));
+		} else {
+			row = new Record(tx.findCollectionByNameOrId(JOBS$1));
+			row.set("appId", app.id);
+			row.set("actorId", actor.id);
+			row.set("name", volumeName);
+			row.set("operation", "backup");
+			row.set("snapshotEncrypted", encryptWebValue({
+				volume: current.volume,
+				revision: current.row.getString("revision")
+			}));
+		}
+		row.set("status", "queued");
+		tx.save(row);
+		job = serialize$4(row);
+	});
+	return webJson(e, { job }, 201);
+};
+const HandleWebStorageHistory = (e) => {
+	const app = requireWebAppPermission(e, "app.read").app, query = e.request.url.query(), page = Math.max(1, Math.min(1e4, Math.floor(Number(query.get("page")) || 1))), perPage = Math.max(1, Math.min(100, Math.floor(Number(query.get("perPage")) || 20))), rows = $app.findRecordsByFilter(JOBS$1, "appId={:id} && status!=\"preview\"", "-created,-id", perPage, (page - 1) * perPage, { id: app.id }), totalItems = $app.countRecords(JOBS$1, $dbx.exp("appId={:id} AND status!=\"preview\"", { id: app.id }));
+	return webJson(e, {
+		items: rows.map(serialize$4),
+		page,
+		perPage,
+		totalItems,
+		totalPages: Math.ceil(totalItems / perPage),
+		hasMore: page * perPage < totalItems
+	});
+};
+const HandleWebStorageClaim = (e) => {
+	worker$2(e);
+	let job = null;
+	$app.runInTransaction((tx) => {
+		for (const row of tx.findRecordsByFilter(JOBS$1, "status=\"running\" && leaseAt<{:cutoff}", "", 100, 0, { cutoff: (/* @__PURE__ */ new Date(Date.now() - 5 * 6e4)).toISOString().replace("T", " ") })) {
+			row.set("status", "queued");
+			row.set("leaseHash", "");
+			tx.save(row);
+		}
+		const rows = tx.findRecordsByFilter(JOBS$1, "status=\"queued\" || status=\"deleting\"", "created,id", 1, 0);
+		if (!rows.length) return;
+		const row = rows[0], lease = $security.randomString(64), snapshot = decryptWebValue(row.getString("snapshotEncrypted"));
+		row.set("status", "running");
+		row.set("leaseHash", $security.sha256(lease));
+		row.set("leaseAt", timestamp());
+		row.set("startedAt", timestamp());
+		tx.save(row);
+		job = {
+			id: row.id,
+			appId: row.getString("appId"),
+			name: row.getString("name"),
+			operation: row.getString("operation"),
+			lease,
+			...snapshot,
+			...row.getString("operation") === "delete" ? { backup: JSON.parse(row.getString("result") || "{}") } : {}
+		};
+	});
+	return webJson(e, { job });
+};
+const HandleWebStorageReport = (e) => {
+	let state = null;
+	worker$2(e);
+	const input = webInput(e);
+	if (!id$2.test(input.id || "") || typeof input.lease !== "string") throw new BadRequestError("Opération invalide.");
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById(JOBS$1, input.id);
+		if (!row.getString("leaseHash") || !$security.equal(row.getString("leaseHash"), $security.sha256(input.lease))) throw new UnauthorizedError();
+		if (input.inspect === true) {
+			state = {
+				status: row.getString("status"),
+				result: JSON.parse(row.getString("result") || "{}")
+			};
+			return;
+		}
+		if (row.getString("status") === input.status && ["ready", "failed"].includes(input.status)) return;
+		if (row.getString("status") === "deleted" && input.status === "ready" && row.getString("operation") === "delete") return;
+		if (row.getString("status") !== "running") throw new BadRequestError("Opération déjà terminée.");
+		if (input.status === "running") {
+			row.set("leaseAt", timestamp());
+			const progress = {};
+			for (const key of ["s3Bytes", "s3TotalBytes"]) if (input[key] !== void 0) {
+				if (!Number.isSafeInteger(input[key]) || input[key] < 0 || input[key] > 2 * 1024 ** 3) throw new BadRequestError("Progression invalide.");
+				progress[key] = input[key];
+			}
+			row.set("result", {
+				...JSON.parse(row.getString("result") || "{}"),
+				...progress
+			});
+			tx.save(row);
+			return;
+		}
+		if (!["ready", "failed"].includes(input.status)) throw new BadRequestError("État invalide.");
+		if (input.status === "ready") {
+			const result = input.result || {}, app = tx.findRecordById("web_apps", row.getString("appId")), volumeName = row.getString("name"), prefix = "ph-web-data-" + app.id + "-" + volumeName + "-";
+			if (row.getString("operation") === "backup") {
+				if (typeof result.object !== "string" || !result.object.endsWith("/apps/" + app.id + "/volumes/" + volumeName + "/" + row.id + ".phwv") || !Number.isSafeInteger(result.bytes) || result.bytes < 1 || result.bytes > 2 * 1024 ** 3 || !Number.isSafeInteger(result.dataBytes) || result.dataBytes < 0 || result.dataBytes > 2048 * 1024 ** 2) throw new BadRequestError("Résultat de snapshot invalide.");
+				row.set("result", {
+					object: result.object,
+					bytes: result.bytes,
+					dataBytes: result.dataBytes,
+					files: result.files,
+					sourceVolume: result.sourceVolume,
+					backupId: row.id,
+					checkedAt: timestamp()
+				});
+			} else if (row.getString("operation") === "restore") {
+				if (result.activeVolume !== prefix + "r" + row.id || typeof result.previousVolume !== "string" || !result.previousVolume.startsWith(prefix) || !Array.isArray(result.previousContainers) || result.previousContainers.length > 4 || result.previousContainers.some((value) => typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value))) throw new BadRequestError("Résultat de restauration invalide.");
+				const prepared = decryptWebValue(row.getString("snapshotEncrypted")), activeId = app.getString("activeDeployment");
+				if (!id$2.test(activeId) || activeId !== prepared.deploymentId) throw new BadRequestError("La publication a changé depuis l’aperçu de restauration.");
+				const active = tx.findRecordById("web_deployments", activeId), activeResult = JSON.parse(active.getString("result") || "{}"), published = decryptWebValue(active.getString("snapshotEncrypted"));
+				if (active.getString("appId") !== app.id || active.getString("status") !== "ready" || !activeResult || typeof activeResult.image !== "string" || !activeResult.image || activeResult.available === false || !published?.config || !published?.env) throw new BadRequestError("La publication active ne permet plus le redémarrage après restauration.");
+				if (tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Un autre déploiement est en attente. Recommencez la restauration après sa fin.");
+				const deployment = queueWebDeployment(app, "apply-runtime", row.getString("actorId"), {
+					commit: active.getString("commit"),
+					config: published.config,
+					env: published.env,
+					runtime: published.runtime || { kind: "nextjs" },
+					storage: published.storage || [],
+					rollbackResult: activeResult,
+					storageRestore: {
+						...result,
+						name: volumeName
+					}
+				}, tx);
+				const clean = decryptWebValue(deployment.getString("snapshotEncrypted"));
+				for (const key of [
+					"ci",
+					"promotion",
+					"restoreBackup"
+				]) delete clean[key];
+				deployment.set("snapshotEncrypted", encryptWebValue(clean));
+				tx.save(deployment);
+				row.set("result", {
+					...result,
+					restartDeploymentId: deployment.id
+				});
+			} else row.set("result", result);
+		}
+		row.set("status", row.getString("operation") === "delete" && input.status === "ready" ? "deleted" : input.status);
+		row.set("error", input.status === "failed" ? "L’opération de stockage a échoué. Les données précédentes sont conservées." : "");
+		row.set("finishedAt", timestamp());
+		tx.save(row);
+	});
+	HandleWebStorageMaintenance();
+	return webJson(e, state || { ok: true });
+};
+const HandleWebStorageMaintenance = () => {
+	if (!webEnabled()) return;
+	try {
+		$app.findCollectionByNameOrId(JOBS$1);
+	} catch {
+		return;
+	}
+	const cutoff = (/* @__PURE__ */ new Date(Date.now() - 30 * 864e5)).toISOString().replace("T", " ");
+	for (const row of $app.findRecordsByFilter(JOBS$1, "(status=\"preview\" || status=\"deleted\" || status=\"failed\") && created<{:cutoff}", "created", 500, 0, { cutoff })) $app.delete(row);
+	const rows = $app.findRecordsByFilter(JOBS$1, "operation=\"backup\" && status=\"ready\"", "-created,-id", 1e4, 0), counts = {};
+	const active = /* @__PURE__ */ new Set();
+	for (const row of $app.findRecordsByFilter(JOBS$1, "operation=\"restore\" && (status=\"queued\" || status=\"running\" || status=\"preview\")", "", 1e3, 0)) try {
+		const backup = decryptWebValue(row.getString("snapshotEncrypted")).backup?.backupId;
+		if (backup) active.add(backup);
+	} catch {}
+	for (const row of rows) {
+		const key = row.getString("appId") + "/" + row.getString("name"), retain = setting$1(row.getString("appId"))?.getInt("retention") || 7;
+		counts[key] = (counts[key] || 0) + 1;
+		if (counts[key] > retain && !active.has(row.id)) {
+			row.set("operation", "delete");
+			row.set("status", "deleting");
+			row.set("leaseHash", "");
+			row.set("leaseAt", "");
+			$app.save(row);
+		}
+	}
+};
+const restoreWebStorageBackup = (app, value, store = $app) => {
+	const volumes = validate$1(value || []);
+	let row = setting$1(app.id, store);
+	if (!row) {
+		row = new Record(store.findCollectionByNameOrId(SETTINGS$1));
+		row.set("appId", app.id);
+		row.set("retention", 7);
+	}
+	row.set("volumes", volumes);
+	row.set("revision", $security.randomString(24));
+	store.save(row);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/backups.ts
+const BACKUPS = "web_app_backups", SETTINGS = "web_app_backup_settings";
+/** Baux interrompus (crash, OOM, redémarrage) avant l'abandon : la sauvegarde passe alors en échec et alerte. */
+const MAX_LEASES = 3;
+/** Suppression abandonnée après une boucle de crash : retentée automatiquement une fois par jour. */
+const DELETE_RETRY_AFTER = 864e5;
+const FAILURE_CODES = [
+	"attempts_exhausted",
+	"backup_error",
+	"engine_error"
+];
+const ARCHIVE_READ = String.raw`import os,pathlib,stat,sys
+root=pathlib.Path(sys.argv[1]).absolute()
+if root.resolve()!=root:raise SystemExit(1)
+directory=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+try:
+ for name in ['backups',sys.argv[2]]:
+  child=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=directory);os.close(directory);directory=child
+ descriptor=os.open(sys.argv[3]+'.phwb',os.O_RDONLY|os.O_NOFOLLOW,dir_fd=directory)
+ try:
+  info=os.fstat(descriptor)
+  if not stat.S_ISREG(info.st_mode)or info.st_size>524288:raise SystemExit(1)
+  with os.fdopen(os.dup(descriptor),'rb')as stream:raw=stream.read(524289)
+  if len(raw)>524288:raise SystemExit(1)
+  sys.stdout.buffer.write(raw)
+ finally:os.close(descriptor)
+finally:os.close(directory)
+`;
+const ARCHIVE_LIST = String.raw`import hashlib,json,os,pathlib,stat,sys
+root=pathlib.Path(sys.argv[1]).absolute();app=sys.argv[2];items=json.loads(sys.argv[3]);result={i['id']:False for i in items}
+if root.resolve()==root:
+ for item in items:
+  p=root/'backups'/app/(item['id']+'.phwb')
+  try:
+   if p.resolve()!=p:continue
+   descriptor=os.open(p,os.O_RDONLY|os.O_NOFOLLOW)
+   try:
+    info=os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode)or info.st_size>524288:continue
+    with os.fdopen(os.dup(descriptor),'rb')as stream:raw=stream.read(524289)
+    result[item['id']]=len(raw)<=524288 and hashlib.sha256(raw).hexdigest()==item['checksum']
+   finally:os.close(descriptor)
+  except OSError:pass
+print(json.dumps(result))
+`;
+const now$2 = () => (/* @__PURE__ */ new Date()).toISOString();
+const id$1 = (value) => {
+	if (!/^[a-z0-9]{15}$/.test(value || "")) throw new BadRequestError("Sauvegarde invalide.");
+	return value;
+};
+const imageRef = (value, appId) => /^sha256:[a-f0-9]{64}$/.test(value || "") || new RegExp(`^ph-web/${appId}:[a-z0-9]{15}$`).test(value || "");
+const valueOf = (row, field) => JSON.parse(row.getString(field) || "{}");
+const imageMap = (value) => {
+	if (value === void 0 || value === null) return {};
+	if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 4 || Object.entries(value).some(([name, ref]) => !/^[a-z][a-z0-9-]{0,30}$/.test(name) || typeof ref !== "string" || !/^sha256:[a-f0-9]{64}$/.test(ref))) throw new BadRequestError("Inventaire des images de sauvegarde invalide.");
+	return value;
+};
+const imageSizes = (value) => {
+	if (value === void 0 || value === null) return {};
+	if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 4 || Object.entries(value).some(([ref, size]) => !/^sha256:[a-f0-9]{64}$/.test(ref) || !Number.isSafeInteger(size) || Number(size) < 0)) throw new BadRequestError("Tailles des images invalides.");
+	return value;
+};
+const imageObjects = (value) => {
+	if (value === void 0 || value === null) return {};
+	if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 4 || Object.entries(value).some(([ref, key]) => !/^sha256:[a-f0-9]{64}$/.test(ref) || typeof key !== "string" || key.length > 500 || /[\r\n?]/.test(key))) throw new BadRequestError("Références des images S3 invalides.");
+	return value;
+};
+const equalMap = (a, b) => JSON.stringify(Object.entries(a || {}).sort()) === JSON.stringify(Object.entries(b || {}).sort());
+const currentBackupAppRevision = (app, store = $app) => $security.sha256(JSON.stringify([
+	app.getString("name"),
+	app.getString("config"),
+	app.getString("envEncrypted"),
+	app.getString("desiredCommit"),
+	app.getString("activeDeployment"),
+	resolveWebEnvironment(app, store).context.revision,
+	currentWebRuntimeRevision(app, store),
+	storageWorkerSnapshot(app, store)
+]));
+const assertBackupAppRevision = (app, expected, store = $app) => {
+	if (typeof expected !== "string" || !$security.equal(currentBackupAppRevision(app, store), expected)) throw new BadRequestError("L’application a changé depuis la préparation de la restauration. Préparez un nouvel aperçu ; les réglages actuels sont conservés.");
+};
+const selected = (e, permission) => {
+	const access = requireWebAppPermission(e, permission);
+	return {
+		user: access.user,
+		app: access.app,
+		access
+	};
+};
+/**
+* Une restauration réécrit la configuration et le rattachement de projet sauvegardés. Hors superAdmin, elle ne doit ni
+* passer à un dépôt Git hors de la liste autorisée du projet (app.repository) ni sortir l'application de tout projet
+* (app.attach/app.detach).
+*/
+/**
+* Sauvegarde produite dans le projet actuel (ou ses origines) ; hors projet seulement si l'application n'en a jamais
+* quitté.
+*/
+const backupInScope = (app, payload) => {
+	const state = payload?.projectState;
+	if (!state) return webHistoryInScope(app, "");
+	return typeof state.project?.id === "string" && !!state.project.id && webHistoryInScope(app, state.project.id);
+};
+const FOREIGN_BACKUP = "Cette sauvegarde a été prise dans un autre projet. Son téléchargement et sa restauration sont réservés aux administrateurs de la plateforme.";
+const assertRestoreScope = (access, app, payload) => {
+	if (access.platform) return;
+	if (!backupInScope(app, payload)) throw new ForbiddenError(FOREIGN_BACKUP);
+	const current = `${webConfig(app).repository || ""}`;
+	if ([payload.app?.config, payload.published?.config].some((config) => !canSetWebRepository(access.project, access.user, `${config?.repository || ""}`, current))) throw new ForbiddenError("Cette sauvegarde utilise un autre dépôt Git. Sa restauration est réservée aux administrateurs de la plateforme.");
+	const connection = resolvedConnectionId(webConfig(app));
+	if ([payload.app?.config, payload.published?.config].some((config) => !!config && resolvedConnectionId(config) !== connection)) throw new ForbiddenError("Cette sauvegarde utilise une autre connexion GitHub. Sa restauration est réservée aux administrateurs de la plateforme.");
+	if (!payload.projectState) throw new ForbiddenError("Cette sauvegarde a été prise hors projet. Sa restauration est réservée aux administrateurs de la plateforme.");
+};
+const backupOf = (e, appId, store = $app) => {
+	const row = store.findRecordById(BACKUPS, id$1(e.request.pathValue("backupId")));
+	if (row.getString("appId") !== appId) throw new NotFoundError("Sauvegarde introuvable.");
+	return row;
+};
+const settingOf = (appId, store = $app) => {
+	try {
+		return store.findFirstRecordByFilter(SETTINGS, "appId={:id}", { id: appId });
+	} catch {
+		return null;
+	}
+};
+const settingView = (row) => ({
+	enabled: row?.getBool("enabled") || false,
+	hourUTC: row ? row.getInt("hourUTC") : 3,
+	minuteUTC: row ? row.getInt("minuteUTC") : 0,
+	retention: row ? row.getInt("retention") : 3,
+	nextRunAt: row?.getString("nextRunAt") || "",
+	lastRunAt: row?.getString("lastRunAt") || "",
+	lastError: row?.getString("lastError") || ""
+});
+const nextRun = (hour, minute, date = /* @__PURE__ */ new Date()) => {
+	const candidate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute));
+	if (candidate.getTime() <= date.getTime()) candidate.setUTCDate(candidate.getUTCDate() + 1);
+	return candidate.toISOString();
+};
+const locallyReady = (row) => ["ready", "running"].includes(row.getString("status")) && row.getFloat("archiveBytes") > 0 && /^[a-f0-9]{64}$/.test(row.getString("checksum"));
+const metadata$2 = (row, localAvailable = locallyReady(row)) => ({
+	id: row.id,
+	status: row.getString("status"),
+	trigger: row.getString("trigger"),
+	commit: row.getString("commit"),
+	sourceDeploymentId: row.getString("sourceDeploymentId"),
+	imageId: row.getString("imageId"),
+	imageBytes: row.getFloat("imageBytes"),
+	totalImageBytes: row.getFloat("totalImageBytes") || row.getFloat("imageBytes"),
+	imageCount: Math.max(1, new Set(Object.values(imageMap(valueOf(row, "runtimeImages")))).size),
+	archiveBytes: row.getFloat("archiveBytes"),
+	checksum: row.getString("checksum"),
+	error: row.getString("error"),
+	created: row.getString("created"),
+	finishedAt: row.getString("finishedAt"),
+	s3State: row.getString("s3State") || "pending",
+	s3Error: row.getString("s3Error"),
+	s3CheckedAt: row.getString("s3CheckedAt"),
+	s3Bytes: row.getFloat("s3Bytes"),
+	s3TotalBytes: row.getFloat("s3TotalBytes"),
+	localAvailable,
+	downloadable: locallyReady(row) && localAvailable,
+	restorable: locallyReady(row) && localAvailable,
+	recoverable: ["ready", "failed"].includes(row.getString("status")) && row.getString("s3State") === "ready" && !localAvailable
+});
+const queueBackup = (app, actorId, trigger, store) => {
+	assertWebEnvironmentBackupAllowed(app, store);
+	if (store.findRecordsByFilter(BACKUPS, "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Une sauvegarde de cette application est déjà en attente ou en cours.");
+	let published;
+	try {
+		published = store.findRecordById("web_deployments", app.getString("activeDeployment"));
+	} catch {
+		throw new BadRequestError("Publiez une première version avant de créer une sauvegarde restaurable.");
+	}
+	const result = valueOf(published, "result"), snapshot = decryptWebValue(published.getString("snapshotEncrypted")), images = imageMap(result.images), frontImage = images[result.services?.find((service) => service.front === true)?.name || snapshot?.runtime?.compose?.front || "web"] || result.image;
+	if (published.getString("appId") !== app.id || published.getString("status") !== "ready" || result.available === false && app.getString("status") !== "stopped" || !imageRef(frontImage, app.id) || !snapshot?.config || !snapshot?.env) throw new BadRequestError("L’image de la version publiée n’est plus disponible. Publiez une nouvelle version avant de sauvegarder.");
+	if (snapshot.runtime?.kind === "compose" && JSON.stringify(Object.keys(snapshot.runtime.compose?.services || {}).sort()) !== JSON.stringify(Object.keys(images).sort())) throw new BadRequestError("L’inventaire des images Compose est incomplet. Publiez une version complète avant de sauvegarder.");
+	assertWebDeploymentInScope(app, published, store);
+	const encrypted = encryptWebValue({
+		version: 1,
+		appId: app.id,
+		projectState: exportWebEnvironmentBackup(app, store),
+		app: {
+			name: app.getString("name"),
+			config: webConfig(app),
+			env: decryptWebValue(app.getString("envEncrypted")),
+			desiredCommit: app.getString("desiredCommit"),
+			runtime: runtimeWorkerSnapshot(app, store),
+			storage: storageWorkerSnapshot(app, store)
+		},
+		published: {
+			config: snapshot.config,
+			env: snapshot.env,
+			commit: published.getString("commit"),
+			imageRef: frontImage,
+			images,
+			runtime: snapshot.runtime || validateRuntimeProfile(),
+			storage: snapshot.storage || []
+		}
+	});
+	if (encrypted.length > 4e5) throw new BadRequestError("Les réglages dépassent la taille maximale d’une archive.");
+	const row = new Record(store.findCollectionByNameOrId(BACKUPS));
+	for (const [key, value] of Object.entries({
+		appId: app.id,
+		actorId,
+		status: "queued",
+		trigger,
+		operation: "create",
+		payloadEncrypted: encrypted,
+		sourceDeploymentId: published.id,
+		commit: published.getString("commit"),
+		imageRef: frontImage,
+		runtimeImages: images,
+		s3State: "pending"
+	})) row.set(key, value);
+	store.save(row);
+	return row;
+};
+const activeRestores = (appId, store) => {
+	const rows = store.findRecordsByFilter("web_deployments", "appId={:id} && action=\"restore-backup\" && (status=\"queued\" || status=\"running\")", "", 1001, 0, { id: appId });
+	if (rows.length > 1e3) throw new BadRequestError("Trop de restaurations en attente.");
+	return new Set(rows.map((row) => decryptWebValue(row.getString("snapshotEncrypted"))?.restoreBackup?.id).filter(Boolean));
+};
+const HandleWebBackupsList = (e) => {
+	const { app } = selected(e, "app.read"), page = Math.max(1, Math.min(1e5, Math.floor(Number(e.request.url.query().get("page")) || 1))), perPage = 20;
+	const items = $app.findRecordsByFilter(BACKUPS, "appId={:id}", "-created,-id", perPage, (page - 1) * perPage, { id: app.id });
+	const totalItems = $app.countRecords(BACKUPS, $dbx.exp("appId={:id}", { id: app.id }));
+	let available = {};
+	try {
+		available = JSON.parse(toString($os.cmd("python3", "-c", ARCHIVE_LIST, webRoot(), app.id, JSON.stringify(items.filter(locallyReady).map((row) => ({
+			id: row.id,
+			checksum: row.getString("checksum")
+		})))).output()));
+	} catch {}
+	return webJson(e, {
+		items: items.map((row) => metadata$2(row, available[row.id] === true)),
+		page,
+		perPage,
+		totalItems,
+		totalPages: Math.max(1, Math.ceil(totalItems / perPage)),
+		settings: settingView(settingOf(app.id)),
+		limits: {
+			minRetention: 1,
+			maxRetention: 14,
+			minFreeBytes: 15 * 1024 ** 3,
+			pinnedImageBudgetBytes: 6 * 1024 ** 3
+		},
+		scope: "local-config-and-image",
+		platformRetention: "excluded"
+	});
+};
+const HandleWebBackupCreate = (e) => {
+	const { app, user } = selected(e, "backups.create"), input = webInput(e);
+	if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => key !== "trigger")) throw new BadRequestError("Options de sauvegarde invalides.");
+	if (input.trigger !== void 0 && input.trigger !== "platform") throw new BadRequestError("Déclencheur de sauvegarde invalide.");
+	if (input.trigger === "platform" && user.getBool("superAdmin") !== true) throw new ForbiddenError("Réservé à la plateforme.");
+	let backup;
+	$app.runInTransaction((tx) => {
+		backup = metadata$2(queueBackup(tx.findRecordById("web_apps", app.id), user.id, input.trigger === "platform" ? "platform" : "manual", tx));
+	});
+	return webJson(e, { backup }, 202);
+};
+const HandleWebBackupSettings = (e) => {
+	const { app } = selected(e, "backups.manage"), input = webInput(e);
+	if (input.enabled) assertWebEnvironmentBackupAllowed(app);
+	if (typeof input.enabled !== "boolean" || !Number.isInteger(input.hourUTC) || input.hourUTC < 0 || input.hourUTC > 23 || !Number.isInteger(input.minuteUTC) || input.minuteUTC < 0 || input.minuteUTC > 59 || !Number.isInteger(input.retention) || input.retention < 1 || input.retention > 14) throw new BadRequestError("Horaire UTC invalide ou rétention hors de la plage 1 à 14 sauvegardes.");
+	let settings;
+	$app.runInTransaction((tx) => {
+		const row = settingOf(app.id, tx) || new Record(tx.findCollectionByNameOrId(SETTINGS));
+		row.set("appId", app.id);
+		for (const name of [
+			"enabled",
+			"hourUTC",
+			"minuteUTC",
+			"retention"
+		]) row.set(name, input[name]);
+		row.set("nextRunAt", input.enabled ? nextRun(input.hourUTC, input.minuteUTC) : "");
+		row.set("lastError", "");
+		tx.save(row);
+		settings = settingView(row);
+	});
+	return webJson(e, { settings });
+};
+const HandleWebBackupDelete = (e) => {
+	const { app } = selected(e, "backups.manage");
+	let backup;
+	$app.runInTransaction((tx) => {
+		const row = backupOf(e, app.id, tx);
+		if (!["ready", "failed"].includes(row.getString("status"))) throw new BadRequestError("Cette sauvegarde ne peut pas être supprimée maintenant.");
+		if (activeRestores(app.id, tx).has(row.id)) throw new BadRequestError("Une restauration utilise cette sauvegarde. Attendez sa fin.");
+		row.set("status", "deleting");
+		row.set("operation", "delete");
+		row.set("leaseHash", "");
+		row.set("leaseAt", "");
+		row.set("leaseAttempts", 0);
+		row.set("error", "");
+		tx.save(row);
+		backup = metadata$2(row);
+	});
+	return webJson(e, { backup }, 202);
+};
+const HandleWebBackupRecover = (e) => {
+	const { app } = selected(e, "backups.manage");
+	let backup;
+	$app.runInTransaction((tx) => {
+		const row = backupOf(e, app.id, tx);
+		if (!["ready", "failed"].includes(row.getString("status")) || row.getString("s3State") !== "ready" || !row.getString("s3Object") || !row.getString("checksum")) throw new BadRequestError("Aucune copie S3 complète n’est disponible pour cette sauvegarde.");
+		row.set("operation", "recover");
+		row.set("status", "queued");
+		row.set("leaseHash", "");
+		row.set("leaseAt", "");
+		row.set("leaseAttempts", 0);
+		row.set("error", "");
+		tx.save(row);
+		backup = metadata$2(row, false);
+	});
+	return webJson(e, { backup }, 202);
+};
+const readArchive = (app, row) => {
+	if (!locallyReady(row)) throw new BadRequestError("Archive indisponible.");
+	try {
+		const raw = toString($os.cmd("python3", "-c", ARCHIVE_READ, webRoot(), id$1(app.id), id$1(row.id)).output());
+		if (!$security.equal($security.sha256(raw), row.getString("checksum"))) throw new Error();
+		const archive = JSON.parse(raw);
+		if (archive.format !== "pockethost-web-backup" || archive.version !== 1 || archive.appId !== app.id || archive.id !== row.id || archive.imageId !== row.getString("imageId") || !$security.equal(archive.payloadEncrypted, row.getString("payloadEncrypted")) || $security.sha256(archive.payloadEncrypted) !== archive.payloadSha256) throw new Error();
+		const payload = decryptWebValue(archive.payloadEncrypted);
+		if (payload?.version !== 1 || payload.appId !== app.id || !payload.app?.config || !payload.app?.env || !payload.published?.config || !payload.published?.env || !/^sha256:[a-f0-9]{64}$/.test(archive.imageId) || !equalMap(imageMap(archive.images), imageMap(valueOf(row, "runtimeImages"))) || payload.published.images && !equalMap(imageMap(payload.published.images), imageMap(archive.images)) || Object.keys(imageMap(archive.images)).length > 0 && !Object.values(imageMap(archive.images)).includes(archive.imageId)) throw new Error();
+		return {
+			raw,
+			archive,
+			payload
+		};
+	} catch {
+		throw new BadRequestError("Archive absente ou contrôle d’intégrité incorrect. La configuration actuelle est conservée.");
+	}
+};
+const HandleWebBackupDownload = (e) => {
+	const { app, access } = selected(e, "backups.manage"), row = backupOf(e, app.id), { raw, payload } = readArchive(app, row);
+	if (!access.platform && !backupInScope(app, payload)) throw new ForbiddenError(FOREIGN_BACKUP);
+	e.response.header().set("Cache-Control", "no-store");
+	e.response.header().set("Content-Disposition", `attachment; filename="web-${app.id}-${row.id}.phwb"`);
+	e.response.header().set("X-Archive-SHA256", row.getString("checksum"));
+	return e.blob(200, "application/octet-stream", raw);
+};
+const token$1 = (userId, appId, row, revision, expiresAt) => $security.hs256(JSON.stringify([
+	userId,
+	appId,
+	row.id,
+	row.getString("checksum"),
+	revision,
+	expiresAt
+]), $os.getenv("WEB_APPS_MASTER_KEY"));
+const environmentChanges = (current, before) => {
+	const changes = {
+		added: [],
+		updated: [],
+		removed: []
+	};
+	for (const name of [...new Set([...Object.keys(current), ...Object.keys(before)])].sort()) {
+		const a = current[name], b = before[name];
+		if (!a) changes.added.push(name);
+		else if (!b) changes.removed.push(name);
+		else if (a.value !== b.value || a.build !== b.build || a.runtime !== b.runtime) changes.updated.push(name);
+	}
+	return changes;
+};
+const HandleWebBackupRestorePreview = (e) => {
+	const { app, user, access } = selected(e, "backups.manage"), row = backupOf(e, app.id), { payload } = readArchive(app, row);
+	assertRestoreScope(access, app, payload);
+	const revision = currentBackupAppRevision(app), expiresAt = new Date(Date.now() + 10 * 6e4).toISOString();
+	return webJson(e, {
+		revision,
+		expiresAt,
+		previewToken: token$1(user.id, app.id, row, revision, expiresAt),
+		backup: metadata$2(row),
+		appName: payload.app.name,
+		configurationFields: Object.keys(payload.app.config).filter((name) => JSON.stringify(payload.app.config[name]) !== JSON.stringify(webConfig(app)[name])),
+		environmentChanges: environmentChanges(decryptWebValue(app.getString("envEncrypted")), payload.app.env),
+		storedConfigurationIncludesPendingChanges: JSON.stringify(payload.app.config) !== JSON.stringify(payload.published.config) || JSON.stringify(payload.app.env) !== JSON.stringify(payload.published.env),
+		warning: "Cette restauration redémarre la version publiée sauvegardée et remplace les réglages et variables enregistrés. Les données externes, bases de données, fichiers et caches ne sont pas restaurés."
+	});
+};
+const HandleWebBackupRestore = (e) => {
+	const { app, user, access } = selected(e, "backups.manage"), input = webInput(e), row = backupOf(e, app.id), { payload, archive } = readArchive(app, row);
+	assertRestoreScope(access, app, payload);
+	assertBackupAppRevision(app, input.revision);
+	if (typeof input.expiresAt !== "string" || Date.parse(input.expiresAt) <= Date.now() || Date.parse(input.expiresAt) > Date.now() + 10 * 6e4 || typeof input.previewToken !== "string" || !$security.equal(input.previewToken, token$1(user.id, app.id, row, input.revision, input.expiresAt))) throw new BadRequestError("Préparez un nouvel aperçu avant de confirmer la restauration.");
+	let deployment;
+	$app.runInTransaction((tx) => {
+		const current = tx.findRecordById("web_apps", app.id), saved = backupOf(e, app.id, tx);
+		assertBackupAppRevision(current, input.revision);
+		if (!locallyReady(saved) || saved.getString("checksum") !== row.getString("checksum")) throw new BadRequestError("La sauvegarde n’est plus disponible.");
+		if (tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Attendez la fin du traitement en cours avant de restaurer cette application.");
+		deployment = serializeWebDeployment(queueWebDeployment(current, "restore-backup", user.id, {
+			config: payload.published.config,
+			env: payload.published.env,
+			commit: payload.published.commit,
+			runtime: payload.published.runtime || validateRuntimeProfile(),
+			storage: payload.published.storage || [],
+			rollbackResult: {
+				image: archive.imageId,
+				images: imageMap(archive.images),
+				available: true
+			},
+			restoreBackup: {
+				id: row.id,
+				expectedAppRevision: input.revision,
+				app: payload.app,
+				projectState: payload.projectState || null,
+				runtime: payload.app.runtime || validateRuntimeProfile(),
+				storage: payload.app.storage || [],
+				checksum: row.getString("checksum"),
+				s3Object: row.getString("s3Object"),
+				s3ImageObject: row.getString("s3ImageObject"),
+				s3ImageObjects: imageObjects(valueOf(row, "s3ImageObjects"))
+			}
+		}, tx));
+	});
+	return webJson(e, { deployment }, 202);
+};
+const worker$1 = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const expected = $os.getenv("WEB_APPS_WORKER_SECRET"), actual = e.request.header.get("X-Web-Worker") || "";
+	if (expected.length < 32 || !$security.equal(expected, actual)) throw new UnauthorizedError("Worker non autorisé.");
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
+};
+const HandleWebBackupPins = (e) => {
+	worker$1(e);
+	const input = webInput(e), filter = "(status=\"queued\" || status=\"running\" || status=\"ready\" || status=\"deleting\" || (status=\"failed\" && archiveBytes>0))" + (input.appId ? " && appId={:appId}" : "");
+	if (input.appId) id$1(input.appId);
+	const rows = $app.findRecordsByFilter(BACKUPS, filter, "", 10001, 0, { appId: input.appId || "" });
+	if (rows.length > 1e4) throw new BadRequestError("Trop de sauvegardes pour confirmer le nettoyage des images.");
+	return webJson(e, { items: rows.map((row) => ({
+		id: row.id,
+		appId: row.getString("appId"),
+		imageRef: row.getString("imageRef"),
+		imageId: row.getString("imageId"),
+		imageBytes: row.getFloat("imageBytes"),
+		images: imageMap(valueOf(row, "runtimeImages")),
+		imageSizes: imageSizes(valueOf(row, "runtimeImageSizes")),
+		totalImageBytes: row.getFloat("totalImageBytes") || row.getFloat("imageBytes"),
+		s3Object: row.getString("s3Object"),
+		s3ImageObject: row.getString("s3ImageObject"),
+		s3ImageObjects: imageObjects(valueOf(row, "s3ImageObjects"))
+	})) });
+};
+const maintenance = (store) => {
+	const timestamp = now$2(), due = store.findRecordsByFilter(SETTINGS, "enabled=true && nextRunAt!=\"\" && nextRunAt<={:now}", "nextRunAt", 50, 0, { now: timestamp.replace("T", " ") });
+	for (const setting of due) {
+		try {
+			queueBackup(store.findRecordById("web_apps", setting.getString("appId")), "", "scheduled", store);
+			setting.set("lastError", "");
+		} catch (error) {
+			const raw = error?.message, message = typeof raw === "string" && raw.trim() ? raw.slice(0, 500) : "La sauvegarde quotidienne n’a pas pu démarrer.";
+			setting.set("lastError", message);
+			emitWebAlert(store, "app", setting.getString("appId"), "backup_failed", "backupsched:" + setting.getString("appId") + ":" + setting.getString("nextRunAt"), {
+				trigger: "scheduled",
+				reason: "queue_failed",
+				summary: webAlertSummary(message, null)
+			});
+		}
+		setting.set("lastRunAt", timestamp);
+		setting.set("nextRunAt", nextRun(setting.getInt("hourUTC"), setting.getInt("minuteUTC")));
+		store.save(setting);
+	}
+	for (const row of store.findRecordsByFilter(BACKUPS, "status=\"failed\" && operation=\"delete\" && finishedAt!=\"\" && finishedAt<{:before}", "finishedAt", 50, 0, { before: (/* @__PURE__ */ new Date(Date.now() - DELETE_RETRY_AFTER)).toISOString().replace("T", " ") })) {
+		row.set("status", "deleting");
+		row.set("leaseHash", "");
+		row.set("leaseAt", "");
+		row.set("leaseAttempts", 0);
+		store.save(row);
+	}
+	const settings = store.findRecordsByFilter(SETTINGS, "", "", 1e3, 0);
+	const appIds = new Set(settings.map((row) => row.getString("appId")));
+	for (const row of store.findRecordsByFilter(BACKUPS, "status=\"ready\"", "-created", 1e4, 0)) appIds.add(row.getString("appId"));
+	for (const appId of appIds) {
+		const retain = settingOf(appId, store)?.getInt("retention") || 3, active = activeRestores(appId, store);
+		const ready = store.findRecordsByFilter(BACKUPS, "appId={:id} && status=\"ready\" && trigger!=\"platform\"", "-created,-id", 1e4, 0, { id: appId });
+		const platform = store.findRecordsByFilter(BACKUPS, "appId={:id} && status=\"ready\" && trigger=\"platform\"", "-created,-id", 1e3, 0, { id: appId });
+		for (const row of [...ready.slice(retain), ...platform.slice(1)]) if (!active.has(row.id)) {
+			row.set("status", "deleting");
+			row.set("operation", "delete");
+			row.set("leaseHash", "");
+			row.set("leaseAt", "");
+			row.set("leaseAttempts", 0);
+			store.save(row);
+		}
+	}
+};
+const HandleWebBackupClaim = (e) => {
+	worker$1(e);
+	let job = null;
+	$app.runInTransaction((tx) => {
+		maintenance(tx);
+		const stale = (/* @__PURE__ */ new Date(Date.now() - 5 * 6e4)).toISOString().replace("T", " "), retry = (/* @__PURE__ */ new Date(Date.now() - 6e4)).toISOString().replace("T", " ");
+		for (const row of tx.findRecordsByFilter(BACKUPS, "status=\"running\" && leaseAt<{:stale}", "", 100, 0, { stale })) {
+			row.set("leaseHash", "");
+			if (row.getInt("leaseAttempts") >= MAX_LEASES) {
+				row.set("status", "failed");
+				row.set("finishedAt", now$2());
+				row.set("error", "La sauvegarde a été interrompue trois fois sans compte rendu du worker (redémarrage ou ressources insuffisantes).");
+			} else row.set("status", "queued");
+			tx.save(row);
+		}
+		const deleting = tx.findRecordsByFilter(BACKUPS, "status=\"deleting\" && (leaseAt=\"\" || leaseAt<{:retry})", "created,id", 1, 0, { retry });
+		const rows = deleting.length ? deleting : tx.findRecordsByFilter(BACKUPS, "status=\"queued\"", "created,id", 1, 0);
+		if (!rows.length) return;
+		const row = rows[0], operation = row.getString("status") === "deleting" ? "delete" : row.getString("operation") === "recover" ? "recover" : "create", lease = $security.randomString(40);
+		row.set("status", operation === "delete" ? "deleting" : "running");
+		row.set("leaseAt", now$2());
+		row.set("leaseHash", $security.sha256(lease));
+		row.set("leaseAttempts", Math.min(100, row.getInt("leaseAttempts") + 1));
+		row.set("startedAt", row.getString("startedAt") || now$2());
+		tx.save(row);
+		job = {
+			id: row.id,
+			appId: row.getString("appId"),
+			operation,
+			lease,
+			payloadEncrypted: operation !== "delete" ? row.getString("payloadEncrypted") : void 0,
+			imageRef: row.getString("imageRef"),
+			imageId: row.getString("imageId"),
+			imageBytes: row.getFloat("imageBytes"),
+			images: imageMap(valueOf(row, "runtimeImages")),
+			imageSizes: imageSizes(valueOf(row, "runtimeImageSizes")),
+			totalImageBytes: row.getFloat("totalImageBytes") || row.getFloat("imageBytes"),
+			archiveBytes: row.getFloat("archiveBytes"),
+			checksum: row.getString("checksum"),
+			s3Object: row.getString("s3Object"),
+			s3ImageObject: row.getString("s3ImageObject"),
+			s3ImageObjects: imageObjects(valueOf(row, "s3ImageObjects")),
+			commit: row.getString("commit"),
+			createdAt: row.getString("created"),
+			attempt: row.getInt("leaseAttempts"),
+			maxAttempts: MAX_LEASES
+		};
+	});
+	return webJson(e, { job });
+};
+const HandleWebBackupReport = (e) => {
+	worker$1(e);
+	const input = webInput(e);
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById(BACKUPS, id$1(input.id));
+		if (typeof input.lease !== "string" || !$security.equal($security.sha256(input.lease), row.getString("leaseHash")) || !["running", "deleting"].includes(row.getString("status"))) throw new BadRequestError("Traitement de sauvegarde non actif.");
+		const deleting = row.getString("status") === "deleting";
+		if (input.images !== void 0) {
+			const images = imageMap(input.images);
+			if (!equalMap(images, imageMap(valueOf(row, "runtimeImages")))) throw new BadRequestError("Les images retournées ne correspondent pas à cette sauvegarde.");
+			row.set("runtimeImages", images);
+		}
+		if (input.imageSizes !== void 0) {
+			const sizes = imageSizes(input.imageSizes), images = imageMap(valueOf(row, "runtimeImages"));
+			if (Object.keys(sizes).some((ref) => !Object.values(images).includes(ref))) throw new BadRequestError("Une taille d’image est étrangère à cette sauvegarde.");
+			row.set("runtimeImageSizes", sizes);
+		}
+		if (input.totalImageBytes !== void 0) {
+			const sizes = imageSizes(valueOf(row, "runtimeImageSizes"));
+			if (!Number.isSafeInteger(input.totalImageBytes) || input.totalImageBytes < 0 || Object.values(sizes).reduce((n, size) => n + size, 0) !== input.totalImageBytes) throw new BadRequestError("Taille totale des images incohérente.");
+			row.set("totalImageBytes", input.totalImageBytes);
+		}
+		if (input.s3ImageObjects !== void 0) {
+			const objects = imageObjects(input.s3ImageObjects), images = imageMap(valueOf(row, "runtimeImages"));
+			if (Object.keys(objects).some((ref) => !Object.values(images).includes(ref))) throw new BadRequestError("Une référence S3 est étrangère à cette sauvegarde.");
+			row.set("s3ImageObjects", objects);
+		}
+		if (input.s3State !== void 0) {
+			if (![
+				"pending",
+				"uploading",
+				"ready",
+				"failed",
+				"disabled",
+				"deleted"
+			].includes(input.s3State)) throw new BadRequestError("État S3 invalide.");
+			row.set("s3State", input.s3State);
+			for (const name of ["s3Object", "s3ImageObject"]) if (input[name] !== void 0) {
+				if (typeof input[name] !== "string" || input[name].length > 500 || /[\r\n?]/.test(input[name])) throw new BadRequestError("Référence S3 invalide.");
+				row.set(name, input[name]);
+			}
+			if (input.s3CheckedAt) {
+				if (!Number.isFinite(Date.parse(input.s3CheckedAt))) throw new BadRequestError("Date S3 invalide.");
+				row.set("s3CheckedAt", input.s3CheckedAt);
+			}
+			row.set("s3Error", `${input.s3Error || ""}`.slice(0, 500));
+			for (const name of ["s3Bytes", "s3TotalBytes"]) if (input[name] !== void 0) {
+				if (!Number.isSafeInteger(input[name]) || input[name] < 0) throw new BadRequestError("Progression S3 invalide.");
+				row.set(name, input[name]);
+			}
+		}
+		const expectedImages = imageMap(valueOf(row, "runtimeImages")), expectedRefs = [...new Set(Object.values(expectedImages))].sort();
+		if (input.imageId !== void 0 && expectedRefs.length) {
+			const sizes = imageSizes(valueOf(row, "runtimeImageSizes"));
+			if (!expectedRefs.includes(input.imageId) || JSON.stringify(Object.keys(sizes).sort()) !== JSON.stringify(expectedRefs) || sizes[input.imageId] !== input.imageBytes || Object.values(sizes).reduce((sum, size) => sum + size, 0) !== row.getFloat("totalImageBytes")) throw new BadRequestError("Inventaire des images locales incomplet ou incohérent.");
+		}
+		if (input.s3State === "ready" && expectedRefs.length) {
+			const objects = imageObjects(valueOf(row, "s3ImageObjects"));
+			if (JSON.stringify(Object.keys(objects).sort()) !== JSON.stringify(expectedRefs)) throw new BadRequestError("La copie S3 ne contient pas toutes les images du site.");
+		}
+		if (input.status === "running" && !deleting) {
+			if (input.imageId !== void 0) {
+				if (!/^sha256:[a-f0-9]{64}$/.test(input.imageId) || !/^[a-f0-9]{64}$/.test(input.checksum || "") || !Number.isInteger(input.archiveBytes) || input.archiveBytes <= 0 || input.archiveBytes > 512 * 1024 || !Number.isInteger(input.imageBytes) || input.imageBytes < 0) throw new BadRequestError("Métadonnées locales invalides.");
+				for (const name of [
+					"imageId",
+					"imageBytes",
+					"archiveBytes",
+					"checksum"
+				]) row.set(name, input[name]);
+			}
+			row.set("leaseAt", now$2());
+			tx.save(row);
+			return;
+		}
+		if (input.status === "ready" && !deleting) {
+			if (!/^sha256:[a-f0-9]{64}$/.test(input.imageId || "") || !/^[a-f0-9]{64}$/.test(input.checksum || "") || !Number.isInteger(input.archiveBytes) || input.archiveBytes <= 0 || input.archiveBytes > 512 * 1024 || !Number.isInteger(input.imageBytes) || input.imageBytes < 0) throw new BadRequestError("Métadonnées de sauvegarde invalides.");
+			for (const name of [
+				"imageId",
+				"imageBytes",
+				"archiveBytes",
+				"checksum"
+			]) row.set(name, input[name]);
+			row.set("status", "ready");
+			row.set("error", "");
+			row.set("finishedAt", now$2());
+		} else if (input.status === "deleted" && deleting) {
+			row.set("status", "deleted");
+			row.set("payloadEncrypted", "");
+			row.set("archiveBytes", 0);
+			row.set("error", "");
+			row.set("finishedAt", now$2());
+		} else if (input.status === "failed") {
+			if (input.failureCode !== void 0 && !FAILURE_CODES.includes(input.failureCode)) throw new BadRequestError("Code d’échec de sauvegarde invalide.");
+			if (input.attempts !== void 0 && (!Number.isInteger(input.attempts) || input.attempts < 0 || input.attempts > 1e3)) throw new BadRequestError("Nombre de tentatives invalide.");
+			const exhausted = input.failureCode === "attempts_exhausted", message = `${input.error || "Échec de la sauvegarde locale."}`;
+			if (deleting && !exhausted) {
+				row.set("status", "deleting");
+				row.set("leaseAttempts", 0);
+				row.set("error", message.slice(0, 500));
+			} else if (deleting) {
+				row.set("status", "failed");
+				row.set("error", "La suppression de cette sauvegarde a été interrompue plusieurs fois sans compte rendu du worker. Elle sera retentée automatiquement.");
+				emitWebAlert(tx, "platform", row.getString("appId"), "backup_cleanup_failed", "backup-delete:" + row.id + ":" + now$2().slice(0, 10), {
+					appId: row.getString("appId"),
+					backupId: row.id,
+					attempts: Number.isInteger(input.attempts) ? input.attempts : MAX_LEASES
+				});
+			} else {
+				row.set("status", "failed");
+				row.set("error", (exhausted && !/tentatives/.test(message) ? `Sauvegarde abandonnée après ${Number.isInteger(input.attempts) ? input.attempts : MAX_LEASES} tentatives interrompues. ` : "") + message);
+				row.set("error", row.getString("error").slice(0, 500));
+			}
+			row.set("finishedAt", now$2());
+		} else throw new BadRequestError("État de sauvegarde invalide.");
+		if (!deleting || input.status === "deleted" || row.getString("status") === "failed") row.set("leaseHash", "");
+		tx.save(row);
+	});
+	return webJson(e, { ok: true });
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/ci.ts
+const TOKEN$1 = "web_ci_tokens", DELIVERY = "web_ci_deliveries";
+const date$1 = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const repository = (value) => {
+	if (typeof value !== "string" || value.length > 250 || !/^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,})(?::[1-9][0-9]{0,4})?\/[a-z0-9][a-z0-9._/-]*$/.test(value) || !webRegistryHostAllowed(value.split("/")[0]) || value.includes("..") || value.includes("//") || value.endsWith("/")) throw new BadRequestError("Indiquez un dépôt d’images complet, par exemple ghcr.io/organisation/site.");
+	return value;
+};
+const metadata$1 = (row) => ({
+	id: row.id,
+	name: row.getString("name"),
+	imageRepository: row.getString("imageRepository"),
+	expiresAt: row.getString("expiresAt"),
+	revokedAt: row.getString("revokedAt"),
+	lastUsedAt: row.getString("lastUsedAt"),
+	created: row.getString("created")
+});
+const origin$1 = () => `https://${$os.getenv("APP_HOST") || `app.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`}`;
+const authenticate = (e, store = $app) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const raw = e.request.header.get("Authorization") || "";
+	const match = /^Bearer phci\.([a-z0-9]{15})\.([A-Za-z0-9]{80})$/.exec(raw);
+	if (!match) throw new UnauthorizedError("Jeton de déploiement invalide.");
+	let token;
+	try {
+		token = store.findRecordById(TOKEN$1, match[1]);
+	} catch {
+		throw new UnauthorizedError("Jeton de déploiement invalide.");
+	}
+	if (token.getString("revokedAt") || Date.parse(token.getString("expiresAt")) <= Date.now() || !$security.equal($security.sha256(match[2]), token.getString("tokenHash"))) throw new UnauthorizedError("Jeton de déploiement expiré ou révoqué.");
+	let actor;
+	try {
+		actor = store.findRecordById("users", token.getString("actorId"));
+	} catch {
+		throw new UnauthorizedError("Accès de déploiement révoqué.");
+	}
+	if (!webActorCan(actor.id, { appId: token.getString("appId") }, "ci.manage", store)) throw new UnauthorizedError("Accès de déploiement révoqué.");
+	return {
+		token,
+		actor
+	};
+};
+const HandleWebCiTokensList = (e) => {
+	const app = requireWebAppPermission(e, "ci.manage").app;
+	return webJson(e, {
+		items: $app.findRecordsByFilter(TOKEN$1, "appId={:id}", "-created", 100, 0, { id: app.id }).map(metadata$1),
+		deployUrl: `${origin$1()}/api/web-apps/ci/deploy`
+	});
+};
+const HandleWebCiTokensCreate = (e) => {
+	const { user: actor, app: found } = requireWebAppPermission(e, "ci.manage"), app = found, input = webInput(e);
+	if (Object.keys(input).some((key) => ![
+		"name",
+		"imageRepository",
+		"expiresInDays"
+	].includes(key)) || typeof input.name !== "string" || !input.name.trim() || input.name.trim().length > 80) throw new BadRequestError("Nom du jeton requis (80 caractères maximum).");
+	const imageRepository = repository(input.imageRepository), days = input.expiresInDays ?? 30;
+	if (!Number.isInteger(days) || days < 1 || days > 90) throw new BadRequestError("Durée du jeton entre 1 et 90 jours.");
+	const secret = $security.randomString(80);
+	let id = "";
+	$app.runInTransaction((tx) => {
+		if (tx.findRecordsByFilter(TOKEN$1, "appId={:id} && revokedAt=\"\" && expiresAt>{:now}", "", 10, 0, {
+			id: app.id,
+			now: date$1()
+		}).length >= 10) throw new BadRequestError("Dix jetons actifs maximum par application.");
+		const row = new Record(tx.findCollectionByNameOrId(TOKEN$1));
+		row.set("appId", app.id);
+		row.set("actorId", actor.id);
+		row.set("name", input.name.trim());
+		row.set("imageRepository", imageRepository);
+		row.set("tokenHash", $security.sha256(secret));
+		row.set("expiresAt", new Date(Date.now() + days * 864e5).toISOString());
+		tx.save(row);
+		id = row.id;
+	});
+	e.response.header().set("Pragma", "no-cache");
+	return webJson(e, {
+		token: `phci.${id}.${secret}`,
+		item: metadata$1($app.findRecordById(TOKEN$1, id)),
+		deployUrl: `${origin$1()}/api/web-apps/ci/deploy`
+	}, 201);
+};
+const HandleWebCiTokenRevoke = (e) => {
+	const app = requireWebAppPermission(e, "ci.manage").app, id = e.request.pathValue("tokenId");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Jeton invalide.");
+	const row = $app.findRecordById(TOKEN$1, id);
+	if (row.getString("appId") !== app.id) throw new NotFoundError();
+	row.set("revokedAt", date$1());
+	$app.save(row);
+	return webJson(e, { item: metadata$1(row) });
+};
+const HandleWebCiDeploy = (e) => {
+	const { token, actor } = authenticate(e), input = webInput(e);
+	if (Object.keys(input).some((key) => ![
+		"image",
+		"commit",
+		"branch",
+		"requestId",
+		"registry"
+	].includes(key))) throw new BadRequestError("Options de déploiement CI invalides.");
+	const expected = token.getString("imageRepository"), image = input.image;
+	if (typeof image !== "string" || !image.startsWith(expected + "@sha256:") || !/^[a-f0-9]{64}$/.test(image.slice((expected + "@sha256:").length)) || !webImageDigestValid(image)) throw new BadRequestError("L’image doit appartenir au dépôt autorisé et être fixée par son digest SHA256.");
+	if (typeof input.commit !== "string" || !/^[a-f0-9]{40}$/.test(input.commit) || typeof input.requestId !== "string" || !/^[A-Za-z0-9_.:-]{1,100}$/.test(input.requestId)) throw new BadRequestError("Commit et identifiant unique d’exécution CI requis.");
+	let registry = null;
+	if (input.registry !== void 0) {
+		const value = input.registry, host = expected.split("/")[0];
+		if (!value || Object.keys(value).some((key) => ![
+			"server",
+			"username",
+			"password"
+		].includes(key)) || value.server !== host || typeof value.username !== "string" || !value.username || value.username.length > 200 || typeof value.password !== "string" || value.password.length < 10 || value.password.length > 1e4 || /[\r\n\u0000]/.test(value.username + value.password)) throw new BadRequestError("Identifiants éphémères du registre invalides.");
+		registry = {
+			server: value.server,
+			username: value.username,
+			password: value.password
+		};
+	}
+	const app = findWebApp(token.getString("appId")), config = webConfig(app);
+	if (input.branch !== void 0 && input.branch !== config.branch) throw new BadRequestError("La branche CI ne correspond pas à cet environnement.");
+	const fingerprint = $security.sha256(JSON.stringify([
+		image,
+		input.commit,
+		input.branch || ""
+	]));
+	const previous = $app.findRecordsByFilter(DELIVERY, "tokenId={:token} && requestId={:request}", "", 1, 0, {
+		token: token.id,
+		request: input.requestId
+	})[0];
+	if (previous) {
+		if (previous.getString("payloadHash") !== fingerprint) throw new BadRequestError("Cet identifiant CI a déjà servi pour une autre image.");
+		return webJson(e, {
+			deployment: serializeWebDeployment($app.findRecordById("web_deployments", previous.getString("deploymentId"))),
+			duplicate: true
+		}, 202);
+	}
+	if (config.repository && config.branch) {
+		if (config.source !== "git") assertWebGithubRate(app.id, actor.id);
+		if ((config.source === "git" ? resolveWebGitCommit(`${config.gitSourceId || ""}`, config.branch) : webGithub("commit", {
+			repository: config.repository,
+			branch: config.branch
+		}, resolvedConnectionId(config)).sha) !== input.commit) throw new BadRequestError("Cette construction ne correspond plus au dernier commit de la branche.");
+	}
+	let result;
+	$app.runInTransaction((tx) => {
+		authenticate(e, tx);
+		const duplicate = tx.findRecordsByFilter(DELIVERY, "tokenId={:token} && requestId={:request}", "", 1, 0, {
+			token: token.id,
+			request: input.requestId
+		})[0];
+		if (duplicate) {
+			if (duplicate.getString("payloadHash") !== fingerprint) throw new BadRequestError("Identifiant CI déjà utilisé.");
+			result = {
+				deployment: serializeWebDeployment(tx.findRecordById("web_deployments", duplicate.getString("deploymentId"))),
+				duplicate: true
+			};
+			return;
+		}
+		const current = tx.findRecordById("web_apps", app.id), env = resolveWebEnvironment(current, tx), runtime = runtimeWorkerSnapshot(current, tx);
+		if (!["image", "worker"].includes(runtime.kind)) throw new BadRequestError("Choisissez le moteur Image Docker ou Worker pour recevoir une image construite en CI.");
+		runtime.image = image;
+		if (registry) runtime.registry = registry;
+		current.set("desiredCommit", input.commit);
+		tx.save(current);
+		for (const pending of tx.findRecordsByFilter("web_deployments", "appId={:id} && status=\"queued\" && action=\"ci-deploy\"", "", 100, 0, { id: app.id })) {
+			pending.set("status", "cancelled");
+			pending.set("stage", "Remplacé par une construction CI plus récente");
+			pending.set("finishedAt", date$1());
+			scrubWebCiCredentials(pending);
+			tx.save(pending);
+		}
+		const job = queueWebDeployment(current, "ci-deploy", actor.id, {
+			commit: input.commit,
+			env: env.env,
+			projectEnvironment: env.context,
+			runtime,
+			storage: storageWorkerSnapshot(current, tx),
+			ci: {
+				tokenId: token.id,
+				runtimeRevision: currentWebRuntimeRevision(current, tx),
+				expiresAt: new Date(Date.now() + 36e5).toISOString(),
+				ephemeralRegistry: !!registry
+			}
+		}, tx);
+		const seen = new Record(tx.findCollectionByNameOrId(DELIVERY));
+		seen.set("tokenId", token.id);
+		seen.set("requestId", input.requestId);
+		seen.set("payloadHash", fingerprint);
+		seen.set("deploymentId", job.id);
+		tx.save(seen);
+		const used = tx.findRecordById(TOKEN$1, token.id);
+		used.set("lastUsedAt", date$1());
+		tx.save(used);
+		result = {
+			deployment: serializeWebDeployment(job),
+			duplicate: false
+		};
+	});
+	return webJson(e, result, 202);
+};
+const scrubWebCiCredentials = (job) => {
+	const snapshot = decryptWebValue(job.getString("snapshotEncrypted"));
+	if (snapshot.ci?.ephemeralRegistry && snapshot.runtime?.registry) {
+		delete snapshot.runtime.registry;
+		snapshot.ci.ephemeralRegistry = false;
+		job.set("snapshotEncrypted", encryptWebValue(snapshot));
+	}
+};
+const HandleWebCiMaintenance = () => {
+	if (!webEnabled()) return;
+	const cutoff = (/* @__PURE__ */ new Date(Date.now() - 30 * 864e5)).toISOString().replace("T", " ");
+	for (const row of $app.findRecordsByFilter(DELIVERY, "created<{:cutoff}", "", 500, 0, { cutoff })) $app.delete(row);
+	for (const job of $app.findRecordsByFilter("web_deployments", "action=\"ci-deploy\" && (status=\"ready\" || status=\"failed\" || status=\"cancelled\")", "-created", 1e3, 0)) {
+		const before = job.getString("snapshotEncrypted");
+		scrubWebCiCredentials(job);
+		if (before !== job.getString("snapshotEncrypted")) $app.save(job);
+	}
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/environment.ts
+const read = (row) => decryptWebValue(row.getString("envEncrypted"));
+const revision$1 = (row) => $security.sha256(row.getString("envEncrypted") || "no-environment");
+/** Lecture des noms : variables.read ; valeurs : variables.reveal ; écriture : variables.write. */
+const actorAndApp = (e, permission) => {
+	const access = requireWebAppPermission(e, permission);
+	return {
+		user: access.user,
+		app: access.app,
+		blind: !webRoleAllows(access.role, "variables.reveal")
+	};
+};
+const audit = (appId, actorId, action, details, store = $app) => {
+	const row = new Record(store.findCollectionByNameOrId("web_environment_audit"));
+	row.set("appId", appId);
+	row.set("actorId", actorId);
+	row.set("action", action);
+	row.set("details", details);
+	store.save(row);
+};
+/**
+* État de la publication. `blind` (rôle sans variables.reveal) : aucune comparaison de valeurs, sinon écrire une valeur
+* devinée et lire cet état la confirmerait. Seule compte la révision publiée : elle dérive du chiffré, à nonce
+* aléatoire, et change à chaque écriture, même à l'identique. Faute de savoir quelle valeur a changé, toute variable de
+* construction est présumée modifiée après une écriture.
+*/
+const environmentDeploymentState = (app, store = $app, blind = false) => {
+	let snapshot = null, deployedCommit = "";
+	try {
+		const deployment = store.findRecordById("web_deployments", app.getString("activeDeployment"));
+		snapshot = decryptWebValue(deployment.getString("snapshotEncrypted"));
+		deployedCommit = deployment.getString("commit");
+	} catch {}
+	if (!snapshot?.env || !snapshot?.config) return {
+		pendingChanges: true,
+		requiresRebuild: true,
+		runtimeOnlyChanges: false,
+		canApplyRuntime: false
+	};
+	const resolved = resolveWebEnvironment(app, store), current = resolved.env, before = snapshot.env, config = webConfig(app), written = snapshot.projectEnvironment?.revision !== resolved.context.revision;
+	let changed = false, buildChanged = false;
+	for (const name of new Set([...Object.keys(current), ...Object.keys(before)])) {
+		const a = current[name], b = before[name], valueChanged = blind ? written : a?.value !== b?.value;
+		if (!a || !b || valueChanged || a.build !== b.build || a.runtime !== b.runtime) changed = true;
+		if (!!a?.build !== !!b?.build || a?.build && valueChanged) buildChanged = true;
+	}
+	const codeChanged = [
+		"repository",
+		"branch",
+		"rootDirectory"
+	].some((name) => config[name] !== snapshot.config[name]) || !!(app.getString("desiredCommit") && app.getString("desiredCommit") !== deployedCommit);
+	return {
+		pendingChanges: changed || codeChanged,
+		requiresRebuild: buildChanged || codeChanged,
+		runtimeOnlyChanges: changed && !buildChanged && !codeChanged,
+		canApplyRuntime: changed && !buildChanged && !codeChanged
+	};
+};
+const serialize$3 = (app, revealed = false, blind = false) => {
+	const values = read(app), dotenv = formatWebDotenv(values, revealed), nextDotenv = formatWebDotenv(resolveWebEnvironment(app).env, revealed, false, "nextjs");
+	return {
+		revision: revision$1(app),
+		revealed,
+		...environmentDeploymentState(app, $app, blind),
+		variables: Object.keys(values).sort().map((name) => ({
+			name,
+			build: values[name].build,
+			runtime: values[name].runtime,
+			hasValue: true,
+			isEmpty: values[name].value === "",
+			multiline: /[\r\n]/.test(values[name].value),
+			public: name.startsWith("NEXT_PUBLIC_"),
+			...revealed ? { value: values[name].value } : {}
+		})),
+		dotenv: dotenv.text,
+		nextDotenv: nextDotenv.text,
+		nextExportWarnings: nextDotenv.warnings,
+		example: formatWebDotenv(values, false, true).text,
+		exportWarnings: dotenv.warnings
+	};
+};
+const structuredEntries = (input, current) => {
+	if (!Array.isArray(input.rows) || input.rows.length > 100) throw new Error("100 variables maximum.");
+	const entries = [], seen = /* @__PURE__ */ new Set();
+	for (const [index, row] of input.rows.entries()) {
+		if (!row || typeof row.name !== "string") throw new Error("Nom de variable invalide.");
+		validateWebEnvName(row.name);
+		if (seen.has(row.name)) throw new Error(`La variable ${row.name} est présente plusieurs fois.`);
+		seen.add(row.name);
+		if (row.remove === true) continue;
+		const old = Object.prototype.hasOwnProperty.call(current, row.name) ? current[row.name] : void 0;
+		if (row.value !== void 0 && typeof row.value !== "string") throw new Error("Valeur de variable invalide.");
+		if (row.value?.length > 1e4 || row.value?.includes("\0")) throw new Error("Valeur de variable invalide ou trop longue.");
+		for (const name of ["build", "runtime"]) if (row[name] !== void 0 && typeof row[name] !== "boolean") throw new Error("Réglage de disponibilité invalide.");
+		const preserve = row.setEmpty !== true && (row.value === void 0 || row.value === "");
+		if (preserve && !old) throw new Error(`La variable ${row.name} nécessite une valeur ou la case Valeur vide explicite.`);
+		entries.push({
+			name: row.name,
+			value: row.setEmpty === true ? "" : row.value || "",
+			preserve,
+			build: row.build,
+			runtime: row.runtime,
+			line: index + 1
+		});
+	}
+	return entries;
+};
+/**
+* Champ `env` de POST/PATCH /api/web-apps : sans aperçu ni révision (le dashboard passe par /environment ; il ne s'en
+* sert qu'à la création), mais mêmes règles que /environment. `remove` retire la variable, les autres sont conservées.
+*/
+const planWebAppEnv = (row, input) => {
+	if (!Array.isArray(input) || input.length > 100) throw new BadRequestError("Variables invalides (100 maximum).");
+	try {
+		const current = read(row), rows = input.map((item) => ({
+			...item,
+			build: !!item?.build,
+			runtime: !!item?.runtime
+		})), entries = structuredEntries({ rows }, current), named = new Set(rows.map((item) => item.name));
+		for (const name of Object.keys(current)) if (!named.has(name)) entries.push({
+			name,
+			value: "",
+			preserve: true,
+			line: 0
+		});
+		return planWebEnvironment(current, entries, "replace");
+	} catch (error) {
+		throw new BadRequestError(error instanceof Error ? error.message : "Variables invalides.");
+	}
+};
+const auditWebAppEnv = (appId, actorId, plan, store) => audit(appId, actorId, "updated", {
+	mode: "direct",
+	changes: plan.changes,
+	requiresRebuild: plan.requiresRebuild
+}, store);
+const previewPlan = (app, input, blind = false) => {
+	if (typeof input.revision !== "string" || !$security.equal(input.revision, revision$1(app))) throw new BadRequestError("Les variables ont changé depuis leur ouverture. Rechargez-les avant de continuer.");
+	if (!["merge", "replace"].includes(input.mode) || typeof input.text !== "string" && !Array.isArray(input.rows) || typeof input.text === "string" && input.rows !== void 0) throw new BadRequestError("Texte .env ou tableau de variables et mode Fusionner/Remplacer requis.");
+	try {
+		const current = read(app);
+		return planWebEnvironment(current, input.rows !== void 0 ? structuredEntries(input, current) : parseWebDotenv(input.text), input.mode, { blind });
+	} catch (error) {
+		throw new BadRequestError(error instanceof Error ? error.message : "Fichier .env invalide.");
+	}
+};
+const signature = (actor, appId, input) => {
+	const key = $os.getenv("WEB_APPS_MASTER_KEY");
+	const source = input.rows !== void 0 && Array.isArray(input.rows) ? ["rows", input.rows.map((row) => [
+		row?.name,
+		row?.value,
+		row?.setEmpty === true,
+		row?.remove === true,
+		row?.build,
+		row?.runtime
+	])] : ["text", input.text];
+	return $security.hs256(JSON.stringify([
+		actor,
+		appId,
+		input.revision,
+		source,
+		input.mode
+	]), key);
+};
+const HandleWebEnvironmentGet = (e) => {
+	const { app, blind } = actorAndApp(e, "variables.read");
+	return webJson(e, serialize$3(app, false, blind));
+};
+const HandleWebEnvironmentReveal = (e) => {
+	const { app, user } = actorAndApp(e, "variables.reveal");
+	audit(app.id, user.id, "revealed", { names: Object.keys(resolveWebEnvironment(app).env).sort() });
+	e.response.header().set("Pragma", "no-cache");
+	return webJson(e, serialize$3(app, true));
+};
+const HandleWebEnvironmentPreview = (e) => {
+	const { app, user, blind } = actorAndApp(e, "variables.write"), input = webInput(e), plan = previewPlan(app, input, blind);
+	return webJson(e, {
+		revision: revision$1(app),
+		previewToken: signature(user.id, app.id, input),
+		changes: plan.changes,
+		requiresRebuild: plan.requiresRebuild,
+		total: Object.keys(plan.next).length
+	});
+};
+const HandleWebEnvironmentPut = (e) => {
+	const { app, user, blind } = actorAndApp(e, "variables.write"), input = webInput(e);
+	if (typeof input.previewToken !== "string" || !$security.equal(input.previewToken, signature(user.id, app.id, input))) throw new BadRequestError("Prévisualisez les changements avant de les appliquer.");
+	let saved;
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById("web_apps", app.id), plan = previewPlan(row, input);
+		row.set("envEncrypted", encryptWebValue(plan.next));
+		resolveWebEnvironment(row, tx);
+		tx.save(row);
+		audit(app.id, user.id, "updated", {
+			mode: input.mode,
+			changes: plan.changes,
+			requiresRebuild: plan.requiresRebuild
+		}, tx);
+		saved = row;
+	});
+	return webJson(e, serialize$3(saved, false, blind));
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/github.ts
+/** Fixed GitHub HTTPS transport. No installation tokens or private keys enter browser responses. */
+const GITHUB_READER = String.raw`
+import sys,json,pathlib,tempfile,subprocess,time,base64,urllib.request,urllib.error,urllib.parse,os,signal
+os.umask(0o077)
+p=pathlib.Path(sys.argv[1]);data=json.loads(p.read_text());p.unlink();config=data['config'];action=data['action'];token='';identity=''
+signal.signal(signal.SIGALRM,lambda *args:(_ for _ in ()).throw(TimeoutError()));signal.alarm(30)
+def request(path,body=None,token=''):
+ req=urllib.request.Request('https://api.github.com'+path,headers={'Accept':'application/vnd.github+json','User-Agent':'PocketHost-Web','X-GitHub-Api-Version':'2022-11-28',**({'Authorization':'Bearer '+token}if token else{})},data=None if body is None else json.dumps(body).encode())
+ with urllib.request.urlopen(req,timeout=8)as response:return json.loads(response.read(4000000))
+page=max(1,min(1000,int(data.get('page')or 1)));per_page=max(1,min(100,int(data.get('perPage')or 50)))
+configured=bool(config.get('privateKey')and config.get('githubAppId')and config.get('githubInstallationId'))
+def installation_token(repository_id=None):
+ body={'permissions':{'contents':'read','metadata':'read'}}
+ if action=='pull-request':body['permissions']['pull_requests']='read'
+ if repository_id is not None:body['repository_ids']=[int(repository_id)]
+ return request('/app/installations/'+str(config['githubInstallationId'])+'/access_tokens',body,identity)['token']
+try:
+ if configured:
+  b64=lambda b:base64.urlsafe_b64encode(b).rstrip(b'=').decode();now=int(time.time())
+  part=b64(b'{"alg":"RS256","typ":"JWT"}')+'.'+b64(json.dumps({'iat':now-60,'exp':now+540,'iss':config['githubAppId']}).encode())
+  with tempfile.TemporaryDirectory()as folder:
+   key=pathlib.Path(folder)/'key.pem';key.write_text(config['privateKey']);key.chmod(0o600)
+   signature=subprocess.check_output(['openssl','dgst','-sha256','-sign',str(key)],input=part.encode(),stderr=subprocess.DEVNULL,timeout=3)
+  identity=part+'.'+b64(signature)
+  if action not in ['health','hook-config']:token=installation_token(data.get('repositoryId')if action=='branches'else None)
+ if action=='token':result={'token':token}
+ elif action=='health':
+  if not configured:result={'configured':False,'ok':False,'error':'Connectez GitHub pour accéder aux dépôts privés et aux déploiements automatiques.'}
+  else:
+   app=request('/app',token=identity);install=request('/app/installations/'+str(config['githubInstallationId']),token=identity)
+   if str(install.get('app_id'))!=str(config['githubAppId']):raise ValueError()
+   suspended=bool(install.get('suspended_at'));permissions=install.get('permissions')or{}
+   if suspended:repos={'total_count':0}
+   else:
+    token=installation_token();repos=request('/installation/repositories?per_page=1',token=token)
+   count=int(repos.get('total_count',0))
+   login=(install.get('account')or{}).get('login','');kind=(install.get('account')or{}).get('type','')
+   manage='https://github.com/'+('organizations/'+urllib.parse.quote(login,safe='')+'/settings/installations/'if kind=='Organization'else'settings/installations/')+str(config['githubInstallationId'])
+   result={'configured':True,'ok':not suspended and count>0,'app':{'id':str(app['id']),'slug':app.get('slug',''),'owner':(app.get('owner')or{}).get('login','')},'installation':{'id':str(install['id']),'account':login,'repositorySelection':install.get('repository_selection','selected')},'permissions':{k:permissions.get(k,'none')for k in ['contents','metadata','pull_requests']},'repositoryCount':count,'manageUrl':manage,'previewSupported':permissions.get('pull_requests')=='read' and 'pull_request'in install.get('events',[])}
+   if suspended:result['error']='L’installation GitHub est suspendue. Réactivez-la sur GitHub.'
+   elif count==0:result['error']='Aucun dépôt autorisé. Choisissez les dépôts dans les paramètres de l’installation GitHub.'
+ elif action=='repositories':
+  search=str(data.get('search')or'').strip().lower()[:100];truncated=False;total=0
+  if not configured:rows=[];total=0;more=False
+  elif search:
+   rows=[]
+   for current in range(1,11):
+    response=request('/installation/repositories?per_page=100&page='+str(current),token=token);total=int(response.get('total_count',0));batch=response.get('repositories',[]);rows.extend(batch)
+    if len(rows)>=total or len(batch)<100:break
+   truncated=len(rows)<total;rows=[r for r in rows if search in r['full_name'].lower()];total=len(rows);more=page*per_page<total;rows=rows[(page-1)*per_page:page*per_page]
+  else:
+   response=request('/installation/repositories?per_page='+str(per_page)+'&page='+str(page),token=token);rows=response.get('repositories',[]);total=int(response.get('total_count',0));more=page*per_page<total
+  result={'items':[{'id':r['id'],'fullName':r['full_name'],'defaultBranch':r['default_branch'],'private':r['private']}for r in rows],'configured':configured,'page':page,'perPage':per_page,'totalItems':total,'hasMore':more,'truncated':truncated,'searchScope':'authorized-repositories'}
+ elif action=='branches':
+  if not configured or not data.get('repositoryId'):raise ValueError()
+  # Creating a repository-scoped token above proves membership in this installation.
+  repository=request('/repositories/'+str(int(data['repositoryId'])),token=token)['full_name']
+  rows=request('/repos/'+repository+'/branches?per_page='+str(per_page)+'&page='+str(page),token=token)
+  result={'items':[{'name':r['name']}for r in rows],'page':page,'perPage':per_page,'hasMore':len(rows)==per_page,'repository':repository}
+ elif action=='pull-request':
+  if not configured:raise ValueError()
+  number=int(data.get('number',0))
+  if number<1 or number>100000000:raise ValueError()
+  r=request('/repos/'+data['repository']+'/pulls/'+str(number),token=token)
+  result={k:r.get(k)for k in ['number','state','draft','author_association','head','base','merged']}
+ elif action=='hook-config':
+  # JWT de l'App seulement ; seule l'URL est renvoyée (jamais le secret, même masqué).
+  if not configured:raise ValueError()
+  hook=request('/app/hook/config',token=identity);result={'url':str(hook.get('url')or'')[:500]}
+ elif action=='commit':
+  r=request('/repos/'+data['repository']+'/commits/'+urllib.parse.quote(data['branch'],safe=''),token=token);result={'sha':r['sha']}
+ else:raise ValueError()
+ print(json.dumps(result))
+except Exception as error:
+ status=getattr(error,'code',0)
+ message='GitHub refuse l’accès au dépôt ou à la branche. Vérifiez l’installation et ses autorisations.'if status in [401,403,404]else'GitHub est indisponible ou sa configuration est invalide.'
+ if status==429:message='La limite de requêtes GitHub est atteinte. Réessayez plus tard.'
+ if isinstance(error,(TimeoutError,subprocess.TimeoutExpired)):message='Le contrôle GitHub a dépassé le délai prévu. Réessayez.'
+ print(json.dumps({'error':message}))
+finally:signal.alarm(0)
+`;
+
+//#endregion
+//#region src/lib/handlers/webApps/operationReaders.ts
+/** Bounded incremental log reads; cursors describe only this authorized deployment file. */
+const WEB_LOG_READER = String.raw`
+import sys,pathlib,json,base64,hashlib,codecs,os
+root=pathlib.Path(sys.argv[1]).absolute();ident=sys.argv[2];cursor=sys.argv[3];limit=65536
+path=root/'logs'/(ident+'.log')
+if root.resolve()!=root or path.parent.resolve()!=path.parent or path.is_symlink():raise ValueError('Invalid log path')
+def result(text='',cursor='',reset=False,truncated=False,hasMore=False):print(json.dumps(dict(text=text,cursor=cursor,reset=reset,truncated=truncated,hasMore=hasMore)))
+try:
+ with open(path,'rb')as f:
+  stat=os.fstat(f.fileno());prefix=hashlib.sha256(f.read(128)).hexdigest();token={}
+  if cursor:
+   try:token=json.loads(base64.urlsafe_b64decode(cursor+'='*((-len(cursor))%4)))
+   except Exception:token={}
+  valid=token.get('i')==stat.st_ino and token.get('d')==stat.st_dev and token.get('h')==prefix and token.get('j')==ident and isinstance(token.get('o'),int) and 0<=token['o']<=stat.st_size
+  reset=not valid;offset=token['o']if valid else max(0,stat.st_size-limit)
+  f.seek(offset);data=f.read(limit)
+  if offset and reset:
+   while data and data[0]&0xc0==0x80:data=data[1:];offset+=1
+  decoder=codecs.getincrementaldecoder('utf-8')('replace');text=decoder.decode(data,final=offset+len(data)>=stat.st_size);consumed=len(data)-len(decoder.getstate()[0]);offset+=consumed
+  token={'i':stat.st_ino,'d':stat.st_dev,'h':prefix,'j':ident,'o':offset}
+  encoded=base64.urlsafe_b64encode(json.dumps(token,separators=(',',':')).encode()).rstrip(b'=').decode()
+  result(text,encoded,reset,reset and stat.st_size>limit,offset<stat.st_size)
+except FileNotFoundError:result(reset=bool(cursor))
+`;
+
+//#endregion
+//#region src/lib/handlers/webApps/api.ts
+const webRoot = () => $os.getenv("WEB_APPS_ROOT") || `${$app.dataDir()}/web-apps`;
+const key$1 = () => {
+	const value = $os.getenv("WEB_APPS_MASTER_KEY");
+	if (!/^[\x21-\x7e]{32}$/.test(value)) throw new BadRequestError("Clé maître Applications web non configurée.");
+	return value;
+};
+const encrypt = (value) => $security.encrypt(JSON.stringify(value), key$1());
+const decrypt = (value) => value ? JSON.parse(toString($security.decrypt(value, key$1()))) : {};
+const webInput = (e) => JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+const webJson = (e, value, status = 200) => {
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(status, value);
+};
+const webEnabled = () => $os.getenv("WEB_APPS_ENABLED") === "true";
+/** Plafond de sites du serveur, previews comprises (un worker, un disque) ; WEB_APPS_MAX_SITES le remplace. */
+const WEB_SITES_MAX = 100;
+const webSitesMax = () => {
+	const value = Number($os.getenv("WEB_APPS_MAX_SITES"));
+	return Number.isInteger(value) && value > 0 ? value : WEB_SITES_MAX;
+};
+const webSitesFull = (store = $app) => store.countRecords("web_apps") >= webSitesMax();
+const assertWebSiteCapacity = (store = $app) => {
+	if (webSitesFull(store)) throw new BadRequestError(`Limite de ${webSitesMax()} sites atteinte sur ce serveur. Contactez la plateforme.`);
+};
+/**
+* Routes du worker et des services locaux (`/api/web-apps/_*`) : connexion directe en boucle locale uniquement. Le
+* pare-feu et le proxy du dashboard tournent sur le même hôte : leur pair TCP est aussi 127.0.0.1. Ils refusent ces
+* chemins (404) et ajoutent toujours un en-tête de relais ; une requête qui en porte un n'est donc jamais locale.
+*/
+const WEB_RELAY_HEADERS = [
+	"X-Forwarded-For",
+	"X-Forwarded-Host",
+	"X-Forwarded-Proto",
+	"X-Real-Ip",
+	"Forwarded",
+	"Via"
+];
+const webDirectLoopback = (e) => /^127\.0\.0\.1:|^\[::1\]:/.test(e.request.remoteAddr || "") && WEB_RELAY_HEADERS.every((name) => !e.request.header.values(name).length);
+const findWebApp = (id) => {
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Application invalide.");
+	return $app.findRecordById("web_apps", id);
+};
+const webConfig = (r) => JSON.parse(r.getString("config") || "{}");
+const webSourceBuildSupported = (r, store = $app) => runtimeNeedsSource(runtimeProfile(r, store));
+const environment = (r) => decrypt(r.getString("envEncrypted"));
+const settingsRecord = () => {
+	try {
+		return $app.findFirstRecordByFilter("web_app_settings", "key = \"github\"");
+	} catch {
+		return null;
+	}
+};
+const settings = () => {
+	const r = settingsRecord();
+	return r ? decrypt(r.getString("valueEncrypted")) : {};
+};
+/**
+* Lecteur GitHub avec UNE connexion : seuls {githubAppId, githubAppSlug, githubInstallationId, privateKey, ownerId,
+* ownerLogin} entrent dans le fichier 0600 (ni meta ni webhookSecret). Principale absente : config {}
+* (configured:false). Id explicite inconnu, ou connexion désactivée sans allowDisabled : 400.
+*/
+const webGithub = (action, extra = {}, connectionId = "default", opts = {}) => {
+	const connection = webGithubConnection(connectionId, $app, {
+		allowDisabled: opts.allowDisabled,
+		allowMissing: true
+	});
+	const payload = `${$app.dataDir()}/.web-github-${$security.randomString(24)}.json`;
+	try {
+		$os.writeFile(payload, JSON.stringify({
+			action,
+			config: githubReaderConfig(connection.value),
+			...extra
+		}), 384);
+		const r = JSON.parse(toString($os.cmd("python3", "-c", GITHUB_READER, payload).combinedOutput()));
+		if (r.error) throw new BadRequestError(r.error);
+		return r;
+	} finally {
+		try {
+			$os.remove(payload);
+		} catch {}
+	}
+};
+const serializeWebApp = (r) => {
+	const config = webConfig(r), env = environment(r);
+	return {
+		id: r.id,
+		name: r.getString("name"),
+		...config,
+		runtimeKind: runtimeProfile(r).kind,
+		sourceDeployable: webSourceBuildSupported(r),
+		status: r.getString("status") || "stopped",
+		deletion: webDeletionView(r),
+		activeDeployment: r.getString("activeDeployment"),
+		desiredCommit: r.getString("desiredCommit"),
+		lastError: r.getString("lastError"),
+		created: r.getString("created"),
+		updated: r.getString("updated"),
+		url: `https://${config.generatedDomain}`,
+		env: Object.keys(env).sort().map((name) => ({
+			name,
+			build: env[name].build,
+			runtime: env[name].runtime,
+			hasValue: true,
+			public: name.startsWith("NEXT_PUBLIC_")
+		}))
+	};
+};
+const phaseKeys = {
+	fetch: "Récupération du commit",
+	build: "Construction Next.js",
+	start: "Démarrage de la nouvelle version",
+	health: "Contrôle de santé",
+	publish: "Publication",
+	stop: "Arrêt",
+	domain: "Certificat HTTPS",
+	"domains-sync": "Mise à jour des domaines"
+};
+const phasesOf = (r) => {
+	try {
+		const value = JSON.parse(r.getString("phases") || "[]");
+		return Array.isArray(value) ? value.slice(0, 20) : [];
+	} catch {
+		return [];
+	}
+};
+const changePhase = (r, key, label, now, terminal = false) => {
+	const phases = phasesOf(r), last = phases[phases.length - 1];
+	if ((terminal || key && last?.key !== key) && last && !last.finishedAt) {
+		last.finishedAt = now;
+		last.durationMs = Math.max(0, Date.parse(now) - Date.parse(last.startedAt));
+	}
+	if (!terminal && key && phaseKeys[key] && last?.key !== key && phases.length < 20) phases.push({
+		key,
+		label: phaseKeys[key],
+		startedAt: now
+	});
+	if (key && phaseKeys[key]) r.set("stageKey", key);
+	if (label) r.set("stage", label.slice(0, 100));
+	r.set("phases", phases);
+};
+const cancellable = (r) => ["deploy", "ci-deploy"].includes(r.getString("action")) && ["queued", "running"].includes(r.getString("status")) && !r.getString("publicationStartedAt");
+const retryable = (r) => r.getString("action") === "deploy" && ["failed", "cancelled"].includes(r.getString("status")) && /^[a-f0-9]{40}$/.test(r.getString("commit")) && !!r.getString("snapshotEncrypted");
+const serializeWebDeployment = (r, active = "") => ({
+	id: r.id,
+	appId: r.getString("appId"),
+	action: r.getString("action"),
+	commit: r.getString("commit"),
+	status: r.getString("status"),
+	stage: r.getString("stage"),
+	stageKey: r.getString("stageKey"),
+	error: r.getString("error"),
+	created: r.getString("created"),
+	updated: r.getString("updated"),
+	startedAt: r.getString("startedAt"),
+	finishedAt: r.getString("finishedAt"),
+	heartbeatAt: r.getString("heartbeatAt"),
+	cancelRequested: r.getBool("cancelRequested"),
+	cancellable: cancellable(r),
+	retryable: retryable(r),
+	retriedFrom: r.getString("retriedFrom"),
+	phases: phasesOf(r).map((p) => ({
+		...p,
+		durationMs: p.finishedAt ? p.durationMs : Math.max(0, Date.now() - Date.parse(p.startedAt))
+	})),
+	elapsedSeconds: r.getString("startedAt") ? Math.max(0, Math.floor(((r.getString("finishedAt") ? Date.parse(r.getString("finishedAt")) : Date.now()) - Date.parse(r.getString("startedAt"))) / 1e3)) : 0,
+	active: active === r.id,
+	available: (JSON.parse(r.getString("result") || "{}") || {}).available !== false
+});
+const capability = () => {
+	let worker = {};
+	try {
+		worker = JSON.parse(toString($os.readFile(`${webRoot()}/worker-status.json`)));
+	} catch {}
+	const age = Date.now() - Date.parse(worker.checkedAt || "");
+	return {
+		workerReady: age >= 0 && age < 6e4 && worker.ready === true,
+		rootlessReady: worker.rootless === true,
+		...webGithubCapability(),
+		gitAvailable: worker.git === true,
+		railpackAvailable: worker.railpack === true,
+		error: age < 6e4 ? worker.error || "" : "Worker non démarré.",
+		buildCpu: 1,
+		buildMemoryMiB: 3072,
+		runtimeCpu: .5,
+		runtimeMemoryMiB: 768
+	};
+};
+/** État du worker joint aux listes (GET /api/web-apps, GET /api/web-projects/groups). */
+const webAppsCapability = capability;
+const pageNumber = (e) => Math.max(1, Math.min(1e4, Math.floor(Number(e.request.url.query().get("page")) || 1)));
+const domainSnapshot = (appId) => {
+	try {
+		return $app.findRecordsByFilter("web_app_domains", "appId = {:id}", "", 100, 0, { id: appId }).filter((r) => [
+			"verified",
+			"pending_certificate",
+			"active"
+		].includes(r.getString("status"))).map((r) => ({
+			id: r.id,
+			host: r.getString("host"),
+			certificate: r.getString("status") === "active"
+		}));
+	} catch {
+		return [];
+	}
+};
+/**
+* Plafond de jobs en attente par projet (une file, un worker par hôte). Application sans projet : plateforme, aucun
+* plafond. Un déploiement remplace ceux de cette application encore en file (enqueueWebDeployment) : ils ne comptent
+* pas.
+*/
+const assertWebQueueCapacity = (app, action, store = $app) => {
+	const member = webMembership(app.id, store);
+	if (!member) return;
+	const limits = webProjectLimits(webProject(member.getString("projectId"), store)).resources;
+	if (!limits.enabled) return;
+	const replaced = action === "deploy" ? " AND NOT (appId={:app} AND action IN ('deploy','ci-deploy'))" : "";
+	if (store.countRecords("web_deployments", $dbx.exp(`status='queued'${replaced} AND appId IN (SELECT appId FROM web_app_environments WHERE projectId={:project})`, {
+		app: app.id,
+		project: member.getString("projectId")
+	})) >= limits.queuedBuilds) throw new TooManyRequestsError("Trop de traitements en attente pour ce projet. Réessayez dans quelques minutes.");
+};
+const enqueueWebDeployment = (app, action, actorId, extra, resolvedCommit, store) => {
+	let commit = resolvedCommit;
+	const sourceBuild = webSourceBuildSupported(app, store);
+	if (action === "deploy") {
+		if (!/^[a-f0-9]{40}$/.test(commit) && sourceBuild) throw new BadRequestError("Commit invalide.");
+		app.set("desiredCommit", commit);
+		store.save(app);
+		const pending = store.findRecordsByFilter("web_deployments", "appId = {:id} && status = \"queued\" && (action = \"deploy\" || action = \"ci-deploy\")", "", 500, 0, { id: app.id });
+		for (const p of pending) {
+			p.set("status", "cancelled");
+			p.set("stage", "Remplacé par un déploiement plus récent");
+			p.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+			if (p.getString("action") === "ci-deploy") scrubWebCiCredentials(p);
+			store.save(p);
+		}
+	}
+	const resolved = resolveWebEnvironment(app, store);
+	let snapshot = {
+		config: webConfig(app),
+		env: resolved.env,
+		projectEnvironment: resolved.context,
+		runtime: runtimeWorkerSnapshot(app, store),
+		storage: storageWorkerSnapshot(app, store),
+		domains: domainSnapshot(app.id),
+		...extra
+	};
+	if (action === "rollback") {
+		const old = store.findRecordById("web_deployments", extra.deploymentId);
+		if (old.getString("appId") !== app.id || old.getString("status") !== "ready" || ![
+			"deploy",
+			"rollback",
+			"start",
+			"apply-runtime",
+			"restore-backup",
+			"promote",
+			"ci-deploy"
+		].includes(old.getString("action")) || !(JSON.parse(old.getString("result") || "{}") || {}).image || (JSON.parse(old.getString("result") || "{}") || {}).available === false) throw new BadRequestError("Version de retour arrière indisponible.");
+		snapshot = {
+			...decrypt(old.getString("snapshotEncrypted")),
+			rollbackResult: JSON.parse(old.getString("result") || "{}"),
+			domains: domainSnapshot(app.id)
+		};
+		commit = old.getString("commit");
+	}
+	if (action === "start") {
+		const old = app.getString("activeDeployment") ? store.findRecordById("web_deployments", app.getString("activeDeployment")) : null;
+		if (!old) throw new BadRequestError("Publiez une première version avant de démarrer.");
+		snapshot = {
+			...decrypt(old.getString("snapshotEncrypted")),
+			rollbackResult: JSON.parse(old.getString("result") || "{}"),
+			domains: domainSnapshot(app.id)
+		};
+		commit = old.getString("commit");
+	}
+	if (action !== "restore-backup") delete snapshot.restoreBackup;
+	if (["start", "rollback"].includes(action)) {
+		delete snapshot.promotion;
+		delete snapshot.ci;
+		snapshot.runtime ||= validateRuntimeProfile();
+		snapshot.storage ||= [];
+	}
+	const row = new Record(store.findCollectionByNameOrId("web_deployments"));
+	row.set("appId", app.id);
+	row.set("actorId", actorId);
+	row.set("action", action);
+	row.set("commit", commit || "");
+	row.set("status", "queued");
+	row.set("stage", "En attente");
+	row.set("snapshotEncrypted", encrypt(snapshot));
+	store.save(row);
+	return row;
+};
+/**
+* Hors plafond de file : le nettoyage qui suit une écriture déjà faite et le redémarrage d'une restauration de
+* stockage, signalé par le worker : les refuser perdrait le travail.
+*/
+const WEB_QUEUE_INTERNAL = ["preview-remove", "domains-sync"];
+const queueWebDeployment = (app, action, actorId, extra = {}, store = $app) => {
+	assertWebEnvironmentDeployAllowed(app, action, store);
+	const capped = !WEB_QUEUE_INTERNAL.includes(action) && !extra.storageRestore;
+	if (capped) assertWebQueueCapacity(app, action, store);
+	let commit = extra.commit || app.getString("desiredCommit");
+	const sourceBuild = webSourceBuildSupported(app, store), current = webConfig(app);
+	if (action === "deploy" && sourceBuild && !current.repository) throw new BadRequestError("Ce profil construit des sources. Renseignez un dépôt avant de déployer.");
+	if (action === "deploy" && !extra.commit && sourceBuild) {
+		if (current.source !== "git") assertWebGithubRate(app.id, actorId);
+		commit = current.source === "git" ? resolveWebGitCommit(`${current.gitSourceId || ""}`, current.branch, store) : webGithub("commit", {
+			repository: current.repository,
+			branch: current.branch
+		}, resolvedConnectionId(current)).sha;
+	}
+	let row;
+	store.runInTransaction((tx) => {
+		assertWebNotDeleting(tx.findRecordById("web_apps", app.id));
+		if (capped) assertWebQueueCapacity(app, action, tx);
+		row = enqueueWebDeployment(app, action, actorId, extra, commit, tx);
+	});
+	return row;
+};
+/**
+* Source : GitHub App (défaut, `source` absent) ou « Dépôt Git » (`source:'git'`, `gitSourceId`). Pour une source Git,
+* `repository` est toujours réécrit depuis la ligne web_git_sources ('git:'+canonical) : un client ne peut pas forger
+* un dépôt qui ne correspond pas à sa source.
+*/
+const validateConfig = (input, existing = {}, store = $app) => {
+	const c = { ...existing };
+	for (const name of [
+		"repository",
+		"branch",
+		"rootDirectory",
+		"healthPath"
+	]) if (input[name] !== void 0) c[name] = `${input[name]}`.trim();
+	c.repository = c.repository || "";
+	c.branch = c.branch || "main";
+	c.rootDirectory = c.rootDirectory || ".";
+	c.healthPath = c.healthPath || "/";
+	if (input.source !== void 0 && input.source !== "git" && input.source !== "github") throw new BadRequestError("Source attendue : github ou git.");
+	const git = input.source === "git" || input.source === void 0 && existing.source === "git";
+	if (git) {
+		const id = `${input.gitSourceId ?? existing.gitSourceId ?? ""}`;
+		if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Dépôt Git invalide.");
+		try {
+			Object.assign(c, webGitAppConfig(id, store));
+		} catch (error) {
+			if (input.source !== void 0 || input.gitSourceId !== void 0) throw error;
+			Object.assign(c, {
+				source: "git",
+				gitSourceId: id,
+				repository: `${existing.repository || ""}`
+			});
+		}
+	} else {
+		delete c.source;
+		delete c.gitSourceId;
+		if (c.repository && (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(c.repository) || c.repository.includes(".."))) throw new BadRequestError("Dépôt attendu au format propriétaire/dépôt.");
+	}
+	if (!/^[A-Za-z0-9_./-]{1,200}$/.test(c.branch) || c.branch.includes("..")) throw new BadRequestError("Branche invalide.");
+	if (c.rootDirectory.startsWith("/") || c.rootDirectory.split("/").includes("..") || !/^[A-Za-z0-9_./-]{1,200}$/.test(c.rootDirectory)) throw new BadRequestError("Dossier du projet invalide.");
+	if (!/^\/[A-Za-z0-9_./-]{0,200}$/.test(c.healthPath)) throw new BadRequestError("Chemin de contrôle invalide.");
+	c.repositoryId = git ? 0 : Number(input.repositoryId ?? c.repositoryId) || 0;
+	c.autoDeploy = input.autoDeploy === void 0 ? existing.autoDeploy !== false : input.autoDeploy === true;
+	applyWebGithubConnectionConfig(c, input, existing, git, store);
+	return c;
+};
+const HandleWebAppsList = (e) => {
+	const user = requireWebUser(e), page = pageNumber(e), q = isWebPlatformAdmin(user) ? {
+		filter: "",
+		params: {}
+	} : webAppAccessQuery(user, "id"), rows = $app.findRecordsByFilter("web_apps", q.filter, "-created", 26, (page - 1) * 25, q.params);
+	return webJson(e, {
+		enabled: true,
+		capabilities: capability(),
+		items: rows.slice(0, 25).map((r) => ({
+			...serializeWebApp(r),
+			access: webAppAccessView(user, r)
+		})),
+		page,
+		hasMore: rows.length > 25
+	});
+};
+const HandleWebAppCreate = (e) => {
+	const user = requirePlatformAdmin(e), input = webInput(e), name = `${input.name || ""}`.trim(), profile = validateRuntimeProfile(input.runtime), config = validateConfig(input);
+	if (!name || name.length > 80) throw new BadRequestError("Nom requis (80 caractères maximum).");
+	const source = runtimeNeedsSource(profile);
+	if (source && !config.repository) throw new BadRequestError("Un dépôt est requis pour construire ce profil.");
+	if (!source) {
+		config.repository = "";
+		config.repositoryId = 0;
+		config.autoDeploy = false;
+		delete config.source;
+		delete config.gitSourceId;
+		delete config.githubConnectionId;
+	}
+	let savedId = "";
+	$app.runInTransaction((tx) => {
+		if (config.githubConnectionId) webGithubConnection(config.githubConnectionId, tx);
+		assertWebSiteCapacity(tx);
+		const row = new Record(tx.findCollectionByNameOrId("web_apps"));
+		row.set("name", name);
+		row.set("uid", user.id);
+		row.set("status", "stopped");
+		row.set("config", config);
+		const plan = input.env === void 0 ? null : planWebAppEnv(row, input.env);
+		if (plan) row.set("envEncrypted", encrypt(plan.next));
+		tx.save(row);
+		if (plan) auditWebAppEnv(row.id, user.id, plan, tx);
+		config.generatedDomain = `web-${row.id}.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`;
+		row.set("config", config);
+		tx.save(row);
+		restoreWebRuntimeBackup(row, profile, tx);
+		savedId = row.id;
+	});
+	return webJson(e, { app: serializeWebApp(findWebApp(savedId)) }, 201);
+};
+const HandleWebAppGet = (e) => {
+	const { user, app } = requireWebAppPermission(e, "app.read"), rows = $app.findRecordsByFilter("web_deployments", "appId={:id}", "-created", 26, 0, { id: app.id });
+	return webJson(e, {
+		app: serializeWebApp(app),
+		access: webAppAccessView(user, app),
+		deployments: rows.slice(0, 25).map((r) => serializeWebDeployment(r, app.getString("activeDeployment"))),
+		hasMore: rows.length > 25,
+		capabilities: capability()
+	});
+};
+/**
+* Application de projet avec une source Git : la source appartient au même projet (cible RBAC de ses routes). Une
+* source sans projet, ou dont aucune autre application n'est dans un autre projet (rattachement resté après un
+* détachement), est adoptée par celui-ci ; une source encore utilisée dans un autre projet est refusée (une clé par
+* dépôt). `appId` : l'application rattachée, exclue du décompte.
+*/
+const bindWebGitSourceProject = (config, projectId, store = $app, appId = "") => {
+	if (config?.source !== "git" || !projectId) return;
+	let row;
+	try {
+		row = store.findRecordById("web_git_sources", `${config.gitSourceId || ""}`);
+	} catch {
+		throw new NotFoundError("Dépôt Git introuvable.");
+	}
+	const current = row.getString("projectId");
+	if (current === projectId) return;
+	if (current && webGitSourceAppProjects(row.id, store, appId).some((id) => !!id && id !== projectId)) throw new BadRequestError("Ce dépôt Git est relié à un autre projet.");
+	row.set("projectId", projectId);
+	store.save(row);
+};
+const assertWebPreviewSourceRepositoryKept = (appId, store) => {
+	const member = webMembership(appId, store);
+	if (!member) return;
+	const project = webProject(member.getString("projectId"), store);
+	if (project.getBool("multiRepository") && project.getBool("previewEnabled") && project.getString("previewSourceAppId") === appId) throw new BadRequestError("Ce site sert de modèle aux previews du projet. Désactivez les previews avant de changer son dépôt.");
+};
+/**
+* PATCH composite : dépôt -> app.repository (plateforme) sauf dépôt de la liste autorisée du projet (admin) ; source
+* (GitHub App / Dépôt Git) -> source.git.configure (plateforme) ; nom, branche, dossier, chemin de contrôle,
+* déploiement auto -> app.configure ; variables -> variables.write.
+*/
+const HandleWebAppUpdate = (e) => {
+	const access = requireWebAppPermission(e, "app.read"), row = access.app, input = webInput(e), need = (permission) => {
+		if (webRoleAllows(access.role, permission)) return;
+		throw new ForbiddenError(isWebPlatformPermission(permission) ? "Action réservée aux administrateurs de la plateforme." : "Droits insuffisants sur ce projet.");
+	};
+	if (input.githubConnectionId !== void 0) {
+		const before = webConfig(row), raw = input.githubConnectionId, wanted = raw === null || raw === "" || raw === "default" ? "" : `${raw}`, git = input.source === "git" || input.source === void 0 && before.source === "git", current = before.source === "git" ? "" : `${before.githubConnectionId || ""}`;
+		if (!git && wanted !== current) need("app.repository");
+	}
+	const base = validateConfig({}, webConfig(row)), next = validateConfig(input, webConfig(row));
+	const isGit = next.source === "git", sourceChanged = (next.source || "github") !== (base.source || "github") || (next.gitSourceId || "") !== (base.gitSourceId || "");
+	const repositoryChanged = sourceChanged || (isGit ? next.repository !== base.repository : next.repository.toLowerCase() !== base.repository.toLowerCase());
+	if (sourceChanged) need(isGit ? "source.git.configure" : "app.repository");
+	else if (repositoryChanged && !canSetWebRepository(access.project, access.user, next.repository, base.repository)) need("app.repository");
+	const connectionChanged = !isGit && resolvedConnectionId(next) !== resolvedConnectionId(base);
+	if (connectionChanged) need("app.repository");
+	if (repositoryChanged || next.repositoryId !== base.repositoryId || [
+		"repository",
+		"branch",
+		"rootDirectory",
+		"healthPath",
+		"autoDeploy"
+	].some((k) => next[k] !== base[k]) || input.name !== void 0 && `${input.name}`.trim() !== row.getString("name")) need("app.configure");
+	if (input.env !== void 0) need("variables.write");
+	if (input.name !== void 0) {
+		const name = `${input.name}`.trim();
+		if (!name || name.length > 80) throw new BadRequestError("Nom invalide.");
+		row.set("name", name);
+	}
+	row.set("config", next);
+	const bindProject = repositoryChanged && (!access.platform || sourceChanged);
+	const previewSourceGuard = repositoryChanged && !!access.environment;
+	if (bindProject || connectionChanged || previewSourceGuard || input.env !== void 0) $app.runInTransaction((tx) => {
+		if (previewSourceGuard) assertWebPreviewSourceRepositoryKept(row.id, tx);
+		if (connectionChanged && next.githubConnectionId) webGithubConnection(next.githubConnectionId, tx);
+		const plan = input.env === void 0 ? null : planWebAppEnv(tx.findRecordById("web_apps", row.id), input.env);
+		if (plan) row.set("envEncrypted", encrypt(plan.next));
+		if (bindProject || plan) resolveWebEnvironment(row, tx);
+		if (bindProject) bindWebGitSourceProject(next, access.environment?.getString("projectId") || "", tx, row.id);
+		tx.save(row);
+		if (plan) auditWebAppEnv(row.id, access.user.id, plan, tx);
+	});
+	else $app.save(row);
+	return webJson(e, { app: serializeWebApp(row) });
+};
+const HandleWebAppAction = (e) => {
+	const { user, app: found, platform } = requireWebAppPermission(e, "app.deploy"), app = found, action = e.request.pathValue("action");
+	if (![
+		"deploy",
+		"rollback",
+		"start",
+		"stop"
+	].includes(action)) throw new BadRequestError("Action inconnue.");
+	const input = webInput(e);
+	if (action === "rollback" && !/^[a-z0-9]{15}$/.test(input.deploymentId || "")) throw new BadRequestError("Version de retour arrière invalide.");
+	if (!platform && ["rollback", "start"].includes(action)) {
+		let old = null;
+		try {
+			old = $app.findRecordById("web_deployments", action === "rollback" ? input.deploymentId : app.getString("activeDeployment"));
+		} catch {}
+		if (old?.getString("appId") === app.id) assertWebDeploymentInScope(app, old);
+	}
+	return webJson(e, { deployment: serializeWebDeployment(queueWebDeployment(app, action, user.id, action === "rollback" ? { deploymentId: input.deploymentId } : action === "deploy" && input.fullRebuild === true ? { fullRebuild: true } : {})) }, 202);
+};
+const HandleWebDeployments = (e) => {
+	const app = requireWebAppPermission(e, "app.read").app, page = pageNumber(e), rows = $app.findRecordsByFilter("web_deployments", "appId={:id}", "-created", 26, (page - 1) * 25, { id: app.id });
+	return webJson(e, {
+		items: rows.slice(0, 25).map((r) => serializeWebDeployment(r, app.getString("activeDeployment"))),
+		page,
+		hasMore: rows.length > 25
+	});
+};
+const requestWebDeployment = (e, permission) => {
+	const { user, app: found, platform } = requireWebAppPermission(e, permission), app = found, id = e.request.pathValue("deploymentId");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Déploiement invalide.");
+	const job = $app.findRecordById("web_deployments", id);
+	if (job.getString("appId") !== app.id) throw new ForbiddenError("Accès refusé.");
+	return {
+		user,
+		app,
+		job,
+		platform
+	};
+};
+const HandleWebDeploymentLogs = (e) => {
+	const { job } = requestWebDeployment(e, "logs.read"), cursor = e.request.url.query().get("cursor") || "";
+	if (cursor.length > 1e3 || cursor && !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new BadRequestError("Curseur de journal invalide.");
+	try {
+		return webJson(e, JSON.parse(toString($os.cmd("python3", "-c", WEB_LOG_READER, webRoot(), job.id, cursor).combinedOutput())));
+	} catch {
+		throw new BadRequestError("Le journal est indisponible pour le moment.");
+	}
+};
+const HandleWebDeploymentCancel = (e) => {
+	const { app, job } = requestWebDeployment(e, "app.deploy");
+	let value;
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById("web_deployments", job.id);
+		if (!cancellable(row)) throw new BadRequestError("Ce déploiement ne peut plus être annulé. La publication est déjà engagée ou le traitement est terminé.");
+		const now = (/* @__PURE__ */ new Date()).toISOString();
+		row.set("cancelRequested", true);
+		row.set("cancelRequestedAt", now);
+		if (row.getString("status") === "queued") {
+			row.set("status", "cancelled");
+			row.set("stage", "Annulé avant démarrage");
+			row.set("finishedAt", now);
+			if (row.getString("action") === "ci-deploy") scrubWebCiCredentials(row);
+			changePhase(row, "", "Annulé avant démarrage", now, true);
+		}
+		tx.save(row);
+		value = serializeWebDeployment(row, app.getString("activeDeployment"));
+	});
+	return webJson(e, { deployment: value }, 202);
+};
+const HandleWebDeploymentRetry = (e) => {
+	const { user, app, job, platform } = requestWebDeployment(e, "app.deploy");
+	if (!retryable(job)) throw new BadRequestError("Seuls les déploiements échoués ou annulés peuvent être relancés.");
+	const original = decrypt(job.getString("snapshotEncrypted"));
+	if (!original.config || !original.env) throw new BadRequestError("La configuration de ce déploiement est indisponible.");
+	if (!platform) {
+		assertWebDeploymentInScope(app, job);
+		const latest = webConfig(app);
+		if (original.config.source === "git" || latest.source === "git" ? original.config.source !== latest.source || `${original.config.gitSourceId || ""}` !== `${latest.gitSourceId || ""}` || `${original.config.repository || ""}` !== `${latest.repository || ""}` : `${original.config.repository || ""}`.toLowerCase() !== `${latest.repository || ""}`.toLowerCase() || resolvedConnectionId(original.config) !== resolvedConnectionId(latest)) throw new ForbiddenError("Ce déploiement utilisait un autre dépôt Git. Déployez une nouvelle version ; seul un administrateur de la plateforme peut le relancer.");
+	}
+	let row;
+	$app.runInTransaction((tx) => {
+		const currentApp = tx.findRecordById("web_apps", app.id), old = tx.findRecordById("web_deployments", job.id);
+		if (!retryable(old)) throw new BadRequestError("Ce déploiement ne peut plus être relancé.");
+		row = queueWebDeployment(currentApp, "deploy", user.id, { commit: old.getString("commit") }, tx);
+		row.set("snapshotEncrypted", encrypt({
+			...original,
+			domains: domainSnapshot(app.id)
+		}));
+		row.set("retriedFrom", old.id);
+		tx.save(row);
+	});
+	return webJson(e, { deployment: serializeWebDeployment(row) }, 202);
+};
+const HandleWebRuntime = (e) => {
+	const app = requireWebAppPermission(e, "app.read").app;
+	let value;
+	try {
+		value = JSON.parse(toString($os.readFile(`${webRoot()}/runtime-status.json`))).applications?.[app.id];
+	} catch {}
+	const age = value ? Date.now() - Date.parse(value.checkedAt || "") : Infinity;
+	if (!value || age < 0 || age > 9e4) return webJson(e, {
+		available: false,
+		scope: "application-container",
+		checkedAt: value?.checkedAt || "",
+		state: app.getString("status"),
+		lastError: "Les mesures du conteneur ne sont pas encore disponibles."
+	});
+	return webJson(e, {
+		available: value.available === true,
+		scope: value.scope === "application-services" ? "application-services" : "application-container",
+		serviceCount: Number.isInteger(value.services) && value.services > 0 && value.services <= 4 ? value.services : 1,
+		checkedAt: value.checkedAt,
+		state: value.state,
+		cpuPercent: value.cpuPercent,
+		memoryBytes: value.memoryBytes,
+		memoryLimitBytes: value.memoryLimitBytes,
+		pids: value.pids,
+		lastError: value.lastError || ""
+	});
+};
+const HandleWebWebhookDeliveries = (e) => {
+	const c = webConfig(requireWebAppPermission(e, "app.read").app), page = pageNumber(e);
+	const rows = $app.findRecordsByFilter("web_webhook_deliveries", "repository={:repository} && branch={:branch} && connectionId={:connection}", "-created", 26, (page - 1) * 25, {
+		repository: c.repository,
+		branch: c.branch,
+		connection: resolvedConnectionId(c)
+	});
+	return webJson(e, {
+		page,
+		hasMore: rows.length > 25,
+		items: rows.slice(0, 25).map((r) => ({
+			id: r.id,
+			deliveryId: r.getString("deliveryId"),
+			event: r.getString("event"),
+			repository: r.getString("repository"),
+			branch: r.getString("branch"),
+			payloadCommit: r.getString("payloadCommit"),
+			resolvedCommit: r.getString("resolvedCommit"),
+			status: r.getString("status"),
+			queued: r.getInt("queued"),
+			duplicateCount: r.getInt("duplicateCount"),
+			note: r.getString("note"),
+			created: r.getString("created"),
+			lastReceivedAt: r.getString("lastReceivedAt")
+		}))
+	});
+};
+const HandleWebSettingsGet = (e) => {
+	requirePlatformAdmin(e);
+	const s = settings();
+	return webJson(e, {
+		settings: {
+			githubAppId: s.githubAppId || "",
+			githubAppSlug: s.githubAppSlug || "",
+			githubInstallationId: s.githubInstallationId || "",
+			hasPrivateKey: !!s.privateKey,
+			hasWebhookSecret: !!s.webhookSecret,
+			webhookUrl: githubWebhookUrl("default")
+		},
+		capabilities: capability()
+	});
+};
+const HandleWebSettingsPut = (e) => {
+	requirePlatformAdmin(e);
+	const input = webInput(e), s = settings();
+	for (const name of ["githubAppId", "githubInstallationId"]) if (input[name] !== void 0) {
+		if (input[name] && !/^\d{1,20}$/.test(`${input[name]}`)) throw new BadRequestError("Identifiant GitHub invalide.");
+		s[name] = `${input[name]}`;
+	}
+	if (input.githubAppSlug !== void 0) {
+		if (!/^[a-z0-9-]{0,100}$/.test(input.githubAppSlug)) throw new BadRequestError("Nom GitHub App invalide.");
+		s.githubAppSlug = input.githubAppSlug;
+	}
+	if (input.privateKey) {
+		if (!/^-----BEGIN (RSA )?PRIVATE KEY-----/.test(input.privateKey) || input.privateKey.length > 2e4) throw new BadRequestError("Clé privée PEM invalide.");
+		s.privateKey = input.privateKey;
+	}
+	if (input.webhookSecret) {
+		if (input.webhookSecret.length < 32 || input.webhookSecret.length > 256) throw new BadRequestError("Secret webhook : 32 à 256 caractères.");
+		s.webhookSecret = input.webhookSecret;
+	}
+	if (input.githubAppId !== void 0 || input.githubInstallationId !== void 0) assertGithubConnectionUnique($app, s.githubAppId, s.githubInstallationId, "github");
+	const r = settingsRecord() || new Record($app.findCollectionByNameOrId("web_app_settings"));
+	r.set("key", "github");
+	r.set("valueEncrypted", encrypt(s));
+	$app.save(r);
+	return HandleWebSettingsGet(e);
+};
+const githubPage = (e) => {
+	const query = e.request.url.query();
+	return {
+		page: Math.max(1, Math.min(1e3, Number(query.get("page")) || 1)),
+		perPage: Math.max(1, Math.min(100, Number(query.get("perPage")) || 50)),
+		search: (query.get("search") || "").slice(0, 100)
+	};
+};
+const HandleWebRepositories = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, webGithub("repositories", githubPage(e), e.request.url.query().get("connectionId") || "default"));
+};
+/**
+* SuperAdmin : toute branche de l'App GitHub partagée. Admin de projet : ?appId= requis, uniquement le dépôt de cette
+* application (identifiant ET nom renvoyé par GitHub), pour ne jamais lister le dépôt privé d'une autre équipe.
+*/
+const HandleWebBranches = (e) => {
+	const user = requireWebUser(e), repositoryId = e.request.pathValue("repositoryId");
+	if (isWebPlatformAdmin(user)) {
+		if (!/^[1-9][0-9]{0,19}$/.test(repositoryId)) throw new BadRequestError("Dépôt GitHub invalide.");
+		const query = e.request.url.query(), appId = query.get("appId");
+		const connectionId = appId ? resolvedConnectionId(webConfig(findWebApp(appId))) || "default" : query.get("connectionId") || "default";
+		assertWebGithubRate(appId || connectionId, user.id);
+		return webJson(e, webGithub("branches", {
+			...githubPage(e),
+			repositoryId
+		}, connectionId));
+	}
+	const target = e.request.url.query().get("appId");
+	if (!target) throw new ForbiddenError("Action réservée aux administrateurs de la plateforme.");
+	const c = webConfig(requireWebPermission(e, { appId: target }, "app.configure").app);
+	if (c.source === "git") throw new ForbiddenError("Utilisez la liste des branches du dépôt Git.");
+	if (!/^[1-9][0-9]{0,19}$/.test(repositoryId) || String(c.repositoryId || "") !== repositoryId || !c.repository) throw new ForbiddenError("Seules les branches du dépôt de cette application sont consultables.");
+	assertWebGithubRate(target, user.id);
+	const result = webGithub("branches", {
+		...githubPage(e),
+		repositoryId
+	}, resolvedConnectionId(c));
+	if (`${result.repository || ""}`.toLowerCase() !== `${c.repository}`.toLowerCase()) throw new ForbiddenError("Seules les branches du dépôt de cette application sont consultables.");
+	return webJson(e, result);
+};
+/**
+* Push vérifié (GitHub App ou webhook « Dépôt Git ») pour une application concernée, dans la transaction de la
+* livraison : fixe desiredCommit, puis ajoute un déploiement sauf si cette tête est déjà publiée ou en cours (les
+* déploiements en attente d'une autre révision sont alors remplacés). True si un déploiement est ajouté.
+*/
+const queueWebGitPush = (tx, row, head) => {
+	const pending = tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 500, 0, { id: row.id });
+	const active = row.getString("activeDeployment") ? tx.findRecordById("web_deployments", row.getString("activeDeployment")) : null;
+	row.set("desiredCommit", head);
+	tx.save(row);
+	if (pending.some((job) => job.getString("commit") === head) || active?.getString("commit") === head) {
+		for (const job of pending) if (job.getString("status") === "queued" && job.getString("commit") !== head) {
+			job.set("status", "cancelled");
+			job.set("stage", "Remplacé par la branche actuelle");
+			job.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+			tx.save(job);
+		}
+		return false;
+	}
+	queueWebDeployment(row, "deploy", "", { commit: head }, tx);
+	return true;
+};
+/** Chemin legacy /api/web-apps/github/webhook : connexion principale (routage et HMAC dans githubConnections.ts). */
+const HandleWebGithubWebhook = (e) => webGithubWebhookFor(e, "default");
+const requireWorker = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const expected = $os.getenv("WEB_APPS_WORKER_SECRET"), actual = e.request.header.get("X-Web-Worker") || "";
+	if (expected.length < 32 || !$security.equal(expected, actual)) throw new UnauthorizedError("Worker non autorisé.");
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
+};
+/** No credentials: the rootless worker publishes this registry for live ingress and admission checks. */
+const HandleWebWorkerProjectLimits = (e) => {
+	requireWorker(e);
+	const projects = {}, apps = {};
+	for (const row of $app.findRecordsByFilter("web_projects", "", "", 1e4, 0)) projects[row.id] = webProjectLimits(row);
+	for (const row of $app.findRecordsByFilter("web_app_environments", "appId!=\"\"", "", 1e4, 0)) {
+		const projectId = row.getString("projectId");
+		if (projects[projectId]) apps[row.getString("appId")] = projectId;
+	}
+	return webJson(e, {
+		version: 1,
+		projects,
+		apps
+	});
+};
+const HandleWebWorkerClaim = (e) => {
+	requireWorker(e);
+	let job = null;
+	$app.runInTransaction((tx) => {
+		const running = tx.findRecordsByFilter("web_deployments", "status=\"running\"", "", 1, 0);
+		if (running.length) {
+			const stale = running[0], last = Date.parse(stale.getString("heartbeatAt") || stale.getString("startedAt") || "");
+			if (!last || Date.now() - last < 5 * 6e4) return;
+			const now = (/* @__PURE__ */ new Date()).toISOString(), cancelled = stale.getBool("cancelRequested");
+			stale.set("status", cancelled ? "cancelled" : "failed");
+			stale.set("finishedAt", now);
+			stale.set("error", cancelled ? "" : "Le worker ne confirme plus ce déploiement. Il a été interrompu ; la version publiée est conservée.");
+			changePhase(stale, "", cancelled ? "Annulé après interruption" : "Interrompu", now, true);
+			if (stale.getString("action") === "ci-deploy") scrubWebCiCredentials(stale);
+			tx.save(stale);
+			const owner = tx.findRecordById("web_apps", stale.getString("appId"));
+			if (!owner.getString("activeDeployment") && !cancelled) {
+				owner.set("status", "failed");
+				owner.set("lastError", stale.getString("error"));
+				tx.save(owner);
+			}
+		}
+		const next = nextWebQueuedJob(tx.findRecordsByFilter("web_deployments", "status=\"queued\"", "created,id", 500, 0).map((row) => ({
+			row,
+			appId: row.getString("appId")
+		})), (appId) => webMembership(appId, tx)?.getString("projectId") || "", (appId) => Date.parse(tx.findRecordsByFilter("web_deployments", "appId={:id} && startedAt!=\"\"", "-startedAt", 1, 0, { id: appId })[0]?.getString("startedAt") || "") || 0);
+		if (!next) return;
+		const r = next.row;
+		if (r.getString("action") === "preview-remove") assertWebPreviewRemovalJob(tx.findRecordById("web_apps", r.getString("appId")), decrypt(r.getString("snapshotEncrypted")), tx);
+		const claimedSnapshot = decrypt(r.getString("snapshotEncrypted"));
+		const policyMember = webMembership(r.getString("appId"), tx);
+		claimedSnapshot.projectPolicy = policyMember ? {
+			projectId: policyMember.getString("projectId"),
+			limits: webProjectLimits(webProject(policyMember.getString("projectId"), tx)),
+			appIds: tx.findRecordsByFilter("web_app_environments", "projectId={:id}", "", 1e4, 0, { id: policyMember.getString("projectId") }).map((row) => row.getString("appId")).filter(Boolean)
+		} : null;
+		if (r.getString("action") === "ci-deploy" && Date.parse(claimedSnapshot.ci?.expiresAt || "") <= Date.now()) {
+			r.set("status", "failed");
+			r.set("error", "Les identifiants CI éphémères ont expiré. Relancez le workflow GitHub.");
+			r.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+			scrubWebCiCredentials(r);
+			tx.save(r);
+			return;
+		}
+		const claimedConfig = claimedSnapshot.config || {};
+		let git = null;
+		if (claimedConfig.source === "git" && r.getString("action") === "deploy" && runtimeNeedsSource(claimedSnapshot.runtime || {})) try {
+			git = webGitJobCredentials(`${claimedConfig.gitSourceId || ""}`, r.getString("commit"), `${claimedSnapshot.promotion?.sourceBranch || claimedConfig.branch || ""}`, tx);
+		} catch {
+			const message = "Source Git indisponible : confirmez l’empreinte et la clé de déploiement.";
+			r.set("status", "failed");
+			r.set("error", message);
+			r.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+			tx.save(r);
+			const owner = tx.findRecordById("web_apps", r.getString("appId"));
+			owner.set("lastError", message);
+			if (!owner.getString("activeDeployment")) owner.set("status", "failed");
+			tx.save(owner);
+			return;
+		}
+		let github = null;
+		if (claimedConfig.source !== "git") try {
+			const connection = webGithubConnection(resolvedConnectionId(claimedConfig), tx, { allowMissing: true });
+			github = {
+				githubAppId: `${connection.value.githubAppId || ""}`,
+				githubInstallationId: `${connection.value.githubInstallationId || ""}`,
+				privateKey: `${connection.value.privateKey || ""}`
+			};
+		} catch {
+			if (r.getString("action") === "deploy" && runtimeNeedsSource(claimedSnapshot.runtime || {})) {
+				const message = "Connexion GitHub indisponible : rattachez l’application à une connexion active, puis redéployez.";
+				r.set("status", "failed");
+				r.set("error", message);
+				r.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+				tx.save(r);
+				const owner = tx.findRecordById("web_apps", r.getString("appId"));
+				owner.set("lastError", message);
+				if (!owner.getString("activeDeployment")) owner.set("status", "failed");
+				tx.save(owner);
+				return;
+			}
+			github = {
+				githubAppId: "",
+				githubInstallationId: "",
+				privateKey: ""
+			};
+		}
+		r.set("status", "running");
+		r.set("stage", "Récupération");
+		const now = (/* @__PURE__ */ new Date()).toISOString();
+		r.set("startedAt", now);
+		r.set("heartbeatAt", now);
+		const stageKey = r.getString("action") === "deploy" ? "fetch" : ["start", "rollback"].includes(r.getString("action")) ? "start" : r.getString("action");
+		changePhase(r, stageKey, phaseKeys[stageKey] || "Préparation", now);
+		tx.save(r);
+		job = {
+			id: r.id,
+			appId: r.getString("appId"),
+			action: r.getString("action"),
+			commit: r.getString("commit"),
+			snapshot: claimedSnapshot,
+			...git ? { git } : {},
+			...github ? { github } : {}
+		};
+	});
+	if (job) job.currentDesiredCommit = findWebApp(job.appId).getString("desiredCommit");
+	return webJson(e, { job });
+};
+const HandleWebWorkerReport = (e) => {
+	requireWorker(e);
+	const input = webInput(e);
+	if (!/^[a-z0-9]{15}$/.test(input.id || "")) throw new BadRequestError("Déploiement invalide.");
+	let response = { ok: true };
+	$app.runInTransaction((tx) => {
+		const job = tx.findRecordById("web_deployments", input.id), app = tx.findRecordById("web_apps", job.getString("appId"));
+		if (input.inspect) {
+			response = {
+				status: job.getString("status"),
+				desiredCommit: app.getString("desiredCommit"),
+				cancelRequested: job.getBool("cancelRequested"),
+				publicationStartedAt: job.getString("publicationStartedAt")
+			};
+			return;
+		}
+		if (input.runtimeStopped) {
+			if (app.getString("activeDeployment") === job.id) {
+				const first = app.getString("status") !== "failed";
+				app.set("status", "failed");
+				app.set("lastError", `${input.runtimeStopped}`.slice(0, 1e3));
+				tx.save(app);
+				if (first) {
+					const key = "runtime:" + job.id + ":" + (/* @__PURE__ */ new Date()).toISOString().slice(0, 13);
+					emitWebAlert(tx, "app", app.id, "runtime_stopped", key, {
+						deploymentId: job.id,
+						reason: "cache_or_disk"
+					});
+					emitWebAlert(tx, "platform", "", "runtime_stopped", key + ":" + app.id, {
+						appId: app.id,
+						appName: app.getString("name").slice(0, 60),
+						deploymentId: job.id,
+						reason: "cache_or_disk"
+					});
+				}
+			}
+			return;
+		}
+		if (input.retainedImages !== void 0) {
+			const imageRef = new RegExp(`^ph-web/${app.id}:[a-z0-9]{15}(?:-[a-z][a-z0-9-]{0,30})?$`);
+			if (job.getString("status") !== "ready" || !Array.isArray(input.retainedImages) || input.retainedImages.length > 128 || !input.retainedImages.every((value) => typeof value === "string" && (imageRef.test(value) || /^sha256:[a-f0-9]{64}$/.test(value)))) throw new BadRequestError("Inventaire des images conservées invalide.");
+			for (let offset = 0;; offset += 200) {
+				const rows = tx.findRecordsByFilter("web_deployments", "appId={:id} && status=\"ready\"", "id", 200, offset, { id: app.id });
+				for (const row of rows) {
+					const result = JSON.parse(row.getString("result") || "{}") || {};
+					if (result.image) {
+						const available = input.retainedImages.includes(result.image);
+						if (result.available !== available) {
+							result.available = available;
+							row.set("result", result);
+							tx.save(row);
+						}
+					}
+				}
+				if (rows.length < 200) break;
+			}
+			return;
+		}
+		if (job.getString("status") !== "running") throw new BadRequestError("Déploiement non actif.");
+		const now = (/* @__PURE__ */ new Date()).toISOString();
+		job.set("heartbeatAt", now);
+		let phaseKey = typeof input.stageKey === "string" && phaseKeys[input.stageKey] ? input.stageKey : Object.keys(phaseKeys).find((k) => phaseKeys[k] === input.stage) || "";
+		if (input.stage === "Publication vérifiée") phaseKey = "publish";
+		if (phaseKey === "publish" || input.status === "ready") {
+			const promotion = decrypt(job.getString("snapshotEncrypted")).promotion;
+			if (promotion) assertWebEnvironmentRevision(app, promotion.expectedTargetRevision, tx);
+		}
+		if (job.getString("action") === "restore-backup" && (phaseKey === "publish" || input.status === "ready")) {
+			const restore = decrypt(job.getString("snapshotEncrypted")).restoreBackup;
+			assertBackupAppRevision(app, restore?.expectedAppRevision, tx);
+		}
+		if (phaseKey === "publish" && ["deploy", "ci-deploy"].includes(job.getString("action"))) if (!job.getBool("cancelRequested")) job.set("publicationStartedAt", job.getString("publicationStartedAt") || now);
+		else phaseKey = "";
+		if (input.stage && !(job.getBool("cancelRequested") && input.stageKey === "publish")) changePhase(job, phaseKey, `${input.stage}`, now);
+		if (input.status) {
+			if (![
+				"ready",
+				"failed",
+				"cancelled"
+			].includes(input.status)) throw new BadRequestError("État invalide.");
+			if (input.status === "ready" && ["deploy", "ci-deploy"].includes(job.getString("action")) && job.getBool("cancelRequested")) throw new BadRequestError("Annulation demandée : cette version ne peut pas être publiée.");
+			const status = ["deploy", "ci-deploy"].includes(job.getString("action")) && job.getBool("cancelRequested") && input.status !== "ready" ? "cancelled" : input.status;
+			job.set("status", status);
+			job.set("finishedAt", now);
+			changePhase(job, "", status === "cancelled" ? "Annulé" : `${input.stage || job.getString("stage")}`, now, true);
+			job.set("error", job.getString("status") === "cancelled" ? "" : `${input.error || ""}`.slice(0, 1e3));
+			job.set("result", input.result || {});
+			const action = job.getString("action");
+			if (job.getString("status") === "ready") {
+				if (action === "ci-deploy") {
+					const ciSnapshot = decrypt(job.getString("snapshotEncrypted"));
+					applyWebRuntimePublishedImage(app, ciSnapshot.runtime.image, tx, ciSnapshot.ci.runtimeRevision);
+				}
+				if (action === "restore-backup") {
+					const restored = decrypt(job.getString("snapshotEncrypted")).restoreBackup.app;
+					app.set("name", restored.name);
+					app.set("config", restored.config);
+					app.set("envEncrypted", encrypt(restored.env));
+					app.set("desiredCommit", restored.desiredCommit);
+					const backupState = decrypt(job.getString("snapshotEncrypted")).restoreBackup;
+					restoreWebEnvironmentBackup(app, backupState.projectState, tx);
+					restoreWebRuntimeBackup(app, backupState.runtime, tx);
+					restoreWebStorageBackup(app, backupState.storage, tx);
+				}
+				if (action === "stop" || action === "preview-remove") app.set("status", "stopped");
+				else if (!["domain", "domains-sync"].includes(action)) {
+					app.set("status", "running");
+					app.set("activeDeployment", job.id);
+					app.set("lastError", "");
+				}
+				if (action === "domain") {
+					const snapshot = decrypt(job.getString("snapshotEncrypted")), domain = tx.findRecordById("web_app_domains", snapshot.domainId);
+					if (domain.getString("appId") !== app.id) throw new BadRequestError("Domaine invalide.");
+					domain.set("status", "active");
+					domain.set("lastError", "");
+					if (input.result?.certificateExpiresAt) domain.set("certificateExpiresAt", input.result.certificateExpiresAt);
+					tx.save(domain);
+				}
+			} else if (job.getString("status") === "failed") {
+				app.set("lastError", `${input.error || "Échec du déploiement."}`.slice(0, 1e3));
+				if (!app.getString("activeDeployment")) app.set("status", "failed");
+				if (action === "domain") {
+					const snapshot = decrypt(job.getString("snapshotEncrypted")), domain = tx.findRecordById("web_app_domains", snapshot.domainId);
+					domain.set("lastError", `${input.error || "Échec du certificat."}`.slice(0, 1e3));
+					if (domain.getString("status") !== "active") domain.set("status", "error");
+					tx.save(domain);
+				}
+			}
+			tx.save(app);
+		}
+		if (job.getString("action") === "ci-deploy" && [
+			"ready",
+			"failed",
+			"cancelled"
+		].includes(job.getString("status"))) scrubWebCiCredentials(job);
+		tx.save(job);
+		response = {
+			ok: true,
+			status: job.getString("status"),
+			desiredCommit: app.getString("desiredCommit"),
+			cancelRequested: job.getBool("cancelRequested"),
+			publicationStartedAt: job.getString("publicationStartedAt")
+		};
+	});
+	return webJson(e, response);
+};
+/** Renewal is queued through the same single worker; current certificates stay active on failure. */
+const HandleWebMaintenance = () => {
+	if (!webEnabled()) return;
+	try {
+		$app.findCollectionByNameOrId("web_app_domains");
+	} catch {
+		return;
+	}
+	const stale = (/* @__PURE__ */ new Date(Date.now() - 7 * 864e5)).toISOString().replace("T", " ");
+	for (const row of $app.findRecordsByFilter("web_app_domains", "status = \"pending_dns\" && created < {:stale}", "created", 100, 0, { stale })) if (row) $app.delete(row);
+	const limit = new Date(Date.now() + 30 * 864e5).toISOString().replace("T", " ");
+	const domains = $app.findRecordsByFilter("web_app_domains", "status=\"active\" && certificateExpiresAt != \"\" && certificateExpiresAt <= {:limit}", "certificateExpiresAt", 10, 0, { limit });
+	for (const domain of domains) {
+		if ($app.findRecordsByFilter("web_deployments", "appId={:id} && action=\"domain\"", "-created", 20, 0, { id: domain.getString("appId") }).some((row) => {
+			return decrypt(row.getString("snapshotEncrypted")).domainId === domain.id && (["queued", "running"].includes(row.getString("status")) || Date.parse(row.getString("created")) > Date.now() - 12 * 36e5);
+		})) continue;
+		queueWebDeployment(findWebApp(domain.getString("appId")), "domain", "", {
+			domainId: domain.id,
+			domain: domain.getString("host")
+		});
+	}
+	normalizeWebDeliveryConnections();
+	const old = $app.findRecordsByFilter("web_webhook_deliveries", "created < {:date}", "created", 500, 0, { date: (/* @__PURE__ */ new Date(Date.now() - 7 * 864e5)).toISOString().replace("T", " ") });
+	for (const row of old) $app.delete(row);
+};
+/** Shared only by the trusted GitHub connection handlers; never serialize raw settings. */
+const readWebGithubSettings = (connectionId = "default") => webGithubConnection(connectionId, $app, {
+	allowDisabled: true,
+	allowMissing: true
+}).value;
+const writeWebGithubSettings = (value, connectionId = "default") => writeWebGithubConnection($app, connectionId, value);
+const encryptWebValue = encrypt;
+const decryptWebValue = decrypt;
+
+//#endregion
+//#region src/lib/handlers/webApps/domains.ts
+const COLLECTION$4 = "web_app_domains";
+/** Message unique : ni le détenteur d'un nom (plateforme, instance, autre équipe), ni son existence ne se déduisent. */
+const UNAVAILABLE = "Ce domaine n’est pas disponible.";
+/** Vérifications DNS par minute et par application : chacune bloque une VM du pool de hooks jusqu'à ~18 s. */
+const VERIFY_RATE_MAX = 6;
+const normalize = (value) => {
+	const host = `${value || ""}`.trim().replace(/\.$/, "").toLowerCase();
+	if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(host)) throw new BadRequestError("Utilisez un nom de domaine complet, sans protocole, port ni chemin.");
+	return host;
+};
+const appId = (e) => e.request.pathValue("id");
+/**
+* Seule une ligne dont la propriété est prouvée (TXT vérifié ou alias attribué par la plateforme) réserve un nom. Une
+* ligne pending_dns ne bloque ni une autre équipe ni une instance PocketBase : le premier qui prouve la propriété gagne
+* (index unique partiel, migration 1793271000). Les lignes pending_dns expirent après 7 jours (maintenance).
+*/
+const CLAIMED = "status != \"pending_dns\"";
+const rows$2 = (id) => $app.findRecordsByFilter(COLLECTION$4, "appId = {:id}", "host", 100, 0, { id });
+const publicIp = () => $os.getenv("WEB_APPS_PUBLIC_IP") || "";
+const platformAlias = (host) => {
+	const apex = $os.getenv("APEX_DOMAIN") || "monappli.re", label = host.endsWith("." + apex) ? host.slice(0, -(apex.length + 1)) : "";
+	return !!label && !label.includes(".") && !label.startsWith("web-") && ![
+		"app",
+		"app2",
+		"app3",
+		"www",
+		"api",
+		"admin",
+		"ftp",
+		"sftp",
+		"smtp",
+		"mail",
+		"mothership",
+		"edge",
+		"daemon",
+		"acme",
+		"static",
+		"assets",
+		"files"
+	].includes(label) && !/^app[0-9]*$/.test(label) && host !== $os.getenv("APP_HOST") && ($os.getenv("WEB_APPS_PLATFORM_ALIASES") || "").split(",").map((x) => x.trim().toLowerCase()).includes(host);
+};
+const webHttpsPreflight = () => {
+	try {
+		const worker = JSON.parse(toString($os.readFile(`${webRoot()}/worker-status.json`)));
+		if (worker.httpsReady === true) return {
+			ready: true,
+			error: ""
+		};
+		return {
+			ready: false,
+			error: worker.httpsReady === false ? "Le serveur HTTPS est incomplet : configurez le contact des certificats et vérifiez Certbot avant de continuer." : "Le service HTTPS doit être mis à jour pour vérifier sa configuration."
+		};
+	} catch {
+		return {
+			ready: false,
+			error: "Le service de certificats HTTPS est indisponible. Vérifiez le moteur d’hébergement."
+		};
+	}
+};
+const serialize$2 = (row) => ({
+	ownershipRequired: !platformAlias(row.getString("host")),
+	id: row.id,
+	hostname: row.getString("host"),
+	status: row.getString("status"),
+	ownershipName: `_pockethost.${row.getString("host")}`,
+	ownershipValue: `pockethost-verification=${row.getString("ownershipToken")}`,
+	dnsTarget: publicIp(),
+	lastError: row.getString("lastError"),
+	certificateExpiresAt: row.getString("certificateExpiresAt"),
+	created: row.getString("created")
+});
+const findDomain = (e) => {
+	const id = e.request.pathValue("domainId");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Domaine invalide.");
+	const row = $app.findRecordById(COLLECTION$4, id);
+	if (row.getString("appId") !== appId(e)) throw new ForbiddenError("Accès refusé.");
+	return row;
+};
+/** Reuse normal app authorization, ownership checks and protected-name conflicts before any DNS write. */
+const assertWebDomainDnsAccess = (e) => {
+	const { app } = requireWebAppPermission(e, "domains.manage");
+	const row = findDomain(e);
+	assertAliasAllowed(e, row.getString("host"));
+	assertFree(row.getString("host"), app.id, row.id);
+	return {
+		row,
+		app
+	};
+};
+/** Used by PocketBase mutations as well: web and database domains cannot claim each other. */
+const assertNoWebDomainConflict = (hostname) => {
+	if ($os.getenv("WEB_APPS_ENABLED") !== "true" || !hostname) return;
+	try {
+		$app.findCollectionByNameOrId(COLLECTION$4);
+	} catch {
+		return;
+	}
+	if ($app.findRecordsByFilter(COLLECTION$4, `host = {:host} && ${CLAIMED}`, "", 1, 0, { host: hostname.trim().replace(/\.$/, "").toLowerCase() }).length) throw new BadRequestError("Ce domaine est réservé à une application web.");
+};
+/** Conflits revérifiés à la création ET à la vérification (une ligne en attente ne réserve plus rien). */
+const assertFree = (host, appId, exceptId = "") => {
+	if (PLATFORM_CONTROL_HOSTS.includes(host)) throw new BadRequestError(UNAVAILABLE);
+	const apex = $os.getenv("APEX_DOMAIN") || "monappli.re";
+	if ((host === apex || host.endsWith(`.${apex}`)) && !platformAlias(host)) throw new BadRequestError(UNAVAILABLE);
+	if (instanceOwnsHostname(host)) throw new BadRequestError(UNAVAILABLE);
+	let domainCollection = null;
+	try {
+		domainCollection = $app.findCollectionByNameOrId("domains");
+	} catch {}
+	if (domainCollection && $app.findRecordsByFilter("domains", "domain = {:host}", "", 1, 0, { host }).length) throw new BadRequestError(UNAVAILABLE);
+	if ($app.findRecordsByFilter(COLLECTION$4, `host = {:host} && id != {:except} && (appId = {:appId} || ${CLAIMED})`, "", 1, 0, {
+		host,
+		appId,
+		except: exceptId
+	}).length) throw new BadRequestError(UNAVAILABLE);
+};
+/** Un alias de la plateforme n'exige aucune preuve DNS : seule la plateforme l'attribue (création et vérification). */
+const assertAliasAllowed = (e, host) => {
+	if (platformAlias(host)) requireWebPermission(e, { appId: appId(e) }, "platform.settings");
+};
+const getVerifiedWebDomains = (id) => rows$2(id).filter((row) => [
+	"verified",
+	"pending_certificate",
+	"active"
+].includes(row.getString("status"))).map((row) => ({
+	id: row.id,
+	host: row.getString("host"),
+	certificate: row.getString("status") === "active"
+}));
+const getWebDomainRouteSnapshot = getVerifiedWebDomains;
+const getAllWebDomainRoutesSnapshot = () => {
+	try {
+		return $app.findRecordsByFilter(COLLECTION$4, "status = \"verified\" || status = \"pending_certificate\" || status = \"active\"", "host", 1e3, 0).map((row) => ({
+			id: row.id,
+			appId: row.getString("appId"),
+			host: row.getString("host"),
+			certificate: row.getString("status") === "active"
+		}));
+	} catch {
+		return [];
+	}
+};
+const HandleWebDomainsList = (e) => {
+	requireWebAppPermission(e, "app.read");
+	return webJson(e, { items: rows$2(appId(e)).map(serialize$2) });
+};
+const HandleWebDomainCreate = (e) => {
+	requireWebAppPermission(e, "domains.manage");
+	if (rows$2(appId(e)).length >= 20) throw new BadRequestError("Limite de 20 domaines personnalisés par application.");
+	const host = normalize(webInput(e).hostname);
+	assertAliasAllowed(e, host);
+	assertFree(host, appId(e));
+	const row = new Record($app.findCollectionByNameOrId(COLLECTION$4));
+	row.set("appId", appId(e));
+	row.set("host", host);
+	row.set("status", "pending_dns");
+	row.set("ownershipToken", $security.randomString(40));
+	$app.save(row);
+	return webJson(e, { domain: serialize$2(row) }, 201);
+};
+const HandleWebDomainVerify = (e) => {
+	const { user, app: found } = requireWebAppPermission(e, "domains.manage"), app = found, row = findDomain(e);
+	assertAliasAllowed(e, row.getString("host"));
+	if (!publicIp()) throw new BadRequestError("Adresse publique du serveur Applications web non configurée.");
+	const https = webHttpsPreflight();
+	if (!https.ready) throw new BadRequestError(https.error);
+	assertFree(row.getString("host"), app.id, row.id);
+	if ($app.findRecordsByFilter("web_deployments", "appId = {:id} && action = \"domain\" && (status = \"queued\" || status = \"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Une vérification de domaine est déjà en cours pour cette application.");
+	assertWebQueueCapacity(app, "domain");
+	webRateLimit(app.id, "web_domain_verify_rate", VERIFY_RATE_MAX, "Trop de vérifications DNS pour cette application. Réessayez dans une minute.");
+	const file = `${$app.dataDir()}/.web-domain-${$security.randomString(24)}.json`;
+	try {
+		$os.writeFile(file, JSON.stringify({
+			hostname: row.getString("host"),
+			publicIp: publicIp(),
+			ownershipToken: row.getString("ownershipToken")
+		}), 384);
+		const helper = $os.getenv("WEB_APPS_DOMAIN_HELPER") || "packages/pockethost/scripts/web_app_domains.py";
+		const result = JSON.parse(toString($os.cmd("python3", helper, file).combinedOutput()));
+		if (!result.verified) {
+			row.set("lastError", result.error || "Vérification DNS non réussie.");
+			$app.save(row);
+			throw new BadRequestError(row.getString("lastError"));
+		}
+		if (!(row.getString("status") === "active" && Date.parse(row.getString("certificateExpiresAt")) > Date.now())) row.set("status", "pending_certificate");
+		row.set("lastError", "");
+		try {
+			$app.save(row);
+		} catch {
+			throw new BadRequestError(UNAVAILABLE);
+		}
+		const job = queueWebDeployment(app, "domain", user.id, {
+			domainId: row.id,
+			domain: row.getString("host")
+		});
+		return webJson(e, {
+			domain: serialize$2(row),
+			deploymentId: job.id
+		}, 202);
+	} catch (error) {
+		if (error instanceof BadRequestError || error instanceof TooManyRequestsError) throw error;
+		throw new BadRequestError("Vérification DNS indisponible. Réessayez après propagation.");
+	} finally {
+		try {
+			$os.remove(file);
+		} catch {}
+	}
+};
+const HandleWebDomainDelete = (e) => {
+	const { user, app: found } = requireWebAppPermission(e, "domains.manage"), app = found, row = findDomain(e);
+	if ($app.findRecordsByFilter("web_deployments", "appId = {:id} && (status = \"queued\" || status = \"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Attendez la fin du déploiement avant de supprimer ce domaine.");
+	const wasRouted = [
+		"verified",
+		"pending_certificate",
+		"active"
+	].includes(row.getString("status"));
+	$app.delete(row);
+	if (wasRouted) queueWebDeployment(app, "domains-sync", user.id);
+	return webJson(e, { deleted: true });
+};
+/** Native collection requests must obey the same domain reservations as the dashboard APIs. */
+const guardNativeInstanceDomain = (record, creating) => {
+	if ($os.getenv("WEB_APPS_ENABLED") !== "true") return;
+	const previous = record.original();
+	const subdomain = record.getString("subdomain");
+	if ((creating || subdomain !== previous.getString("subdomain")) && /^web-/i.test(subdomain)) throw new BadRequestError("Le préfixe web- est réservé aux applications web.");
+	if (creating || subdomain !== previous.getString("subdomain")) assertNoWebDomainConflict(`${subdomain}.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`);
+	const cname = record.getString("cname");
+	if (cname && (creating || cname !== previous.getString("cname"))) {
+		const host = cname.trim().replace(/\.$/, "").toLowerCase();
+		const apex = $os.getenv("APEX_DOMAIN") || "monappli.re";
+		if (host.startsWith("web-") && host.endsWith(`.${apex}`)) throw new BadRequestError("Ce domaine est réservé aux applications web.");
+		assertNoWebDomainConflict(host);
+	}
+};
+const GuardWebInstanceDomainCreate = (e) => {
+	guardNativeInstanceDomain(e.record, true);
+	return e.next();
+};
+const GuardWebInstanceDomainUpdate = (e) => {
+	guardNativeInstanceDomain(e.record, false);
+	return e.next();
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/instanceOperationsAccess.ts
+const operationsAccess = (e) => {
+	const user = e.auth;
+	if (!user || user.collection().name !== "users") throw new UnauthorizedError("Connexion au dashboard requise.");
+	const id = e.request.pathValue("id");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Instance invalide.");
+	const instance = $app.findRecordById("instances", id);
+	if (!canManageInstance(instance, user)) throw new ForbiddenError("Accès refusé.");
+	if (user.getString("suspension") || instance.getString("suspension")) throw new ForbiddenError("Accès suspendu.");
+	return {
+		instance,
+		user
+	};
+};
+const operationJson = (e, value, status = 200) => {
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(status, value);
+};
+const recordInstanceAction = (instance, user, action, details = {}, app = $app) => {
+	const row = new Record(app.findCollectionByNameOrId("instance_action_log"));
+	row.set("instanceId", instance.id);
+	row.set("ownerId", instance.getString("uid"));
+	row.set("actorId", user?.id || "");
+	row.set("actorLabel", user?.getString("email") || "Automatisation");
+	row.set("action", action);
+	row.set("details", details);
+	app.save(row);
+};
+const HandleInstanceActionLog = (e) => {
+	const { instance } = operationsAccess(e);
+	const page = Math.max(1, Math.min(1e5, Math.floor(Number(e.request.url.query().get("page"))) || 1));
+	const items = $app.findRecordsByFilter("instance_action_log", "instanceId = {:id}", "-created,-id", 51, (page - 1) * 50, { id: instance.id });
+	return operationJson(e, {
+		items: items.slice(0, 50).map((r) => ({
+			id: r.id,
+			actor: r.getString("actorLabel"),
+			action: r.getString("action"),
+			details: JSON.parse(r.getString("details") || "{}"),
+			created: r.getString("created")
+		})),
+		page,
+		hasMore: items.length > 50
+	});
+};
+/** Records successful dashboard mutations; only an explicit metadata allowlist is retained. */
+const AuditInstanceRequest = (e) => {
+	const path = e.request.url.path, method = e.request.method;
+	if (method === "GET" || method === "OPTIONS" || /\/operations\/consume$/.test(path)) return e.next();
+	let instance, action, target = "";
+	if (/^\/api\/instance\/[a-z0-9]{15}(?:\/|$)/.test(path)) {
+		try {
+			instance = $app.findRecordById("instances", path.split("/")[3]);
+		} catch {
+			return e.next();
+		}
+		const section = path.split("/")[4] || "instance";
+		if (["service-accounts", "backup-checks"].includes(section)) return e.next();
+		action = `${method} ${section}`;
+		const segments = path.split("/");
+		if (section === "backups" && segments[6]) action = `backup.${segments[6]}`;
+		if (/^[a-z0-9]{15}$/.test(segments[5] || "")) target = segments[5];
+	} else if (/^\/api\/instance-transfers\/[a-z0-9]{15}\/(cancel|retry|link)$/.test(path)) {
+		try {
+			const transfer = $app.findRecordById("instance_transfers", path.split("/")[3]);
+			instance = $app.findRecordById("instances", transfer.getString("instance"));
+		} catch {
+			return e.next();
+		}
+		action = `transfer.${path.split("/")[4]}`;
+		target = path.split("/")[3];
+	} else return e.next();
+	const user = e.auth;
+	if (!user || user.collection().name !== "users" || !canManageInstance(instance, user)) return e.next();
+	const details = target ? { target } : {};
+	if (action === "PUT instance") {
+		const fields = JSON.parse(JSON.stringify(e.requestInfo().body || {})).fields || {};
+		details.fields = [
+			"subdomain",
+			"power",
+			"version",
+			"secrets",
+			"webhooks",
+			"syncAdmin",
+			"autoVacuum",
+			"metricsHistoryEnabled",
+			"dev",
+			"cname"
+		].filter((key) => fields[key] !== void 0 && fields[key] !== null);
+		if (typeof fields.power === "boolean" && fields.power !== instance.getBool("power")) {
+			action = fields.power ? "instance.started" : "instance.stopped";
+			details.previousPower = instance.getBool("power");
+			details.power = fields.power;
+		}
+	}
+	e.next();
+	if (e.status() >= 400) return;
+	try {
+		recordInstanceAction(instance, user, action, details);
+	} catch {
+		console.warn("Écriture du journal d’administration impossible.");
+	}
+};
+const HandleAccountActionLog = (e) => {
+	const user = e.auth;
+	if (!user || user.collection().name !== "users" || user.getString("suspension")) throw new ForbiddenError("Accès refusé.");
+	const page = Math.max(1, Math.min(1e5, Math.floor(Number(e.request.url.query().get("page")) || 1)));
+	const { filter, params } = instanceAccessQuery(user, "instanceId", "ownerId");
+	const rows = $app.findRecordsByFilter("instance_action_log", filter, "-created,-id", 51, (page - 1) * 50, params).filter((r) => !!r);
+	return operationJson(e, {
+		items: rows.slice(0, 50).map((r) => ({
+			id: r.id,
+			instanceId: r.getString("instanceId"),
+			actor: r.getString("actorLabel"),
+			action: r.getString("action"),
+			details: JSON.parse(r.getString("details") || "{}"),
+			created: r.getString("created")
+		})),
+		hasMore: rows.length > 50,
+		page
+	});
+};
+
+//#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceCreate.ts
 const HandleInstanceCreate = (e) => {
 	const log = mkLog(`POST:instance`);
@@ -3222,7 +12352,7 @@ const HandleInstanceCreate = (e) => {
 	log(`TOP OF POST`);
 	let data = new DynamicModel({
 		subdomain: "",
-		version: listVersions()[0]
+		version: listVersions()[0] || ""
 	});
 	log(`before bind`);
 	e.bindBody(data);
@@ -3230,8 +12360,11 @@ const HandleInstanceCreate = (e) => {
 	data = JSON.parse(JSON.stringify(data));
 	const { subdomain, version } = data;
 	const settings = readOperatorSettings();
+	if (!version) throw new BadRequestError("Le catalogue des versions PocketBase doit être synchronisé avant de créer une instance.");
 	log(`vars`, JSON.stringify({ subdomain }));
 	if (!subdomain) throw new BadRequestError(`Le sous-domaine est obligatoire pour créer une instance.`);
+	if ($os.getenv("WEB_APPS_ENABLED") === "true" && subdomain.trim().toLowerCase().startsWith("web-")) throw new BadRequestError("Le préfixe web- est réservé aux applications web.");
+	assertNoWebDomainConflict(`${subdomain.trim().toLowerCase()}.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`);
 	const collection = $app.findCollectionByNameOrId("instances");
 	const record = new Record(collection);
 	record.set("uid", authRecord.id);
@@ -3243,12 +12376,13 @@ const HandleInstanceCreate = (e) => {
 	record.set("syncAdmin", settings.defaultSyncAdmin);
 	record.set("autoVacuum", settings.defaultAutoVacuum);
 	$app.save(record);
+	recordInstanceAction(record, authRecord, "instance.created");
 	return e.json(200, { instance: record });
 };
 
 //#endregion
 //#region src/lib/handlers/operatorAdmin/diskCleanup.ts
-const SAFE_INSTANCE_ID = /^[a-z0-9]+$/;
+const SAFE_INSTANCE_ID = /^[a-z0-9]{15}$/;
 const dataRoot$2 = () => {
 	const envRoot = $os.getenv("DATA_ROOT");
 	if (envRoot) return envRoot;
@@ -3295,7 +12429,7 @@ const dockerContainerNames = () => {
 	try {
 		return new Set(runCommand("docker", "ps", "-a", "--format", "{{.Names}}").split("\n").map((line) => line.trim()).filter(Boolean));
 	} catch {
-		return /* @__PURE__ */ new Set();
+		throw new BadRequestError("Docker est inaccessible. Aucun dossier ne sera supprimé.");
 	}
 };
 const listInstanceRecordIds = () => {
@@ -3344,16 +12478,40 @@ const scanRoot = (root, kind, recordIds, containers, remove, requirePbData = fal
 	}
 	return entries;
 };
-const scanOrphanInstanceStorage = (remove = false) => {
+const scanOrphanInstanceStorage = (remove = false, expectedSnapshot = "") => {
 	const recordIds = listInstanceRecordIds();
 	const containers = dockerContainerNames();
 	const entries = [
-		...scanRoot(`${dataRoot$2()}/instances`, "instance-data", recordIds, containers, remove, true),
-		...scanRoot(backupRoot(), "backup-data", recordIds, containers, remove),
-		...scanRoot(`${importRoot()}/assembled`, "import-data", recordIds, containers, remove),
-		...scanRoot(`${importRoot()}/.chunked`, "import-data", recordIds, containers, remove)
+		...scanRoot(`${dataRoot$2()}/instances`, "instance-data", recordIds, containers, false, true),
+		...scanRoot(backupRoot(), "backup-data", recordIds, containers, false),
+		...scanRoot(`${importRoot()}/assembled`, "import-data", recordIds, containers, false),
+		...scanRoot(`${importRoot()}/.chunked`, "import-data", recordIds, containers, false)
 	];
+	const snapshot = $security.sha256(JSON.stringify(entries.map((e) => [
+		e.kind,
+		e.id,
+		e.sizeBytes
+	]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))));
+	if (remove) {
+		if (!expectedSnapshot || expectedSnapshot !== snapshot) throw new BadRequestError("La liste des dossiers a changé ou n’a pas été confirmée. Relancez l’analyse avant de nettoyer.");
+		for (const entry of entries) {
+			if ($app.countRecords("instances", $dbx.exp("[[id]] = {:id}", { id: entry.id }))) {
+				entry.error = "Une instance utilise désormais ce dossier.";
+				continue;
+			}
+			if (dockerContainerNames().has(entry.id)) {
+				entry.error = "Un conteneur utilise désormais ce dossier.";
+				continue;
+			}
+			try {
+				entry.removed = removeDirectory(entry.path);
+			} catch {
+				entry.error = "Suppression impossible.";
+			}
+		}
+	}
 	return {
+		snapshot,
 		scannedAt: (/* @__PURE__ */ new Date()).toISOString(),
 		dataRoot: dataRoot$2(),
 		orphanCount: entries.length,
@@ -3406,7 +12564,7 @@ const HandleInstanceDelete = (e) => {
 	if (!authRecord) throw new BadRequestError(`Expected authRecord here`);
 	const record = $app.findRecordById("instances", id);
 	if (!record) throw new BadRequestError(`Instance ${id} introuvable.`);
-	if (record.get("uid") !== authRecord.id) throw new BadRequestError(`Not authorized`);
+	if (!canManageInstance(record, authRecord)) throw new BadRequestError(`Not authorized`);
 	if (record.getString("status").toLowerCase() !== "idle") throw new BadRequestError(`L'instance doit d'abord être arrêtée.`);
 	$app.delete(record);
 	const cleanup = removeInstanceLocalStorage(id);
@@ -3493,7 +12651,7 @@ const HandleInstanceDuplicate = (e) => {
 	assertSafeInstanceId$2(sourceId);
 	const source = $app.findRecordById("instances", sourceId);
 	if (!source) throw new BadRequestError(`Instance ${sourceId} introuvable.`);
-	if (source.get("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError(`Non autorise`);
+	if (!canManageInstance(source, authRecord)) throw new BadRequestError(`Non autorise`);
 	if (source.getBool("power") || source.getString("status").toLowerCase() !== "idle") throw new BadRequestError("Eteignez l'instance avant de dupliquer sa base.");
 	const collection = $app.findCollectionByNameOrId("instances");
 	const target = new Record(collection);
@@ -3588,7 +12746,7 @@ const findInstance$1 = (id) => {
 	return instance;
 };
 const assertInstanceAccess$1 = (instance, authRecord) => {
-	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorise.");
+	if (!canManageInstance(instance, authRecord)) throw new BadRequestError("Non autorise.");
 };
 const pathValue$1 = (e, name) => {
 	if (!e.request) throw new BadRequestError("Requete invalide.");
@@ -3784,7 +12942,8 @@ const aggregateMetricPoints = (points, bucketMs) => {
 	}));
 };
 const findAccessibleInstances = (authRecord) => {
-	return (authRecord.getBool("superAdmin") ? $app.findRecordsByFilter("instances", "1=1", "subdomain", 500, 0) : $app.findRecordsByFilter("instances", "uid = {:uid}", "subdomain", 500, 0, { uid: authRecord.id })).filter((record) => !!record);
+	const { filter, params } = instanceAccessQuery(authRecord);
+	return $app.findRecordsByFilter("instances", filter, "subdomain", 500, 0, params).filter((record) => !!record);
 };
 const sortBackupsNewestFirst = (backups) => {
 	return backups.sort((a, b) => {
@@ -3894,165 +13053,6 @@ const PurgeExpiredInstanceResourceMetrics = () => {
 };
 
 //#endregion
-//#region src/lib/handlers/instance/api/instanceMonitoring.ts
-const MONITORING_DEFAULTS = {
-	healthPath: "/api/health",
-	healthFailureCount: 3,
-	healthRecoveryCount: 2,
-	cpuThresholdPercent: 85,
-	cpuSustainMinutes: 5,
-	memoryThresholdPercent: 85,
-	memorySustainMinutes: 5,
-	resourceRecoveryCount: 3,
-	resourceRecoveryMargin: 5,
-	startupGraceMs: 120 * 1e3,
-	requestTimeoutSeconds: 5
-};
-const notificationPayloadText = (value, field) => {
-	const text = `${typeof value === "string" ? value : ""}`.trim();
-	if (!text) throw new Error(`Payload de notification invalide : champ ${field} absent.`);
-	return text;
-};
-const normalizeMonitoringNotificationPayload = (value) => {
-	let parsed = value;
-	try {
-		if (typeof value === "string") parsed = JSON.parse(value);
-		else if (value && typeof value === "object") parsed = JSON.parse(JSON.stringify(value));
-	} catch {
-		throw new Error("Payload de notification invalide.");
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Payload de notification invalide.");
-	const payload = parsed;
-	const type = notificationPayloadText(payload.type, "type");
-	const phase = notificationPayloadText(payload.phase, "phase");
-	if (![
-		"health",
-		"cpu",
-		"memory",
-		"backup",
-		"test"
-	].includes(type)) throw new Error("Payload de notification invalide : type inconnu.");
-	if (![
-		"opened",
-		"resolved",
-		"test"
-	].includes(phase)) throw new Error("Payload de notification invalide : phase inconnue.");
-	return {
-		title: notificationPayloadText(payload.title, "title"),
-		message: notificationPayloadText(payload.message, "message"),
-		instanceId: notificationPayloadText(payload.instanceId, "instanceId"),
-		instanceName: notificationPayloadText(payload.instanceName, "instanceName"),
-		type,
-		phase,
-		occurredAt: notificationPayloadText(payload.occurredAt, "occurredAt")
-	};
-};
-const normalizeHealthPath = (value) => {
-	const path = `${typeof value === "string" ? value : ""}`.trim();
-	if (!path || path.length > 200) throw new Error("Le chemin de santé doit contenir entre 1 et 200 caractères.");
-	if (!path.startsWith("/") || path.startsWith("//") || /[\u0000-\u001f\u007f]/.test(path)) throw new Error("Le chemin de santé doit être un chemin relatif commençant par /.");
-	if (/^[^?#]*\\/.test(path) || /^\/\w+:\/\//i.test(path)) throw new Error("Le chemin de santé est invalide.");
-	return path;
-};
-const normalizeWebhook = (value) => `${typeof value === "string" ? value : ""}`.trim();
-const normalizeDiscordWebhook = (value) => {
-	const url = normalizeWebhook(value);
-	if (!url) return "";
-	if (url.length > 2e3 || !/^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/[0-9]+\/[A-Za-z0-9._-]+$/.test(url)) throw new Error("L'URL Discord doit être une URL officielle https://discord.com/api/webhooks/…");
-	return url;
-};
-const normalizeSlackWebhook = (value) => {
-	const url = normalizeWebhook(value);
-	if (!url) return "";
-	if (url.length > 2e3 || !/^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(url)) throw new Error("L'URL Slack doit être une URL officielle https://hooks.slack.com/services/…");
-	return url;
-};
-const evaluateHealthSignal = (state, healthy, failuresRequired, recoveriesRequired = MONITORING_DEFAULTS.healthRecoveryCount) => {
-	const next = { ...state };
-	let transition = null;
-	if (healthy) {
-		next.failureStreak = 0;
-		next.successStreak += 1;
-		if (state.incidentOpen && next.successStreak >= recoveriesRequired) {
-			next.incidentOpen = false;
-			transition = "resolve";
-		}
-	} else {
-		next.successStreak = 0;
-		next.failureStreak += 1;
-		if (!state.incidentOpen && next.failureStreak >= failuresRequired) {
-			next.incidentOpen = true;
-			transition = "open";
-		}
-	}
-	return {
-		state: next,
-		transition
-	};
-};
-const evaluateThresholdSignal = (state, value, threshold, highSamplesRequired, normalSamplesRequired = MONITORING_DEFAULTS.resourceRecoveryCount, recoveryMargin = MONITORING_DEFAULTS.resourceRecoveryMargin) => {
-	const next = { ...state };
-	let transition = null;
-	if (value >= threshold) {
-		next.highStreak += 1;
-		next.normalStreak = 0;
-		if (!state.incidentOpen && next.highStreak >= highSamplesRequired) {
-			next.incidentOpen = true;
-			transition = "open";
-		}
-	} else if (value <= Math.max(0, threshold - recoveryMargin)) {
-		next.highStreak = 0;
-		next.normalStreak += 1;
-		if (state.incidentOpen && next.normalStreak >= normalSamplesRequired) {
-			next.incidentOpen = false;
-			transition = "resolve";
-		}
-	} else {
-		next.highStreak = 0;
-		next.normalStreak = 0;
-	}
-	return {
-		state: next,
-		transition
-	};
-};
-const classifyHealthError = (error) => {
-	const message = `${error}`.toLowerCase();
-	if (message.includes("timeout") || message.includes("deadline exceeded")) return "timeout";
-	if (message.includes("no such host") || message.includes("dns") || message.includes("resolve")) return "dns";
-	if (message.includes("tls") || message.includes("certificate") || message.includes("x509")) return "tls";
-	if (message.includes("connect") || message.includes("network") || message.includes("refused")) return "network";
-	return "unknown";
-};
-const monitoringRetryDelayMs = (attempts) => {
-	const delayMinutes = [
-		0,
-		1,
-		5,
-		15,
-		60
-	];
-	return delayMinutes[Math.min(Math.max(0, attempts), delayMinutes.length - 1)] * 60 * 1e3;
-};
-const MONITORING_MAX_DELIVERY_ATTEMPTS = 5;
-const shouldRetryMonitoringDelivery = (phase, attempts) => phase !== "test" && attempts < 5;
-const formatMonitoringPercent = (value) => `${Math.round(value * 10) / 10}`.replace(".", ",");
-const monitoringHistoryRanges = {
-	"24h": {
-		durationMs: 1440 * 60 * 1e3,
-		bucketSeconds: 60
-	},
-	"7d": {
-		durationMs: 10080 * 60 * 1e3,
-		bucketSeconds: 600
-	},
-	"30d": {
-		durationMs: 720 * 60 * 60 * 1e3,
-		bucketSeconds: 3600
-	}
-};
-
-//#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceMonitoring.ts
 const POLICY_COLLECTION = "instance_monitoring_policies";
 const CHECK_COLLECTION = "instance_health_checks";
@@ -4080,7 +13080,7 @@ const findInstance = (id) => {
 	return instance;
 };
 const assertInstanceAccess = (instance, authRecord) => {
-	if (instance.getString("uid") !== authRecord.id && !authRecord.getBool("superAdmin")) throw new BadRequestError("Non autorisé.");
+	if (!canManageInstance(instance, authRecord)) throw new BadRequestError("Non autorisé.");
 };
 const findPolicy = (instanceId) => {
 	try {
@@ -4102,6 +13102,10 @@ const setPolicyDefaults = (policy, instance) => {
 	policy.set("memoryEnabled", true);
 	policy.set("memoryThresholdPercent", MONITORING_DEFAULTS.memoryThresholdPercent);
 	policy.set("memorySustainMinutes", MONITORING_DEFAULTS.memorySustainMinutes);
+	policy.set("diskEnabled", false);
+	policy.set("diskThreshold", 85);
+	policy.set("latencyEnabled", false);
+	policy.set("latencyThreshold", 1e3);
 	policy.set("backupAlertsEnabled", true);
 	policy.set("emailEnabled", true);
 	policy.set("discordEnabled", false);
@@ -4133,7 +13137,7 @@ const createPolicy = (instance) => {
 };
 const monitoringApexDomain = () => `${$os.getenv("APEX_DOMAIN") || "pockethost.lvh.me"}`.trim();
 const monitoringProtocol = () => `${$os.getenv("HTTP_PROTOCOL") || "https"}`.replace(/:$/, "");
-const monitoringTargetUrl = (instance, healthPath) => `${monitoringProtocol()}://${instance.getString("subdomain")}.${monitoringApexDomain()}${healthPath}`;
+const monitoringTargetUrl = (instance, healthPath) => `${monitoringProtocol()}://${instancePublicHostname(instanceHostnameView(instance), monitoringApexDomain(), "generated")}${healthPath}`;
 const defaultPolicyPayload = (instance) => ({
 	id: "",
 	user: instance.getString("uid"),
@@ -4148,6 +13152,12 @@ const defaultPolicyPayload = (instance) => ({
 	memoryEnabled: true,
 	memoryThresholdPercent: MONITORING_DEFAULTS.memoryThresholdPercent,
 	memorySustainMinutes: MONITORING_DEFAULTS.memorySustainMinutes,
+	diskEnabled: false,
+	diskThreshold: 85,
+	diskLastValue: null,
+	latencyEnabled: false,
+	latencyThreshold: 1e3,
+	latencyLastValue: null,
 	backupAlertsEnabled: true,
 	emailEnabled: true,
 	discordEnabled: false,
@@ -4193,6 +13203,12 @@ const serializePolicy = (instance, policy) => {
 		memoryEnabled: policy.getBool("memoryEnabled"),
 		memoryThresholdPercent: policy.getFloat("memoryThresholdPercent") || MONITORING_DEFAULTS.memoryThresholdPercent,
 		memorySustainMinutes: policy.getInt("memorySustainMinutes") || MONITORING_DEFAULTS.memorySustainMinutes,
+		diskEnabled: policy.getBool("diskEnabled"),
+		diskThreshold: policy.getFloat("diskThreshold") || 85,
+		diskLastValue: policy.getBool("diskEnabled") ? policy.getFloat("diskLastValue") : null,
+		latencyEnabled: policy.getBool("latencyEnabled"),
+		latencyThreshold: policy.getFloat("latencyThreshold") || 1e3,
+		latencyLastValue: policy.getBool("latencyEnabled") ? policy.getFloat("latencyLastValue") : null,
 		backupAlertsEnabled: policy.getBool("backupAlertsEnabled"),
 		emailEnabled: policy.getBool("emailEnabled"),
 		discordEnabled: policy.getBool("discordEnabled"),
@@ -4250,6 +13266,9 @@ const findOpenIncident = (instanceId, type, sourceId = "") => {
 	})[0] || null;
 };
 const incidentLabel = (type) => {
+	if (type === "disk") return "Disque serveur";
+	if (type === "latency") return "Latence HTTP";
+	if (type === "backup-check") return "Vérification de sauvegarde";
 	if (type === "health") return "Instance indisponible";
 	if (type === "cpu") return "CPU élevé";
 	if (type === "memory") return "Mémoire élevée";
@@ -4323,18 +13342,24 @@ const resetRuntimeStreaks = (policy) => {
 	policy.set("cpuNormalStreak", 0);
 	policy.set("memoryHighStreak", 0);
 	policy.set("memoryNormalStreak", 0);
+	for (const type of ["disk", "latency"]) {
+		policy.set(type + "HighStreak", 0);
+		policy.set(type + "NormalStreak", 0);
+	}
 };
 const pauseRuntimeMonitoring = (policy, instance, includeBackups = false) => {
 	const types = includeBackups ? [
 		"health",
 		"cpu",
 		"memory",
-		"backup"
+		"backup",
+		"backup-check"
 	] : [
 		"health",
 		"cpu",
 		"memory"
 	];
+	types.push("disk", "latency");
 	for (const type of types) resolveIncident(policy, instance, findOpenIncident(instance.id, type), "Surveillance mise en pause.", false);
 	policy.set("lastHealthStatus", "paused");
 	policy.set("graceUntil", "");
@@ -4456,6 +13481,7 @@ const collectMonitoringPolicy = (policy, snapshot) => {
 	if (metric.cpuCapacityPercent !== null || metric.memoryPercent !== null) policy.set("lastMetricsAt", nowIso());
 	evaluateResource(policy, instance, "cpu", metric.cpuCapacityPercent);
 	evaluateResource(policy, instance, "memory", metric.memoryPercent);
+	evaluateAdditionalSignals(policy, instance);
 	$app.save(policy);
 	return true;
 };
@@ -4662,6 +13688,10 @@ const HandleInstanceMonitoringUpdate = (e) => {
 		memoryEnabled: true,
 		memoryThresholdPercent: MONITORING_DEFAULTS.memoryThresholdPercent,
 		memorySustainMinutes: MONITORING_DEFAULTS.memorySustainMinutes,
+		diskEnabled: false,
+		diskThreshold: 85,
+		latencyEnabled: false,
+		latencyThreshold: 1e3,
 		backupAlertsEnabled: true,
 		emailEnabled: true,
 		discordEnabled: false,
@@ -4685,6 +13715,7 @@ const HandleInstanceMonitoringUpdate = (e) => {
 	else if (submittedSlack) policy.set("slackWebhook", normalizeSlackWebhook(submittedSlack));
 	if (data.discordEnabled && !policy.getString("discordWebhook")) throw new BadRequestError("Ajoutez une URL Discord valide.");
 	if (data.slackEnabled && !policy.getString("slackWebhook")) throw new BadRequestError("Ajoutez une URL Slack valide.");
+	if (data.latencyEnabled && !data.healthEnabled) throw new BadRequestError("Activez la sonde HTTP pour surveiller sa latence.");
 	policy.set("user", instance.getString("uid"));
 	policy.set("enabled", !!data.enabled);
 	policy.set("healthEnabled", !!data.healthEnabled);
@@ -4696,6 +13727,15 @@ const HandleInstanceMonitoringUpdate = (e) => {
 	policy.set("memoryEnabled", !!data.memoryEnabled);
 	policy.set("memoryThresholdPercent", clampNumber(data.memoryThresholdPercent, MONITORING_DEFAULTS.memoryThresholdPercent, 1, 100));
 	policy.set("memorySustainMinutes", clampNumber(data.memorySustainMinutes, MONITORING_DEFAULTS.memorySustainMinutes, 1, 60, true));
+	for (const type of ["disk", "latency"]) {
+		policy.set(type + "Enabled", !!data[type + "Enabled"]);
+		policy.set(type + "Threshold", clampNumber(data[type + "Threshold"], type === "disk" ? 85 : 1e3, 1, type === "disk" ? 99 : 6e4, true));
+		if (!data[type + "Enabled"]) {
+			resolveIncident(policy, instance, findOpenIncident(instance.id, type), "Alerte désactivée.", false);
+			policy.set(type + "HighStreak", 0);
+			policy.set(type + "NormalStreak", 0);
+		}
+	}
 	policy.set("backupAlertsEnabled", !!data.backupAlertsEnabled);
 	policy.set("emailEnabled", !!data.emailEnabled);
 	policy.set("discordEnabled", !!data.discordEnabled);
@@ -4730,7 +13770,7 @@ const HandleInstanceMonitoringUpdate = (e) => {
 			policy.set("memoryNormalStreak", 0);
 		}
 		if (data.enabled && !data.backupAlertsEnabled) {
-			const backupIncidents = $app.findRecordsByFilter(INCIDENT_COLLECTION, "instance = {:instance} && type = \"backup\" && status = \"open\"", "openedAt", 100, 0, { instance: instance.id });
+			const backupIncidents = $app.findRecordsByFilter(INCIDENT_COLLECTION, "instance = {:instance} && (type = \"backup\" || type = \"backup-check\") && status = \"open\"", "openedAt", 100, 0, { instance: instance.id });
 			for (const incident of backupIncidents) resolveIncident(policy, instance, incident, "Alerte de sauvegarde désactivée.", false);
 		}
 		$app.save(policy);
@@ -4817,8 +13857,48 @@ const HandleInstanceBackupMonitoringUpdate = (e) => {
 		}, e.record.id);
 		return;
 	}
-	const openBackups = $app.findRecordsByFilter(INCIDENT_COLLECTION, "instance = {:instance} && type = \"backup\" && status = \"open\"", "openedAt", 100, 0, { instance: instance.id });
+	const openBackups = $app.findRecordsByFilter(INCIDENT_COLLECTION, "instance = {:instance} && (type = \"backup\" || type = \"backup-check\") && status = \"open\"", "openedAt", 100, 0, { instance: instance.id });
 	for (const incident of openBackups) resolveIncident(policy, instance, incident, `Une nouvelle sauvegarde de ${instance.getString("subdomain")} a réussi.`);
+};
+const evaluateAdditionalSignals = (policy, instance) => {
+	for (const type of ["disk", "latency"]) {
+		if (!policy.getBool(type + "Enabled")) continue;
+		let value;
+		if (type === "latency") {
+			if (!policy.getBool("healthEnabled") || policy.getString("lastHealthStatus") !== "healthy") {
+				policy.set("latencyHighStreak", 0);
+				policy.set("latencyNormalStreak", 0);
+				continue;
+			}
+			value = policy.getFloat("lastLatencyMs");
+		} else {
+			const match = (toString($os.cmd("df", "-P", $os.getenv("DATA_ROOT") || $app.dataDir()).output()).trim().split("\n").pop() || "").match(/\s(\d+)%\s/);
+			if (!match) continue;
+			value = Number(match[1]);
+		}
+		policy.set(type + "LastValue", value);
+		if (Date.parse(policy.getString("graceUntil")) > Date.now()) continue;
+		const threshold = policy.getFloat(type + "Threshold") || (type === "disk" ? 85 : 1e3);
+		const incident = findOpenIncident(instance.id, type);
+		const result = evaluateThresholdSignal({
+			highStreak: policy.getInt(type + "HighStreak"),
+			normalStreak: policy.getInt(type + "NormalStreak"),
+			incidentOpen: !!incident
+		}, value, threshold, 3, 3, type === "disk" ? 5 : Math.max(1, threshold * .1));
+		policy.set(type + "HighStreak", result.state.highStreak);
+		policy.set(type + "NormalStreak", result.state.normalStreak);
+		const label = type === "disk" ? "Le disque du serveur partagé" : "La latence de la sonde HTTP";
+		const unit = type === "disk" ? "%" : "ms";
+		if (result.transition === "open") openIncident(policy, instance, type, `${label} atteint ${Math.round(value)} ${unit} depuis 3 contrôles.`, value, threshold);
+		if (result.transition === "resolve") resolveIncident(policy, instance, incident, `${label} est revenu à ${Math.round(value)} ${unit}.`, true, value);
+	}
+};
+const ReportBackupCheckIncident = (instance, passed) => {
+	const policy = findPolicy(instance.id);
+	if (!policy?.getBool("enabled") || !policy.getBool("backupAlertsEnabled")) return;
+	const incident = findOpenIncident(instance.id, "backup-check");
+	if (passed) resolveIncident(policy, instance, incident, "La dernière sauvegarde contrôlée a été restaurée et son intégrité SQLite est valide.");
+	else openIncident(policy, instance, "backup-check", "La vérification de la sauvegarde a échoué. Consultez le rapport avant une restauration.");
 };
 
 //#endregion
@@ -4849,6 +13929,647 @@ const HandleInstancesRuntimeReset = (e) => {
 		ok: true,
 		reset
 	});
+};
+
+//#endregion
+//#region ../common/instanceTransfer.ts
+const INSTANCE_TRANSFER_PROTOCOL = "pockethost-transfer-v1";
+/** Goja-safe parser; a transfer credential is never placed in a query string. */
+const parseInstanceTransferLink = (value, separateCode = "") => {
+	const match = value.trim().match(/^(https?):\/\/([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?)\/api\/instance-transfers\/([a-z0-9]{15})\/?(?:#(?:code=)?([a-zA-Z0-9]{48}))?$/i);
+	if (!match) throw new Error("Lien de transfert invalide.");
+	const code = separateCode.trim() || match[4] || "";
+	if (!/^[a-zA-Z0-9]{48}$/.test(code)) throw new Error("Code de transfert invalide.");
+	return {
+		origin: `${match[1].toLowerCase()}://${match[2].toLowerCase()}`,
+		authority: match[2].toLowerCase(),
+		protocol: match[1].toLowerCase(),
+		id: match[3],
+		code
+	};
+};
+const assertTransferPeerAllowed = (peer, allowedHosts, allowHttp = false) => {
+	if (!allowedHosts.toLowerCase().split(/[\s,]+/).filter(Boolean).includes(peer.authority)) throw new Error(`Serveur source non autorisé : ${peer.authority}. Ajoutez-le à INSTANCE_TRANSFER_ALLOWED_HOSTS sur le serveur cible.`);
+	if (peer.protocol !== "https" && !allowHttp) throw new Error("Le transfert nécessite HTTPS.");
+};
+const validateTransferMetadata = (value, id, maxBytes) => {
+	const data = value;
+	if (!data || data.protocol !== "pockethost-transfer-v1" || data.id !== id) throw new Error("Ce serveur ne fournit pas un transfert PocketHost compatible.");
+	if (data.status !== "ready") throw new Error("Le transfert source n’est pas prêt ou a déjà été utilisé.");
+	if (!Number.isFinite(Date.parse(data.expiresAt)) || Date.parse(data.expiresAt) <= Date.now()) throw new Error("Le lien de transfert a expiré.");
+	if (!data.instance || !/^[a-z][a-z0-9-]{2,39}$/.test(data.instance.subdomain) || !/^\d+\.\d+\.(?:\d+|\*)$/.test(data.instance.version)) throw new Error("Informations de l’instance source invalides.");
+	const archive = data.archive;
+	if (!archive || !/^[a-f0-9]{64}$/.test(archive.checksum) || !/^[a-zA-Z0-9._-]+\.tar\.gz$/.test(archive.filename) || !Number.isSafeInteger(archive.compressedBytes) || archive.compressedBytes <= 0 || archive.compressedBytes > maxBytes || !Number.isSafeInteger(archive.sizeBytes) || archive.sizeBytes < 0 || archive.sizeBytes > maxBytes) throw new Error("Archive source invalide ou trop volumineuse pour ce serveur.");
+	return data;
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceTransfers.ts
+const COLLECTION$3 = "instance_transfers";
+const ACTIVE_EXPORT = "direction = \"export\" && (status = \"queued\" || status = \"preparing\" || status = \"ready\")";
+const now$1 = () => (/* @__PURE__ */ new Date()).toISOString();
+const object$1 = (raw) => typeof raw === "string" ? JSON.parse(raw || "{}") : raw ? JSON.parse(JSON.stringify(raw)) : {};
+const root = () => `${instanceTransferBackupTools.dataRoot()}/transfers`;
+const directory = (id) => `${root()}/${id}`;
+const credentialsPath = (id) => `${directory(id)}/curl-auth.conf`;
+const partialPath = (id) => `${directory(id)}/archive.tar.gz.part`;
+const maxBytes = () => {
+	const value = Number($os.getenv("INSTANCE_TRANSFER_MAX_BYTES") || 100 * 1024 ** 3);
+	if (!Number.isSafeInteger(value) || value <= 0) throw new Error("INSTANCE_TRANSFER_MAX_BYTES invalide.");
+	return value;
+};
+const exists = (path) => {
+	try {
+		$os.stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const fileSize = (path) => {
+	try {
+		return Number($os.stat(path).size());
+	} catch {
+		return 0;
+	}
+};
+const removeCredentials = (id) => {
+	try {
+		$os.remove(credentialsPath(id));
+	} catch {}
+};
+const command$1 = (name, ...args) => toString($os.cmd(name, ...args).combinedOutput()).trim();
+const find$1 = (id, app = $app) => {
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Transfert introuvable.");
+	return app.findRecordById(COLLECTION$3, id);
+};
+const requireAdmin = (e) => {
+	if (!e.auth?.getBool("superAdmin")) throw new ForbiddenError("Le transfert de serveur est réservé au superadmin.");
+	return e.auth;
+};
+const body = (e) => object$1(e.requestInfo().body);
+const pathId = (e) => e.request.pathValue("transferId");
+const saveStatus = (record, status, error = "") => {
+	record.set("status", status);
+	record.set("error", error);
+	$app.save(record);
+};
+const serialize$1 = (record) => {
+	const metadata = object$1(record.getString("metadata"));
+	const status = record.getString("status");
+	const exporting = record.getString("direction") === "export";
+	const totalBytes = Number(metadata.peer?.archive?.compressedBytes || metadata.compressedBytes || 0);
+	let preparation = {
+		phase: "",
+		compressedBytes: 0,
+		sourceBytes: 0
+	};
+	if (exporting && record.getString("backup")) try {
+		preparation = instanceTransferBackupTools.progress($app.findRecordById("instance_backups", record.getString("backup")));
+	} catch {}
+	const phase = [
+		"complete",
+		"failed",
+		"revoked",
+		"queued"
+	].includes(status) ? status : status === "preparing" ? "preparing" : metadata.progress?.phase || status;
+	const downloadedBytes = status === "complete" || !exporting && record.getString("backup") ? totalBytes : exporting ? Number(metadata.progress?.downloadedBytes || 0) : fileSize(partialPath(record.id));
+	let subdomain = metadata.subdomain || "";
+	try {
+		subdomain = $app.findRecordById("instances", record.getString("instance")).getString("subdomain");
+	} catch {}
+	return {
+		id: record.id,
+		direction: record.getString("direction"),
+		instance: record.getString("instance"),
+		subdomain,
+		backup: record.getString("backup"),
+		status,
+		phase,
+		claimed: !!record.getString("claimHash"),
+		preparedBytes: preparation.compressedBytes,
+		preparationPhase: preparation.phase,
+		sourceBytes: preparation.sourceBytes,
+		progressUpdatedAt: metadata.progress?.updatedAt || "",
+		expiresAt: record.getString("expiresAt"),
+		error: record.getString("error"),
+		created: record.getString("created"),
+		totalBytes,
+		downloadedBytes: Math.min(totalBytes, downloadedBytes)
+	};
+};
+const assertOwner = (record, auth) => {
+	if (record.getString("user") !== auth.id) throw new ForbiddenError("Ce transfert appartient à un autre administrateur.");
+};
+const assertFresh = (record) => {
+	if (Date.parse(record.getString("expiresAt")) <= Date.now()) throw new BadRequestError("Le lien de transfert a expiré.");
+};
+const peerRecord = (e, allowComplete = false) => {
+	const record = find$1(pathId(e));
+	const code = e.request.header.get("X-PocketHost-Transfer") || "";
+	if (record.getString("direction") !== "export" || !/^[A-Za-z0-9]{48}$/.test(code) || !$security.equal($security.sha256(code), record.getString("codeHash"))) throw new ForbiddenError("Code de transfert invalide.");
+	if (record.getString("status") === "revoked" || !allowComplete && record.getString("status") === "complete") throw new BadRequestError("Ce lien a été révoqué ou déjà utilisé.");
+	if (!(allowComplete && record.getString("status") === "complete")) assertFresh(record);
+	return record;
+};
+const assertClaim = (e, record) => {
+	const claim = e.request.header.get("X-PocketHost-Claim") || "";
+	if (!/^[A-Za-z0-9]{48}$/.test(claim) || !$security.equal($security.sha256(claim), record.getString("claimHash"))) throw new ForbiddenError("Ce transfert est réservé à un autre serveur cible.");
+};
+const metadataForPeer = (record) => {
+	const instance = $app.findRecordById("instances", record.getString("instance"));
+	const frozen = object$1(record.getString("metadata")).instance;
+	const result = {
+		protocol: INSTANCE_TRANSFER_PROTOCOL,
+		id: record.id,
+		status: record.getString("status"),
+		expiresAt: record.getString("expiresAt"),
+		instance: frozen || {
+			subdomain: instance.getString("subdomain"),
+			version: instance.getString("version"),
+			syncAdmin: instance.getBool("syncAdmin"),
+			autoVacuum: instance.getBool("autoVacuum"),
+			secrets: JSON.parse(instance.getString("secrets") || "[]"),
+			webhooks: JSON.parse(instance.getString("webhooks") || "[]")
+		}
+	};
+	if (record.getString("backup")) {
+		const backup = $app.findRecordById("instance_backups", record.getString("backup"));
+		result.archive = {
+			filename: backup.getString("filename"),
+			checksum: backup.getString("checksum"),
+			compressedBytes: Number(backup.get("compressedBytes")),
+			sizeBytes: Number(backup.get("sizeBytes"))
+		};
+	}
+	return result;
+};
+const parsePeer = (link, code = "") => {
+	const peer = parseInstanceTransferLink(link, code);
+	assertTransferPeerAllowed(peer, $os.getenv("INSTANCE_TRANSFER_ALLOWED_HOSTS") || "", $os.getenv("INSTANCE_TRANSFER_ALLOW_HTTP") === "1");
+	return peer;
+};
+const writeCredentials = (id, code, claim) => {
+	$os.mkdirAll(directory(id), 448);
+	$os.writeFile(credentialsPath(id), `header = "X-PocketHost-Transfer: ${code}"\nheader = "X-PocketHost-Claim: ${claim}"\n`, 384);
+};
+const curlBase = (config) => [
+	"--silent",
+	"--show-error",
+	"--fail",
+	"--connect-timeout",
+	"10",
+	"--max-redirs",
+	"0",
+	"--proto",
+	$os.getenv("INSTANCE_TRANSFER_ALLOW_HTTP") === "1" ? "=http,https" : "=https",
+	"--config",
+	config
+];
+const peerRequest = (origin, id, config, action, method = "GET", data) => {
+	const output = command$1("curl", ...curlBase(config), "--max-time", action === "progress" ? "3" : "30", "--max-filesize", "1048576", "--request", method, ...data === void 0 ? [] : [
+		"--header",
+		"Content-Type: application/json",
+		"--data-raw",
+		JSON.stringify(data)
+	], `${origin}/api/instance-transfers/${id}/${action}`);
+	return JSON.parse(output);
+};
+const DOWNLOAD_SCRIPT = String.raw`
+transfer_config=$1
+transfer_path=$2
+transfer_archive=$3
+transfer_total=$4
+transfer_progress=$5
+transfer_proto=$6
+transfer_parent=$PPID
+transfer_pid=
+transfer_cleanup() {
+  if [ -n "$transfer_pid" ]; then kill "$transfer_pid" 2>/dev/null; wait "$transfer_pid" 2>/dev/null; fi
+}
+trap transfer_cleanup EXIT
+trap 'exit 143' TERM HUP INT
+transfer_report() {
+  transfer_bytes=$(stat -c %s "$transfer_path" 2>/dev/null || printf 0)
+  transfer_payload=$(printf '{"phase":"downloading","downloadedBytes":%s}' "$transfer_bytes")
+  curl --silent --fail --connect-timeout 1 --max-time 2 --max-redirs 0 --proto "$transfer_proto" \
+    --config "$transfer_config" --request POST --header 'Content-Type: application/json' \
+    --data "$transfer_payload" "$transfer_progress" >/dev/null 2>&1 || true
+}
+curl --silent --show-error --fail --connect-timeout 10 --max-redirs 0 --proto "$transfer_proto" \
+  --config "$transfer_config" --retry 3 --retry-delay 3 --speed-time 120 --speed-limit 1024 \
+  --max-time 43200 --max-filesize "$transfer_total" --continue-at - --output "$transfer_path" \
+  "$transfer_archive" &
+transfer_pid=$!
+while kill -0 "$transfer_pid" 2>/dev/null; do
+  if ! kill -0 "$transfer_parent" 2>/dev/null; then exit 143; fi
+  transfer_report
+  sleep 3
+done
+wait "$transfer_pid"
+transfer_status=$?
+transfer_pid=
+transfer_report
+exit "$transfer_status"
+`;
+const downloadArchive = (record, origin, id, total) => command$1("bash", "-c", DOWNLOAD_SCRIPT, "pockethost-transfer", credentialsPath(record.id), partialPath(record.id), `${origin}/api/instance-transfers/${id}/archive`, `${total}`, `${origin}/api/instance-transfers/${id}/progress`, $os.getenv("INSTANCE_TRANSFER_ALLOW_HTTP") === "1" ? "=http,https" : "=https");
+const reportImportProgress = (record, phase) => {
+	const metadata = object$1(record.getString("metadata"));
+	const total = Number(metadata.peer?.archive?.compressedBytes || 0);
+	const progress = {
+		phase,
+		downloadedBytes: record.getString("backup") ? total : Math.min(total, fileSize(partialPath(record.id))),
+		updatedAt: now$1()
+	};
+	record.set("metadata", {
+		...metadata,
+		progress
+	});
+	$app.save(record);
+	try {
+		peerRequest(record.getString("sourceUrl"), record.getString("remoteId"), credentialsPath(record.id), "progress", "POST", progress);
+	} catch {}
+};
+const inspectPeer = (link, code = "") => {
+	const peer = parsePeer(link, code);
+	const tempId = $security.randomStringWithAlphabet(15, "abcdefghijklmnopqrstuvwxyz0123456789");
+	writeCredentials(tempId, peer.code, $security.randomString(48));
+	try {
+		return {
+			peer,
+			metadata: validateTransferMetadata(peerRequest(peer.origin, peer.id, credentialsPath(tempId), "metadata"), peer.id, maxBytes())
+		};
+	} finally {
+		$os.removeAll(directory(tempId));
+	}
+};
+const HandleInstanceTransferCreate = (e) => {
+	const auth = requireAdmin(e);
+	const instance = $app.findRecordById("instances", e.request.pathValue("id"));
+	instanceTransferBackupTools.assertNoRunningOperation(instance.id);
+	const base = ($os.getenv("APP_URL") || "").replace(/\/+$/, "");
+	const code = $security.randomString(48);
+	const record = new Record($app.findCollectionByNameOrId(COLLECTION$3));
+	record.set("direction", "export");
+	record.set("status", "queued");
+	record.set("user", auth.id);
+	record.set("instance", instance.id);
+	record.set("codeHash", $security.sha256(code));
+	record.set("expiresAt", new Date(Date.now() + 1440 * 60 * 1e3).toISOString());
+	record.set("metadata", {
+		wasRunning: instance.getBool("power"),
+		subdomain: instance.getString("subdomain")
+	});
+	$app.runInTransaction((app) => {
+		if (app.findRecordsByFilter(COLLECTION$3, `${ACTIVE_EXPORT} && instance = {:id}`, "", 1, 0, { id: instance.id }).length) throw new BadRequestError("Un transfert est déjà en cours pour cette instance.");
+		app.save(record);
+		parseInstanceTransferLink(`${base}/api/instance-transfers/${record.id}#${code}`);
+		const current = app.findRecordById("instances", instance.id);
+		current.set("power", false);
+		app.save(current);
+	});
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(202, {
+		transfer: serialize$1(record),
+		link: `${base}/api/instance-transfers/${record.id}#${code}`,
+		code
+	});
+};
+const HandleInstanceTransfersList = (e) => {
+	const auth = requireAdmin(e);
+	const instanceId = e.request.url.query().get("instance") || "";
+	const records = $app.findRecordsByFilter(COLLECTION$3, "user = {:user}" + (instanceId ? " && instance = {:instance}" : ""), "-created", 100, 0, {
+		user: auth.id,
+		instance: instanceId
+	});
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(200, { transfers: records.map(serialize$1) });
+};
+const HandleInstanceTransferMetadata = (e) => {
+	const record = peerRecord(e);
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(200, metadataForPeer(record));
+};
+const HandleInstanceTransferRenewLink = (e) => {
+	const auth = requireAdmin(e);
+	const code = $security.randomString(48);
+	const record = find$1(pathId(e));
+	assertOwner(record, auth);
+	$app.runInTransaction((app) => {
+		const current = find$1(record.id, app);
+		if (current.getString("direction") !== "export" || ![
+			"queued",
+			"preparing",
+			"ready"
+		].includes(current.getString("status")) || current.getString("claimHash")) throw new BadRequestError("Le transfert est déjà réservé ou terminé.");
+		current.set("codeHash", $security.sha256(code));
+		current.set("expiresAt", new Date(Date.now() + 1440 * 60 * 1e3).toISOString());
+		app.save(current);
+	});
+	const link = `${($os.getenv("APP_URL") || "").replace(/\/+$/, "")}/api/instance-transfers/${record.id}#${code}`;
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(200, {
+		transfer: serialize$1(find$1(record.id)),
+		link,
+		code
+	});
+};
+const HandleInstanceTransferClaim = (e) => {
+	const record = peerRecord(e);
+	const claim = e.request.header.get("X-PocketHost-Claim") || "";
+	if (!/^[A-Za-z0-9]{48}$/.test(claim)) throw new BadRequestError("Identifiant cible invalide.");
+	$app.runInTransaction((app) => {
+		const current = find$1(record.id, app);
+		assertFresh(current);
+		if (!$security.equal(current.getString("codeHash"), $security.sha256(e.request.header.get("X-PocketHost-Transfer") || ""))) throw new ForbiddenError("Ce code a été remplacé.");
+		if (current.getString("status") !== "ready") throw new BadRequestError("Le transfert n’est pas disponible.");
+		const hash = $security.sha256(claim);
+		if (current.getString("claimHash") && !$security.equal(current.getString("claimHash"), hash)) throw new BadRequestError("Ce lien est déjà utilisé par un autre transfert.");
+		current.set("claimHash", hash);
+		app.save(current);
+	});
+	return e.json(200, { status: "ok" });
+};
+const HandleInstanceTransferArchive = (e) => {
+	const record = peerRecord(e);
+	assertClaim(e, record);
+	if (record.getString("status") !== "ready") throw new BadRequestError("Archive indisponible.");
+	const instance = $app.findRecordById("instances", record.getString("instance"));
+	if (instance.getBool("power")) throw new BadRequestError("La source doit rester arrêtée pendant le transfert.");
+	const backup = $app.findRecordById("instance_backups", record.getString("backup"));
+	const path = instanceTransferBackupTools.archivePath(instance, backup);
+	const filename = path.split("/").pop();
+	e.response.header().set("Cache-Control", "no-store");
+	e.response.header().set("Content-Disposition", `attachment; filename="${filename}"`);
+	return e.fileFS($os.dirFS(path.slice(0, -filename.length)), filename);
+};
+const HandleInstanceTransferProgress = (e) => {
+	const record = peerRecord(e);
+	const input = body(e);
+	if (![
+		"downloading",
+		"verifying",
+		"restoring",
+		"failed"
+	].includes(input.phase)) throw new BadRequestError("Étape de transfert invalide.");
+	$app.runInTransaction((app) => {
+		const current = find$1(record.id, app);
+		assertClaim(e, current);
+		assertFresh(current);
+		if (current.getString("status") !== "ready" || !$security.equal(current.getString("codeHash"), $security.sha256(e.request.header.get("X-PocketHost-Transfer") || ""))) throw new BadRequestError("Transfert indisponible.");
+		const metadata = object$1(current.getString("metadata"));
+		const total = Number(metadata.compressedBytes || 0);
+		if (!Number.isSafeInteger(input.downloadedBytes) || input.downloadedBytes < 0 || input.downloadedBytes > total) throw new BadRequestError("Volume transféré invalide.");
+		current.set("metadata", {
+			...metadata,
+			progress: {
+				phase: input.phase,
+				downloadedBytes: input.downloadedBytes,
+				updatedAt: now$1()
+			}
+		});
+		app.save(current);
+	});
+	return e.json(200, { status: "ok" });
+};
+const HandleInstanceTransferComplete = (e) => {
+	const record = peerRecord(e, true);
+	$app.runInTransaction((app) => {
+		const current = find$1(record.id, app);
+		assertClaim(e, current);
+		if (!["ready", "complete"].includes(current.getString("status")) || !$security.equal(current.getString("codeHash"), $security.sha256(e.request.header.get("X-PocketHost-Transfer") || ""))) throw new BadRequestError("Transfert indisponible.");
+		if (current.getString("status") !== "complete") assertFresh(current);
+		if (app.findRecordById("instances", current.getString("instance")).getBool("power")) throw new BadRequestError("La source doit rester arrêtée.");
+		current.set("status", "complete");
+		app.save(current);
+	});
+	return e.json(200, { status: "ok" });
+};
+const HandleInstanceTransferInspect = (e) => {
+	requireAdmin(e);
+	const input = body(e);
+	try {
+		const { metadata } = inspectPeer(`${input.link || ""}`, `${input.code || ""}`);
+		return e.json(200, {
+			...metadata,
+			instance: {
+				subdomain: metadata.instance.subdomain,
+				version: metadata.instance.version
+			}
+		});
+	} catch (error) {
+		throw new BadRequestError(`${error}`);
+	}
+};
+const HandleInstanceTransferImport = (e) => {
+	const auth = requireAdmin(e);
+	const input = body(e);
+	const { peer, metadata } = inspectPeer(`${input.link || ""}`, `${input.code || ""}`);
+	const subdomain = `${input.subdomain || metadata.instance.subdomain}`.trim().toLowerCase();
+	if (!/^[a-z][a-z0-9-]{2,39}$/.test(subdomain)) throw new BadRequestError("Nom de nouvelle instance invalide.");
+	const versions = listVersions();
+	if (versions.length && !versions.includes(metadata.instance.version)) throw new BadRequestError(`La version ${metadata.instance.version} doit être disponible sur ce serveur.`);
+	const instance = new Record($app.findCollectionByNameOrId("instances"));
+	instance.set("uid", auth.id);
+	instance.set("subdomain", subdomain);
+	instance.set("status", "idle");
+	instance.set("power", false);
+	instance.set("version", metadata.instance.version);
+	instance.set("syncAdmin", metadata.instance.syncAdmin);
+	instance.set("secrets", metadata.instance.secrets || []);
+	instance.set("webhooks", metadata.instance.webhooks || []);
+	instance.set("dev", false);
+	const record = new Record($app.findCollectionByNameOrId(COLLECTION$3));
+	const claim = $security.randomString(48);
+	try {
+		$app.runInTransaction((app) => {
+			app.save(instance);
+			instance.set("power", false);
+			instance.set("autoVacuum", metadata.instance.autoVacuum);
+			app.save(instance);
+			record.set("direction", "import");
+			record.set("status", "preparing");
+			record.set("user", auth.id);
+			record.set("instance", instance.id);
+			record.set("expiresAt", metadata.expiresAt);
+			record.set("sourceUrl", peer.origin);
+			record.set("remoteId", peer.id);
+			record.set("metadata", {
+				peer: metadata,
+				subdomain
+			});
+			app.save(record);
+			writeCredentials(record.id, peer.code, claim);
+		});
+		peerRequest(peer.origin, peer.id, credentialsPath(record.id), "claim", "POST");
+		saveStatus(record, "queued");
+		return e.json(202, { transfer: serialize$1(record) });
+	} catch (error) {
+		if (record.id) {
+			try {
+				$app.delete(record);
+			} catch {}
+			$os.removeAll(directory(record.id));
+		}
+		if (instance.id) try {
+			$app.delete(instance);
+		} catch {}
+		throw new BadRequestError(`Impossible de réserver ce transfert : ${error}`);
+	}
+};
+const HandleInstanceTransferCancel = (e) => {
+	const auth = requireAdmin(e);
+	const record = find$1(pathId(e));
+	assertOwner(record, auth);
+	if (record.getString("direction") !== "export" || ![
+		"queued",
+		"ready",
+		"failed"
+	].includes(record.getString("status"))) throw new BadRequestError("Attendez la fin de la préparation avant d’annuler. Un transfert terminé ne peut pas être annulé.");
+	$app.runInTransaction((app) => {
+		const current = find$1(record.id, app);
+		if (![
+			"queued",
+			"ready",
+			"failed"
+		].includes(current.getString("status"))) throw new BadRequestError("Transfert en cours de préparation.");
+		current.set("status", "revoked");
+		app.save(current);
+		if (object$1(current.getString("metadata")).wasRunning) {
+			const instance = app.findRecordById("instances", current.getString("instance"));
+			instance.set("power", true);
+			app.save(instance);
+		}
+	});
+	return e.json(200, { transfer: serialize$1(find$1(record.id)) });
+};
+const HandleInstanceTransferRetry = (e) => {
+	const auth = requireAdmin(e);
+	const record = find$1(pathId(e));
+	assertOwner(record, auth);
+	assertFresh(record);
+	if (record.getString("status") !== "failed" || record.getString("direction") !== "import" || !exists(credentialsPath(record.id))) throw new BadRequestError("Ce transfert ne peut pas être repris. Préparez un nouveau lien sur la source.");
+	if ($app.findRecordById("instances", record.getString("instance")).getBool("power")) throw new BadRequestError("Arrêtez l’instance cible avant de reprendre le transfert.");
+	$app.runInTransaction((app) => {
+		const current = find$1(record.id, app);
+		if (current.getString("status") !== "failed") throw new BadRequestError("Ce transfert est déjà en cours.");
+		current.set("status", "queued");
+		current.set("error", "");
+		app.save(current);
+	});
+	return e.json(202, { transfer: serialize$1(find$1(record.id)) });
+};
+const BeforeUpdate_instanceTransferPower = (e) => {
+	if (!e.record) return;
+	if (!e.record.getBool("power")) return;
+	try {
+		e.app.findCollectionByNameOrId(COLLECTION$3);
+	} catch {
+		return;
+	}
+	if (e.app.findRecordsByFilter(COLLECTION$3, "instance = {:id} && (direction = \"export\" && (status = \"queued\" || status = \"preparing\" || status = \"ready\") || (direction = \"import\" && status != \"complete\" && status != \"revoked\"))", "", 1, 0, { id: e.record.id }).length) throw new BadRequestError("Terminez ou annulez le transfert avant de démarrer cette instance.");
+};
+const BeforeDelete_instanceTransfer = (e) => {
+	if (!e.record) return;
+	try {
+		e.app.findCollectionByNameOrId(COLLECTION$3);
+	} catch {
+		return;
+	}
+	if (e.app.findRecordsByFilter(COLLECTION$3, "instance = {:id} && (status = \"queued\" || status = \"preparing\" || status = \"ready\" || status = \"downloading\" || status = \"restoring\")", "", 1, 0, { id: e.record.id }).length) throw new BadRequestError("Terminez ou annulez le transfert avant de supprimer cette instance.");
+};
+const AfterDelete_instanceTransfer = (e) => {
+	if (e.record) $os.removeAll(directory(e.record.id));
+};
+const prepareExport = (record) => {
+	const instance = $app.findRecordById("instances", record.getString("instance"));
+	const auth = $app.findRecordById("users", record.getString("user"));
+	const backup = instanceTransferBackupTools.create(instance, auth, record.id, (created) => {
+		record.set("backup", created.id);
+		$app.save(record);
+	});
+	record.set("metadata", {
+		...object$1(record.getString("metadata")),
+		instance: metadataForPeer(record).instance,
+		compressedBytes: Number(backup.get("compressedBytes"))
+	});
+	saveStatus(record, "ready");
+};
+const performImport = (record) => {
+	assertFresh(record);
+	const instance = $app.findRecordById("instances", record.getString("instance"));
+	if (instance.getBool("power")) throw new Error("L’instance cible doit rester arrêtée.");
+	const metadata = object$1(record.getString("metadata")).peer;
+	const peer = parsePeer(`${record.getString("sourceUrl")}/api/instance-transfers/${record.getString("remoteId")}#${"x".repeat(48)}`);
+	const archive = metadata.archive;
+	let backup;
+	if (!record.getString("backup")) {
+		peerRequest(peer.origin, peer.id, credentialsPath(record.id), "claim", "POST");
+		const path = partialPath(record.id);
+		reportImportProgress(record, "downloading");
+		if (fileSize(path) > archive.compressedBytes) $os.remove(path);
+		if (!exists(path) || fileSize(path) !== archive.compressedBytes) downloadArchive(record, peer.origin, peer.id, archive.compressedBytes);
+		reportImportProgress(record, "verifying");
+		if (fileSize(path) !== archive.compressedBytes || instanceTransferBackupTools.checksum(path) !== archive.checksum) {
+			$os.remove(path);
+			throw new Error("L’archive reçue est incomplète ou son empreinte SHA-256 ne correspond pas. Relancez le transfert.");
+		}
+		const auth = $app.findRecordById("users", record.getString("user"));
+		backup = instanceTransferBackupTools.receive(instance, auth, path, archive);
+		record.set("backup", backup.id);
+		$app.save(record);
+	} else backup = $app.findRecordById("instance_backups", record.getString("backup"));
+	saveStatus(record, "restoring");
+	reportImportProgress(record, "restoring");
+	instanceTransferBackupTools.restore(instance, backup);
+	peerRequest(peer.origin, peer.id, credentialsPath(record.id), "complete", "POST");
+	saveStatus(record, "complete");
+	removeCredentials(record.id);
+};
+const HandleInstanceTransferDispatcher = () => {
+	let record;
+	$app.runInTransaction((app) => {
+		if (app.findRecordsByFilter(COLLECTION$3, "status = \"preparing\" || status = \"downloading\" || status = \"restoring\"", "", 1, 0).length) return;
+		const queued = app.findRecordsByFilter(COLLECTION$3, "status = \"queued\"", "created", 1, 0);
+		if (!queued.length) return;
+		record = queued[0];
+		record.set("status", record.getString("direction") === "export" ? "preparing" : "downloading");
+		app.save(record);
+	});
+	if (!record) return;
+	try {
+		assertFresh(record);
+		if (record.getString("direction") === "export") prepareExport(record);
+		else performImport(record);
+	} catch (error) {
+		if (record.getString("direction") === "import") reportImportProgress(record, "failed");
+		saveStatus(record, "failed", `${error}`.slice(0, 1800));
+	}
+};
+const HandleInstanceTransferBootstrap = () => {
+	try {
+		$app.findCollectionByNameOrId(COLLECTION$3);
+	} catch {
+		return;
+	}
+	const interrupted = $app.findRecordsByFilter(COLLECTION$3, "status = \"preparing\" || status = \"downloading\" || status = \"restoring\"", "", 500, 0);
+	for (const record of interrupted) {
+		if (!record) continue;
+		if (record.getString("backup")) {
+			const backup = $app.findRecordById("instance_backups", record.getString("backup"));
+			if (backup.getString("status") === "running") {
+				backup.set("status", "failed");
+				backup.set("error", "Préparation interrompue par le redémarrage du serveur.");
+			}
+			if (backup.getString("restoreState") === "running") {
+				backup.set("restoreState", "failed");
+				backup.set("restoreError", "Restauration interrompue. Le transfert peut être repris.");
+				backup.set("restoreUpdatedAt", now$1());
+			}
+			$app.save(backup);
+		}
+		saveStatus(record, "failed", "Transfert interrompu par le redémarrage du serveur. La source est conservée.");
+	}
 };
 
 //#endregion
@@ -4934,7 +14655,17 @@ const HandleInstanceUpdate = (e) => {
 	const authRecord = e.auth;
 	log(`authRecord`, JSON.stringify(authRecord));
 	if (!authRecord) throw new Error(`Session utilisateur attendue`);
-	if (record.get("uid") !== authRecord.id) throw new BadRequestError(`Non autorisé`);
+	if (!canManageInstance(record, authRecord)) throw new BadRequestError(`Non autorisé`);
+	if (subdomain !== null && subdomain !== record.getString("subdomain")) {
+		if ($os.getenv("WEB_APPS_ENABLED") === "true" && subdomain.trim().toLowerCase().startsWith("web-")) throw new BadRequestError("Le préfixe web- est réservé aux applications web.");
+		assertNoWebDomainConflict(`${subdomain.trim().toLowerCase()}.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`);
+	}
+	if (cname !== null) assertNoWebDomainConflict(cname.trim().toLowerCase());
+	const hostnameFields = JSON.parse(JSON.stringify(e.requestInfo().body || {})).fields || {};
+	for (const name of ["publicHostname", "legacyHostnames"]) if (Object.prototype.hasOwnProperty.call(hostnameFields, name)) {
+		assertInstanceHostnameOperator(authRecord);
+		record.set(name, hostnameFields[name]);
+	}
 	const oldCname = record.getString("cname").trim();
 	const newCname = cname !== null ? cname.trim() : null;
 	const cnameChanged = newCname !== null && oldCname !== newCname;
@@ -5162,6 +14893,967 @@ const BeforeUpdate_version = (e) => {
 		log(`[ERROR] ${msg}`);
 		throw new BadRequestError(msg);
 	}
+};
+
+//#endregion
+//#region ../common/performancePagination.ts
+/** Goja-safe pagination over a fixed, sanitized analysis snapshot. */
+const paginatePerformance = (report, slowPage, groupPage, sort, perPage = 50) => {
+	const groups = [...report.groups].sort((a, b) => b[sort] - a[sort] || `${a.method} ${a.endpoint}`.localeCompare(`${b.method} ${b.endpoint}`));
+	const page = (items, requested) => {
+		const totalPages = Math.max(1, Math.ceil(items.length / perPage));
+		const current = Math.min(totalPages, Math.max(1, requested));
+		return {
+			page: current,
+			perPage,
+			totalItems: items.length,
+			totalPages,
+			items: items.slice((current - 1) * perPage, current * perPage)
+		};
+	};
+	const slow = page(report.slowest, slowPage);
+	const routes = page(groups, groupPage);
+	return {
+		...report,
+		groups: routes.items,
+		slowest: slow.items,
+		slowPagination: {
+			page: slow.page,
+			perPage,
+			totalItems: slow.totalItems,
+			totalPages: slow.totalPages
+		},
+		groupPagination: {
+			page: routes.page,
+			perPage,
+			totalItems: routes.totalItems,
+			totalPages: routes.totalPages
+		}
+	};
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstancePerformance.ts
+const PERFORMANCE_READER = String.raw`
+import sys,json,sqlite3,pathlib,datetime,math,re,urllib.parse
+root,ident,hours,threshold=sys.argv[1:]
+hours=int(hours);threshold=int(threshold);limit=50000
+base=(pathlib.Path(root)/'instances').resolve()
+instance=base/ident
+folder=instance/'pb_data'
+if instance.resolve()!=instance or folder.resolve()!=folder:raise ValueError('Invalid log location')
+path=next((folder/name for name in ['auxiliary.db','logs.db'] if (folder/name).is_file()),None)
+if path and path.resolve()!=path:raise ValueError('Invalid log file')
+result={'available':False,'truncated':False,'sampleLimit':limit,'hours':hours,'thresholdMs':threshold,'total':0,'slow':0,'errors':0,'averageMs':0,'p95Ms':0,'maxMs':0,'groups':[],'slowest':[],'oldestAt':None,'newestAt':None}
+def route(raw):
+    try:path=urllib.parse.urlsplit(raw).path
+    except ValueError:return '/api/autres',''
+    parts=path.strip('/').split('/')
+    if len(parts)>=3 and parts[:2]==['api','collections']:
+        collection=parts[2] if re.fullmatch(r'[A-Za-z0-9_]{1,100}',parts[2]) else ':collection'
+        action=parts[3] if len(parts)>3 and parts[3] in ['records','auth-with-password','auth-refresh','auth-with-oauth2','auth-with-otp','request-otp','request-password-reset','confirm-password-reset','impersonate'] else 'autres'
+        suffix='/:id' if len(parts)>4 else ''
+        return '/api/collections/'+collection+'/'+action+suffix,collection
+    if path.startswith('/api/files/'):return '/api/files/:collection/:record/:fichier',''
+    return (path if path in ['/api/health','/api/realtime','/api/batch','/api/collections','/api/settings'] else '/api/autres'),''
+def percentile(values):return round(sorted(values)[max(0,math.ceil(.95*len(values))-1)],2) if values else 0
+def timestamp(value):
+    try:return datetime.datetime.fromisoformat(value.replace('Z','+00:00')).replace(tzinfo=datetime.timezone.utc).timestamp()
+    except (ValueError,TypeError):return 0
+if path:
+    with sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,timeout=2) as db:
+        db.execute('PRAGMA query_only=ON')
+        tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if '_logs' in tables:
+            result['available']=True
+            db.set_progress_handler(lambda: 1 if __import__('time').monotonic()>deadline else 0,10000)
+            deadline=__import__('time').monotonic()+5
+            rows=db.execute('SELECT created,json_extract(data,\'$.type\'),json_extract(data,\'$.method\'),json_extract(data,\'$.url\'),json_extract(data,\'$.execTime\'),json_extract(data,\'$.status\') FROM (SELECT created,data FROM _logs ORDER BY rowid DESC LIMIT ?)',(limit+1,)).fetchall()
+            since=datetime.datetime.now(datetime.timezone.utc).timestamp()-hours*3600
+            result['truncated']=len(rows)>limit and timestamp(rows[-1][0])>=since
+            groups={};durations=[];slowest=[]
+            for created,kind,method,url,duration,status in rows[:limit]:
+                if kind!='request' or timestamp(created)<since or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<0:continue
+                endpoint,collection=route(str(url or ''))
+                method=method if method in ['GET','POST','PATCH','PUT','DELETE','OPTIONS','HEAD'] else 'HTTP'
+                status=status if isinstance(status,int) and 100<=status<=599 else 0
+                key=method+' '+endpoint
+                group=groups.setdefault(key,{'method':method,'endpoint':endpoint,'collection':collection,'count':0,'slowCount':0,'errors':0,'durations':[]})
+                group['count']+=1;group['slowCount']+=duration>=threshold;group['errors']+=status>=400;group['durations'].append(duration)
+                durations.append(duration);result['slow']+=duration>=threshold;result['errors']+=status>=400
+                if not result['oldestAt'] or timestamp(created)<timestamp(result['oldestAt']):result['oldestAt']=created
+                if not result['newestAt'] or timestamp(created)>timestamp(result['newestAt']):result['newestAt']=created
+                if duration>=threshold:slowest.append({'created':created,'method':method,'endpoint':endpoint,'status':status,'durationMs':round(duration,2)})
+            for group in groups.values():
+                values=group.pop('durations');group.update(averageMs=round(sum(values)/len(values),2),p95Ms=percentile(values),maxMs=round(max(values),2))
+            result.update(total=len(durations),averageMs=round(sum(durations)/len(durations),2) if durations else 0,p95Ms=percentile(durations),maxMs=round(max(durations),2) if durations else 0,groups=sorted(groups.values(),key=lambda g:g['maxMs'],reverse=True),slowest=sorted(slowest,key=lambda r:r['durationMs'],reverse=True))
+print(json.dumps(result))
+`;
+const HandleInstancePerformance = (e) => {
+	const id = e.request.pathValue("id");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Instance introuvable.");
+	const instance = $app.findRecordById("instances", id);
+	if (!e.auth || e.auth.collection().name !== "users" || !canManageInstance(instance, e.auth)) throw new ForbiddenError("Non autorisé.");
+	const query = e.request.url.query();
+	const hours = Number(query.get("hours") || 24);
+	const threshold = Number(query.get("thresholdMs") || 500);
+	if (![
+		1,
+		24,
+		168
+	].includes(hours) || ![
+		100,
+		500,
+		1e3,
+		3e3
+	].includes(threshold)) throw new BadRequestError("Filtres invalides.");
+	const slowPage = Number(query.get("slowPage") || 1);
+	const groupPage = Number(query.get("groupPage") || 1);
+	const sort = query.get("sort") || "maxMs";
+	if (![slowPage, groupPage].every((page) => Number.isSafeInteger(page) && page >= 1 && page <= 1e5) || ![
+		"maxMs",
+		"p95Ms",
+		"count"
+	].includes(sort)) throw new BadRequestError("Pagination invalide.");
+	const snapshot = query.get("snapshot") || "";
+	const cacheKey = `ph_performance_v2_${id}`;
+	const raw = $app.store().get(cacheKey);
+	const cached = raw ? JSON.parse(`${raw}`) : null;
+	const matches = cached && cached.hours === hours && cached.threshold === threshold;
+	e.response.header().set("Cache-Control", "no-store");
+	if (snapshot) {
+		if (!matches || cached.value.snapshot !== snapshot || cached.expires <= Date.now()) throw new ApiError(409, "L’analyse a expiré ou a été actualisée. Relancez-la pour parcourir ses résultats.");
+		return e.json(200, paginatePerformance(cached.value, slowPage, groupPage, sort));
+	}
+	if (matches && cached.until > Date.now()) return e.json(200, paginatePerformance(cached.value, slowPage, groupPage, sort));
+	const root = $os.getenv("DATA_ROOT") || `${$app.dataDir()}`.replace(/\/mothership\/pb_data\/?$/, "");
+	let value;
+	try {
+		value = JSON.parse(toString($os.cmd("python3", "-c", PERFORMANCE_READER, root, id, `${hours}`, `${threshold}`).combinedOutput()));
+	} catch {
+		throw new BadRequestError("Analyse indisponible pour le moment. Réessayez dans quelques instants.");
+	}
+	value.analyzedAt = (/* @__PURE__ */ new Date()).toISOString();
+	value.snapshot = $security.randomString(20);
+	$app.store().set(cacheKey, JSON.stringify({
+		hours,
+		threshold,
+		until: Date.now() + 15e3,
+		expires: Date.now() + 6e5,
+		value
+	}));
+	return e.json(200, paginatePerformance(value, slowPage, groupPage, sort));
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/backupVerification.ts
+/** Restores only into a private temporary directory. No PocketBase process or hook is started. */
+const BACKUP_VERIFIER = String.raw`
+import os,sys,json,pathlib,tempfile,tarfile,zipfile,sqlite3,hashlib,shutil,signal,time,threading,gzip
+archive,expected,progress,workspace=sys.argv[1:5]
+os.umask(0o077)
+try: os.nice(19)
+except OSError: pass
+signal.signal(signal.SIGALRM,lambda *args: (_ for _ in ()).throw(TimeoutError()))
+signal.alarm(7200)
+parent=os.getppid()
+def watch_parent():
+ while True:
+  time.sleep(3)
+  if os.getppid()!=parent:os.kill(os.getpid(),signal.SIGALRM);return
+threading.Thread(target=watch_parent,daemon=True).start()
+state={'phase':'checksum','files':0,'restoredBytes':0,'checksumVerified':False,'databaseIntegrity':False,'percent':0}
+last=0
+def report(force=False):
+ global last
+ if not force and time.monotonic()-last<2:return
+ last=time.monotonic();p=pathlib.Path(progress);tmp=p.with_suffix('.tmp');tmp.write_text(json.dumps(state));tmp.replace(p)
+class VerificationError(Exception):pass
+def fail(message):raise VerificationError(message)
+def restore(name,size,source,folder,seen,limit):
+ name=name.removeprefix('./');part=pathlib.PurePosixPath(name)
+ if not name or part.is_absolute() or '..' in part.parts or '\\' in name:fail('Chemin interdit dans l’archive.')
+ if part.parts[0] not in ('pb_data','pb_hooks','pb_migrations','pb_public','manifest.json'):fail('Contenu d’archive non reconnu.')
+ if str(part) in seen:fail('Entrée dupliquée dans l’archive.')
+ seen.add(str(part))
+ if len(seen)>1000000 or size<0 or state['restoredBytes']+size>limit:fail('Espace temporaire insuffisant ou archive trop volumineuse.')
+ target=folder.joinpath(*part.parts);target.parent.mkdir(parents=True,exist_ok=True)
+ with target.open('xb') as out:
+  remaining=size
+  while remaining:
+   chunk=source.read(min(1024*1024,remaining))
+   if not chunk:fail('Archive tronquée.')
+   out.write(chunk);remaining-=len(chunk);state['restoredBytes']+=len(chunk);report()
+  if source.read(1):fail('Taille d’entrée incohérente.')
+ state['files']+=1;report()
+try:
+ base=pathlib.Path(workspace);base.mkdir(parents=True,exist_ok=True)
+ if sys.platform.startswith('linux'):
+  import fcntl
+  worker_lock=(base/'worker.lock').open('a')
+  try:fcntl.flock(worker_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError:fail('Un autre contrôle est déjà actif sur le serveur.')
+ path=pathlib.Path(archive)
+ if path.is_symlink() or not path.is_file():fail('Archive absente ou non régulière.')
+ digest=hashlib.sha256();total=path.stat().st_size;read=0;report(True)
+ with path.open('rb') as f:
+  while True:
+   chunk=f.read(8*1024*1024)
+   if not chunk:break
+   digest.update(chunk);read+=len(chunk);state['percent']=int(read/max(1,total)*30);report()
+ if expected and digest.hexdigest()!=expected:fail('La somme SHA-256 ne correspond pas à la sauvegarde.')
+ state['checksumVerified']=bool(expected);state['phase']='restore';state['percent']=30;report(True)
+ base=pathlib.Path(workspace);base.mkdir(parents=True,exist_ok=True)
+ with tempfile.TemporaryDirectory(prefix='restore-check-',dir=base) as temporary:
+  folder=pathlib.Path(temporary);seen=set();limit=int(shutil.disk_usage(folder).free*0.8)
+  if zipfile.is_zipfile(path):
+   with zipfile.ZipFile(path) as z:
+    for member in z.infolist():
+     mode=member.external_attr>>16
+     if mode & 0o170000 == 0o120000:fail('Lien interdit dans l’archive.')
+     if member.is_dir():continue
+     with z.open(member) as source:restore(member.filename,member.file_size,source,folder,seen,limit)
+  else:
+   with gzip.open(path,'rb') as compressed, tarfile.open(fileobj=compressed,mode='r|') as t:
+    for member in t:
+     if member.isdir():
+      name=pathlib.PurePosixPath(member.name)
+      if name.is_absolute() or '..' in name.parts:fail('Chemin interdit dans l’archive.')
+      continue
+     if not member.isfile():fail('Lien ou fichier spécial interdit dans l’archive.')
+     with t.extractfile(member) as source:restore(member.name,member.size,source,folder,seen,limit)
+    while compressed.read(8*1024*1024):pass
+  state['phase']='sqlite';state['percent']=90;report(True)
+  db=folder/'pb_data/data.db'
+  if not db.is_file():fail('La sauvegarde ne contient pas pb_data/data.db.')
+  connection=sqlite3.connect(db,timeout=10)
+  connection.execute('PRAGMA trusted_schema=OFF')
+  result=connection.execute('PRAGMA integrity_check').fetchall()
+  if result!=[('ok',)]:fail('Le contrôle d’intégrité SQLite a échoué.')
+  if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_collections'").fetchone():fail('Métadonnées PocketBase absentes.')
+  connection.close();state['databaseIntegrity']=True
+ state.update(phase='complete',percent=100,ok=True,message='Archive restaurée et intégrité SQLite vérifiée. Les hooks et tâches n’ont pas été exécutés.')
+except Exception as error:
+ state.update(phase='failed',ok=False,message=str(error) if isinstance(error,VerificationError) else ('Délai maximal du contrôle dépassé.' if isinstance(error,TimeoutError) else 'Lecture, restauration temporaire ou contrôle SQLite impossible.'))
+finally:
+ report(True);print(json.dumps(state))
+`;
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceBackupChecks.ts
+const CHECKS = "instance_backup_checks", POLICY = "instance_backup_check_policies", LOCK = "ph_backup_check_worker";
+const policyFor = (id) => {
+	try {
+		return $app.findFirstRecordByFilter(POLICY, "instanceId = {:id}", { id });
+	} catch {
+		return null;
+	}
+};
+const progressPath = (id) => `${instanceTransferBackupTools.dataRoot()}/backup-checks/${id}.json`;
+const serialize = (r) => {
+	let result = JSON.parse(r.getString("result") || "{}");
+	if (r.getString("status") === "running") try {
+		result = JSON.parse(toString($os.readFile(progressPath(r.id))));
+	} catch {}
+	return {
+		id: r.id,
+		backupId: r.getString("backupId"),
+		status: r.getString("status"),
+		created: r.getString("created"),
+		startedAt: r.getString("startedAt"),
+		finishedAt: r.getString("finishedAt"),
+		result
+	};
+};
+const enqueue$1 = (instance, user, requested = "") => {
+	const pending = $app.findRecordsByFilter(CHECKS, "instanceId = {:id} && (status = \"queued\" || status = \"running\")", "", 1, 0, { id: instance.id })[0];
+	if (pending) return pending;
+	const backup = requested ? $app.findRecordById("instance_backups", requested) : instanceTransferBackupTools.latestReady(instance.id);
+	if (!backup || backup.getString("instance") !== instance.id || backup.getString("status") !== "ready") throw new BadRequestError("Aucune sauvegarde prête à vérifier.");
+	const row = new Record($app.findCollectionByNameOrId(CHECKS));
+	row.set("instanceId", instance.id);
+	row.set("backupId", backup.id);
+	row.set("status", "queued");
+	try {
+		$app.save(row);
+	} catch (error) {
+		const existing = $app.findRecordsByFilter(CHECKS, "instanceId = {:id} && (status = \"queued\" || status = \"running\")", "", 1, 0, { id: instance.id })[0];
+		if (existing) return existing;
+		throw error;
+	}
+	recordInstanceAction(instance, user, "backup-check.queued", {
+		check: row.id,
+		backup: backup.id
+	});
+	return row;
+};
+const HandleInstanceBackupChecksGet = (e) => {
+	const { instance } = operationsAccess(e), policy = policyFor(instance.id);
+	const page = Math.max(1, Math.floor(Number(e.request.url.query().get("page")) || 1));
+	const rows = $app.findRecordsByFilter(CHECKS, "instanceId = {:id}", "-created,-id", 26, (page - 1) * 25, { id: instance.id });
+	return operationJson(e, {
+		policy: {
+			enabled: policy?.getBool("enabled") || false,
+			intervalDays: policy?.getInt("intervalDays") || 7,
+			nextRunAt: policy?.getString("nextRunAt") || ""
+		},
+		items: rows.slice(0, 25).map(serialize),
+		hasMore: rows.length > 25,
+		page
+	});
+};
+const HandleInstanceBackupCheckCreate = (e) => {
+	const { instance, user } = operationsAccess(e), input = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	if (input.backupId && !/^[a-z0-9]{15}$/.test(input.backupId)) throw new BadRequestError("Sauvegarde invalide.");
+	return operationJson(e, { check: serialize(enqueue$1(instance, user, input.backupId || "")) }, 202);
+};
+const HandleInstanceBackupCheckPolicy = (e) => {
+	const { instance, user } = operationsAccess(e), input = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	const interval = Number(input.intervalDays);
+	if (typeof input.enabled !== "boolean" || !Number.isInteger(interval) || interval < 1 || interval > 30) throw new BadRequestError("Fréquence attendue entre 1 et 30 jours.");
+	const policy = policyFor(instance.id) || new Record($app.findCollectionByNameOrId(POLICY));
+	policy.set("instanceId", instance.id);
+	policy.set("enabled", input.enabled);
+	policy.set("intervalDays", interval);
+	if (!policy.getString("nextRunAt") || input.enabled) policy.set("nextRunAt", new Date(Date.now() + interval * 864e5).toISOString());
+	$app.save(policy);
+	recordInstanceAction(instance, user, "backup-check.policy", {
+		enabled: input.enabled,
+		intervalDays: interval
+	});
+	return operationJson(e, { ok: true });
+};
+const BackupCheckBootstrap = () => {
+	try {
+		$app.findCollectionByNameOrId(CHECKS);
+	} catch {
+		return;
+	}
+	for (const row of $app.findRecordsByFilter(CHECKS, "status = \"running\"", "", 1e3, 0)) {
+		if (!row) continue;
+		row.set("status", "failed");
+		row.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+		row.set("result", { message: "Contrôle interrompu par le redémarrage du serveur." });
+		$app.save(row);
+	}
+};
+const BackupCheckDispatcher = () => {
+	let claimed = false;
+	$app.store().setFunc(LOCK, (raw) => {
+		if (raw) return raw;
+		claimed = true;
+		return "running";
+	});
+	if (!claimed) return;
+	try {
+		for (const policy of $app.findRecordsByFilter(POLICY, "enabled = true && nextRunAt <= {:now}", "nextRunAt", 100, 0, { now: (/* @__PURE__ */ new Date()).toISOString() })) {
+			if (!policy) continue;
+			let instance;
+			try {
+				instance = $app.findRecordById("instances", policy.getString("instanceId"));
+			} catch {
+				policy.set("enabled", false);
+				$app.save(policy);
+				continue;
+			}
+			try {
+				enqueue$1(instance);
+			} catch {
+				const failed = new Record($app.findCollectionByNameOrId(CHECKS));
+				failed.set("instanceId", instance.id);
+				failed.set("status", "failed");
+				failed.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+				failed.set("result", { message: "Aucune sauvegarde prête disponible pour le contrôle automatique." });
+				$app.save(failed);
+				recordInstanceAction(instance, void 0, "backup-check.failed", { check: failed.id });
+				ReportBackupCheckIncident(instance, false);
+			}
+			policy.set("nextRunAt", new Date(Date.now() + Math.max(1, policy.getInt("intervalDays")) * 864e5).toISOString());
+			$app.save(policy);
+		}
+		const row = $app.findRecordsByFilter(CHECKS, "status = \"queued\"", "created", 1, 0)[0];
+		if (!row) return;
+		row.set("status", "running");
+		row.set("startedAt", (/* @__PURE__ */ new Date()).toISOString());
+		$app.save(row);
+		let instance;
+		try {
+			instance = $app.findRecordById("instances", row.getString("instanceId"));
+			instanceTransferBackupTools.assertNoRunningOperation(instance.id);
+			const backup = $app.findRecordById("instance_backups", row.getString("backupId"));
+			if (backup.getString("status") !== "ready" || backup.getString("instance") !== instance.id) throw new Error("Unavailable");
+			const archive = instanceTransferBackupTools.archivePath(instance, backup), workspace = `${instanceTransferBackupTools.dataRoot()}/backup-checks`;
+			$os.mkdirAll(workspace, 448);
+			const raw = toString($os.cmd("python3", "-c", BACKUP_VERIFIER, archive, backup.getString("checksum"), progressPath(row.id), workspace).output());
+			const result = JSON.parse(raw);
+			row.set("status", result.ok ? "passed" : "failed");
+			row.set("result", result);
+		} catch {
+			row.set("status", "failed");
+			row.set("result", { message: "Archive indisponible ou contrôle interrompu. Réessayez après la fin des opérations en cours." });
+		}
+		row.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
+		$app.save(row);
+		if (instance) {
+			recordInstanceAction(instance, void 0, `backup-check.${row.getString("status")}`, {
+				check: row.id,
+				backup: row.getString("backupId")
+			});
+			ReportBackupCheckIncident(instance, row.getString("status") === "passed");
+		}
+		try {
+			$os.remove(progressPath(row.id));
+		} catch {}
+	} finally {
+		$app.store().remove(LOCK);
+	}
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceDiagnostics.ts
+/** Bounded metadata/log inspection; EXPLAIN only on the real DB, candidate indexes only in memory. */
+const DIAGNOSTIC_READER = String.raw`
+import sys,json,sqlite3,pathlib,datetime,math,re,urllib.parse,time,hashlib,collections
+root,ident,hours,threshold,selected=sys.argv[1:]
+hours=int(hours);threshold=int(threshold);limit=50000;deadline=time.monotonic()+10
+base=(pathlib.Path(root)/'instances').resolve();home=base/ident;folder=home/'pb_data'
+if home.resolve()!=home or folder.resolve()!=folder:raise ValueError('Invalid location')
+def safe_file(path):
+    if path.exists() and path.resolve()!=path:raise ValueError('Invalid file')
+    return path if path.is_file() else None
+def connect(path):
+    db=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,timeout=2)
+    db.execute('PRAGMA query_only=ON');db.set_progress_handler(lambda: int(time.monotonic()>deadline),10000)
+    return db
+def quote(name):return '"'+name.replace('"','""')+'"'
+def stamp(value):
+    try:
+        parsed=datetime.datetime.fromisoformat(value.replace('Z','+00:00'))
+        if parsed.tzinfo is None:parsed=parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.timestamp()
+    except (ValueError,TypeError):return 0
+atom=re.compile(r'''([A-Za-z_][A-Za-z0-9_]*)\s*(>=|<=|=|>|<)\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true\b|false\b)''')
+def terms(text):
+    if len(text)>4096:return None
+    if not text.strip():return []
+    pos=0;found=[]
+    def spaces():
+        nonlocal pos
+        while pos<len(text) and text[pos].isspace():pos+=1
+    def group(depth=0):
+        nonlocal pos
+        if depth>4:return False
+        spaces()
+        if pos<len(text) and text[pos]=='(':
+            pos+=1
+            if not group(depth+1):return False
+            spaces()
+            if pos>=len(text) or text[pos]!=')':return False
+            pos+=1
+        else:
+            match=atom.match(text,pos)
+            if not match:return False
+            found.append((match[1],match[2]));pos=match.end()
+            if len(found)>12:return False
+        spaces()
+        while text[pos:pos+2]=='&&':
+            pos+=2
+            if not group(depth+1):return False
+            spaces()
+        return True
+    return found if group() and pos==len(text) else None
+result={'available':False,'logsAvailable':False,'truncated':False,'budgetLimited':False,'sampleLimit':limit,'sampledRows':0,'hours':hours,'thresholdMs':threshold,'collections':[],'patterns':[],'patternCount':0,'planLimit':20,'warnings':[],'sqliteVersion':sqlite3.sqlite_version}
+path=safe_file(folder/'data.db')
+if not path:
+    print(json.dumps(result));sys.exit()
+db=connect(path)
+try:
+    schema_cols={r[1] for r in db.execute('PRAGMA table_info(_collections)')}
+    field_col='fields' if 'fields' in schema_cols else 'schema'
+    metadata=db.execute('SELECT id,name,type,'+quote(field_col)+' FROM _collections'+(' WHERE name=? OR id=?' if selected else '')+' ORDER BY name LIMIT 301', (selected,selected) if selected else ()).fetchall()
+except sqlite3.Error:
+    print(json.dumps(result));sys.exit()
+result['available']=True
+if len(metadata)>300:result['warnings'].append('Inventaire limité aux 300 premières collections.')
+schemas={};aliases={};inventory={}
+for cid,name,kind,raw_fields in metadata[:300]:
+    if time.monotonic()>deadline:result['budgetLimited']=True;break
+    if name.startswith('_') or name=='ph_two_factor':continue
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name):continue
+    aliases[cid]=name;aliases[name]=name
+    try:fields=json.loads(raw_fields or '[]')
+    except (ValueError,TypeError):fields=[]
+    try:columns=list(db.execute('PRAGMA table_info('+quote(name)+')'))
+    except sqlite3.Error:continue
+    if not columns:continue
+    field_types={f.get('name'):f.get('type') for f in fields if isinstance(f,dict)}
+    indexes=[]
+    for row in db.execute('PRAGMA index_list('+quote(name)+')'):
+        info=list(db.execute('PRAGMA index_xinfo('+quote(row[1])+')'))
+        parts=[{'name':x[2] or '(expression)','descending':bool(x[3]),'collation':x[4]} for x in info if len(x)>5 and x[5]]
+        indexes.append({'name':row[1],'unique':bool(row[2]),'partial':bool(row[4]),'columns':parts})
+    data={'name':name,'type':kind,'fields':[{'name':c[1],'type':field_types.get(c[1],c[2])} for c in columns],'indexes':indexes,'calls':0,'slow':0,'maxMs':0,'usage':{'withoutFields':0,'withTotal':0,'largePages':0,'expanded':0,'writes':0,'peakWritesPerSecond':0,'repeatedWithinSecond':0},'hookFiles':[]}
+    inventory[name]=data;schemas[name]={'columns':columns,'types':field_types,'multi':{f.get('name') for f in fields if isinstance(f,dict) and f.get('type') in ['relation','select'] and int(f.get('maxSelect',(f.get('options') or {}).get('maxSelect',1)) or 0)!=1}}
+selected_name=aliases.get(selected) if selected else None
+if selected and not selected_name:
+    result['warnings'].append('Collection absente de cet inventaire.');db.close();print(json.dumps(result));sys.exit()
+patterns={};repeats=collections.Counter();writes=collections.Counter()
+logpath=safe_file(folder/'auxiliary.db') or safe_file(folder/'logs.db')
+if logpath:
+    try:
+        with connect(logpath) as logs:
+            rows=logs.execute("SELECT created,json_extract(data,'$.type'),json_extract(data,'$.method'),json_extract(data,'$.url'),json_extract(data,'$.execTime'),json_extract(data,'$.status') FROM (SELECT created,data FROM _logs ORDER BY rowid DESC LIMIT ?)",(limit+1,)).fetchall()
+        result['logsAvailable']=True;since=time.time()-hours*3600
+        result['truncated']=len(rows)>limit and stamp(rows[-1][0])>=since
+        for number,(created,category,method,url,duration,status) in enumerate(rows[:limit]):
+            if number%256==0 and time.monotonic()>deadline:result['budgetLimited']=True;break
+            result['sampledRows']+=1
+            if category!='request' or stamp(created)<since or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<0:continue
+            try:
+                parsed=urllib.parse.urlsplit(str(url or ''));match=re.fullmatch(r'/api/collections/([A-Za-z0-9_]+)/records(?:/[^/]+)?/?',parsed.path)
+                if not match:continue
+                name=aliases.get(match[1])
+                if not name or name not in inventory or (selected_name and name!=selected_name):continue
+                item=inventory[name];item['calls']+=1;item['slow']+=duration>=threshold;item['maxMs']=round(max(item['maxMs'],duration),2)
+                second=int(stamp(created))
+                if method in ['POST','PATCH','PUT','DELETE']:writes[(name,second)]+=1;item['usage']['writes']+=1
+                if method!='GET':continue
+                fingerprint=hashlib.sha256(str(url).encode()).hexdigest()
+                repeats[(name,second,fingerprint)]+=1
+                if not re.fullmatch(r'/api/collections/[A-Za-z0-9_]+/records/?',parsed.path):continue
+                if len(str(url))>8192:continue
+                query=urllib.parse.parse_qs(parsed.query,keep_blank_values=True,max_num_fields=30)
+                item['usage']['withoutFields']+=not bool(query.get('fields',[''])[0])
+                item['usage']['withTotal']+=query.get('skipTotal',['false'])[0].lower() not in ['true','1']
+                item['usage']['expanded']+=bool(query.get('expand',[''])[0])
+                per_page=query.get('perPage',['30'])[0]
+                item['usage']['largePages']+=per_page.isdigit() and int(per_page)>200
+                if duration<threshold or not isinstance(status,int) or not 200<=status<400:continue
+                where=terms(query.get('filter',[''])[0]);sort_text=query.get('sort',[''])[0]
+                orders=[];valid_sort=True
+                for part in sort_text.split(',') if sort_text else []:
+                    part=part.strip();field=part.lstrip('+-')
+                    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',field) or len(orders)>=3:valid_sort=False;break
+                    orders.append((field,'DESC' if part.startswith('-') else 'ASC'))
+                supported=where is not None and valid_sort
+                key=(name,tuple(where or []),tuple(orders) if valid_sort else (),supported)
+                if key not in patterns and len(patterns)>=500:
+                    if 'Profils distincts limités à 500.' not in result['warnings']:result['warnings'].append('Profils distincts limités à 500.')
+                    continue
+                pattern=patterns.setdefault(key,{'collection':name,'where':where or [],'orders':orders if valid_sort else [],'supported':supported,'count':0,'sumMs':0,'maxMs':0})
+                pattern['count']+=1;pattern['sumMs']+=duration;pattern['maxMs']=max(pattern['maxMs'],duration)
+            except (ValueError,TypeError):continue
+    except sqlite3.Error:result['warnings'].append('Journaux indisponibles ou délai de lecture dépassé.')
+for (name,second),count in writes.items():inventory[name]['usage']['peakWritesPerSecond']=max(inventory[name]['usage']['peakWritesPerSecond'],count)
+for (name,second,fingerprint),count in repeats.items():inventory[name]['usage']['repeatedWithinSecond']+=max(0,count-1)
+# Source file names only. Literal references are hints, not proof of execution. Platform files are excluded.
+hooks=home/'pb_hooks'
+if hooks.is_dir() and hooks.resolve()==hooks:
+    for file in list(hooks.glob('*.js'))[:100]:
+        if file.name.startswith('_ph_') or file.resolve()!=file or file.stat().st_size>262144:continue
+        try:source=file.read_text(errors='replace')
+        except OSError:continue
+        for name,item in inventory.items():
+            if selected_name and selected_name!=name:continue
+            if ('"'+name+'"') in source or ("'"+name+"'") in source:item['hookFiles'].append(file.name)
+def score(plan):return sum(2 for x in plan if x.startswith('SCAN ') and 'USING' not in x)+sum(1 for x in plan if 'TEMP B-TREE' in x)
+def explain(connection,sql,bindings):return [str(row[3]) for row in connection.execute('EXPLAIN QUERY PLAN '+sql,bindings)]
+ordered=sorted(patterns.values(),key=lambda p:(-p['count'],-p['maxMs'],p['collection']))
+result['patternCount']=len(ordered)
+for p in ordered[:20]:
+    if time.monotonic()>deadline:result['budgetLimited']=True;break
+    name=p['collection'];definition=schemas[name];columns={c[1]:c for c in definition['columns']}
+    entry={'collection':name,'count':p['count'],'averageMs':round(p['sumMs']/p['count'],2),'maxMs':round(p['maxMs'],2),'filterFields':[{'name':field,'operator':op} for field,op in p['where']],'sortFields':[{'name':field,'direction':direction} for field,direction in p['orders']],'supported':p['supported'],'beforePlan':[],'afterPlan':[],'sql':'','proposal':None,'note':'','codeSearch':'rg -n '+json.dumps(name)+' app lib src'}
+    used=[f for f,_ in p['where']]+[f for f,_ in p['orders']]
+    unsupported=not p['supported'] or any(f not in columns or f in definition['multi'] or definition['types'].get(f) in ['json','file','geoPoint'] or f in ['password','tokenKey'] for f in used)
+    if inventory[name]['type']=='view':unsupported=True
+    if unsupported:
+        entry['supported']=False;entry['note']='Filtre complexe, relation, expression, vue ou type non pris en charge : examen manuel nécessaire.';result['patterns'].append(entry);continue
+    if not used:
+        entry['note']='Aucun filtre ou tri simple observé. Aucun index proposé sur cette seule base.';result['patterns'].append(entry);continue
+    sql='SELECT '+quote('id' if 'id' in columns else next(iter(columns)))+' FROM '+quote(name)
+    bindings=[]
+    if p['where']:
+        sql+=' WHERE '+' AND '.join(quote(field)+' '+op+' ?' for field,op in p['where'])
+        bindings=[0 if columns[field][2].upper() in ['NUMERIC','INTEGER','REAL','NUMBER','INT','FLOAT'] else '' for field,op in p['where']]
+    if p['orders']:sql+=' ORDER BY '+', '.join(quote(field)+' '+direction for field,direction in p['orders'])
+    sql+=' LIMIT 50';entry['sql']=sql
+    try:entry['beforePlan']=explain(db,sql,bindings)
+    except sqlite3.Error:
+        entry['note']='Plan indisponible avec le moteur SQLite de diagnostic. Aucun index proposé.';result['patterns'].append(entry);continue
+    candidates=[]
+    for field,op in p['where']:
+        if op=='=' and field not in [f for f,_ in candidates]:candidates.append((field,'ASC'))
+    for field,op in p['where']:
+        if op!='=' and field not in [f for f,_ in candidates]:candidates.append((field,'ASC'))
+    for field,direction in p['orders']:
+        if field not in [f for f,_ in candidates]:candidates.append((field,direction))
+    if len(candidates)>4:
+        entry['note']='Plus de quatre colonnes impliquées : choix et ordre des index à examiner manuellement.';result['patterns'].append(entry);continue
+    names=[f for f,_ in candidates]
+    covered=any(not idx['partial'] and [c['name'] for c in idx['columns']][:len(names)]==names for idx in inventory[name]['indexes'])
+    if covered:
+        entry['note']='Un index existant commence déjà par ces colonnes. Examiner le plan, les règles API, les volumes et les hooks avant tout ajout.';result['patterns'].append(entry);continue
+    memory=sqlite3.connect(':memory:')
+    try:
+        specs=[]
+        for c in definition['columns']:
+            affinity='REAL' if c[2].upper() in ['NUMERIC','INTEGER','REAL','NUMBER','INT','FLOAT'] else 'TEXT'
+            specs.append(quote(c[1])+' '+affinity+(' PRIMARY KEY' if c[1]=='id' else ''))
+        memory.execute('CREATE TABLE '+quote(name)+' ('+', '.join(specs)+')')
+        for index in inventory[name]['indexes']:
+            try:
+                original=db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",(index['name'],)).fetchone()
+                if original and original[0] and re.match(r'^CREATE\s+(?:UNIQUE\s+)?INDEX\b',original[0],re.I):memory.execute(original[0])
+                elif all(c['name'] in columns for c in index['columns']):
+                    memory.execute('CREATE '+('UNIQUE ' if index['unique'] else '')+'INDEX '+quote('copy_'+hashlib.sha256(index['name'].encode()).hexdigest()[:12])+' ON '+quote(name)+' ('+', '.join(quote(c['name']) for c in index['columns'])+')')
+            except sqlite3.Error:pass
+        idx_name='ph_diag_'+hashlib.sha256((name+repr(candidates)).encode()).hexdigest()[:12]
+        ddl='CREATE INDEX '+quote(idx_name)+' ON '+quote(name)+' ('+', '.join(quote(f)+' '+d for f,d in candidates)+');'
+        memory.execute(ddl);entry['afterPlan']=explain(memory,sql,bindings)
+        if score(entry['afterPlan'])<score(entry['beforePlan']):
+            entry['proposal']={'name':idx_name,'columns':[{'name':f,'direction':d} for f,d in candidates],'sql':ddl}
+            entry['note']='Piste à tester : le plan simplifié pourrait réduire un parcours complet ou un tri temporaire. Aucun gain de temps mesuré.'
+        else:entry['note']='Aucune amélioration de structure du plan démontrée par cette projection. Aucun index proposé.'
+    except sqlite3.Error:entry['note']='Projection indisponible. Aucun index proposé.'
+    finally:memory.close()
+    result['patterns'].append(entry)
+result['collections']=sorted([v for k,v in inventory.items() if not selected_name or k==selected_name],key=lambda x:(-x['slow'],-x['calls'],x['name']))
+result['selectedCollection']=selected_name or ''
+db.close();print(json.dumps(result))
+`;
+const HandleInstanceDiagnostics = (e) => {
+	const id = e.request.pathValue("id");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Instance introuvable.");
+	const instance = $app.findRecordById("instances", id);
+	if (!e.auth || e.auth.collection().name !== "users" || !canManageInstance(instance, e.auth)) throw new ForbiddenError("Non autorisé.");
+	const query = e.request.url.query();
+	const hours = Number(query.get("hours") || 24);
+	const threshold = Number(query.get("thresholdMs") || 500);
+	const collection = query.get("collection") || "";
+	if (![
+		1,
+		24,
+		168
+	].includes(hours) || ![
+		100,
+		500,
+		1e3,
+		3e3
+	].includes(threshold) || collection && !/^[A-Za-z0-9_]{1,100}$/.test(collection)) throw new BadRequestError("Filtres invalides.");
+	const key = `ph_diagnostics_${id}`;
+	const raw = $app.store().get(key);
+	const cached = raw ? JSON.parse(`${raw}`) : null;
+	e.response.header().set("Cache-Control", "no-store");
+	if (cached && cached.hours === hours && cached.threshold === threshold && cached.collection === collection && cached.until > Date.now()) return e.json(200, cached.value);
+	const root = $os.getenv("DATA_ROOT") || `${$app.dataDir()}`.replace(/\/mothership\/pb_data\/?$/, "");
+	let value;
+	try {
+		value = JSON.parse(toString($os.cmd("python3", "-c", DIAGNOSTIC_READER, root, id, `${hours}`, `${threshold}`, collection).combinedOutput()));
+	} catch {
+		throw new BadRequestError("Diagnostic indisponible pour le moment. Réessayez dans quelques instants.");
+	}
+	value.analyzedAt = (/* @__PURE__ */ new Date()).toISOString();
+	$app.store().set(key, JSON.stringify({
+		hours,
+		threshold,
+		collection,
+		until: Date.now() + 6e4,
+		value
+	}));
+	return e.json(200, value);
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceServiceAccounts.ts
+const STORE = "ph_service_commands";
+const decode = (raw) => raw ? JSON.parse(`${raw}`) : {};
+const HandleInstanceServiceAccounts = (e) => {
+	const { instance, user } = operationsAccess(e);
+	if (!instance.getBool("power")) throw new BadRequestError("Démarrez l’instance pour gérer ses comptes techniques.");
+	const input = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	const action = e.request.method === "GET" ? "list" : `${input.action || ""}`;
+	if (![
+		"list",
+		"create",
+		"rotate",
+		"revoke"
+	].includes(action)) throw new BadRequestError("Action invalide.");
+	if (action === "create" && (!`${input.label || ""}`.trim() || `${input.label}`.length > 80)) throw new BadRequestError("Nom attendu (80 caractères maximum).");
+	if (["rotate", "revoke"].includes(action) && !/^[a-z0-9]{15}$/.test(input.account || "")) throw new BadRequestError("Compte invalide.");
+	const ticket = $security.randomString(64);
+	$app.store().setFunc(STORE, (raw) => {
+		const commands = decode(raw);
+		for (const k of Object.keys(commands)) if (commands[k].expires < Date.now()) delete commands[k];
+		if (Object.keys(commands).length >= 500) throw new TooManyRequestsError("Réessayez dans une minute.");
+		commands[$security.sha256(ticket)] = {
+			instance: instance.id,
+			owner: instance.getString("uid"),
+			user: user.id,
+			authKey: $security.sha256(user.getString("tokenKey")),
+			expires: Date.now() + 3e4,
+			action,
+			label: `${input.label || ""}`.trim(),
+			account: input.account || ""
+		};
+		return JSON.stringify(commands);
+	});
+	const apex = $os.getenv("APEX_DOMAIN");
+	const subdomain = instance.getString("subdomain");
+	if (!/^[a-z0-9.-]+$/i.test(apex) || !/^[a-z0-9-]+$/i.test(subdomain)) throw new BadRequestError("Adresse invalide.");
+	const protocol = ($os.getenv("APP_URL") || "").startsWith("http://") ? "http" : "https";
+	let response;
+	try {
+		response = $http.send({
+			url: `${protocol}://${subdomain}.${apex}/api/ph-service-accounts/execute`,
+			method: "POST",
+			timeout: 20,
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ ticket })
+		});
+	} catch {
+		throw new BadRequestError("Instance inaccessible. Vérifiez sa disponibilité et la version des hooks PocketHost.");
+	}
+	if (response.statusCode !== 200) throw new BadRequestError(response.statusCode === 404 ? "Mettez à jour les hooks de cette instance avant de gérer les comptes." : "La gestion du compte a échoué. Rechargez la liste avant de réessayer.");
+	const result = JSON.parse(toString(response.raw));
+	if (action !== "list") recordInstanceAction(instance, user, `service-account.${action}`, { account: result.id });
+	return operationJson(e, result);
+};
+const HandleInstanceOperationConsume = (e) => {
+	const instanceId = e.request.pathValue("id");
+	const input = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	if (!/^[a-z0-9]{15}$/.test(instanceId) || !/^[A-Za-z0-9]{64}$/.test(input.ticket || "")) throw new UnauthorizedError("Autorisation invalide.");
+	let command;
+	$app.store().setFunc(STORE, (raw) => {
+		const commands = decode(raw), key = $security.sha256(input.ticket);
+		if (commands[key]?.instance === instanceId) {
+			command = commands[key];
+			delete commands[key];
+		}
+		return JSON.stringify(commands);
+	});
+	if (!command || command.expires < Date.now()) throw new UnauthorizedError("Autorisation expirée ou déjà utilisée.");
+	const instance = $app.findRecordById("instances", instanceId), user = $app.findRecordById("users", command.user);
+	if (instance.getString("uid") !== command.owner || !instance.getBool("power") || !canManageInstance(instance, user) || user.getString("suspension") || instance.getString("suspension") || !$security.equal($security.sha256(user.getString("tokenKey")), command.authKey)) throw new UnauthorizedError("Autorisation révoquée.");
+	return operationJson(e, {
+		instance: instanceId,
+		action: command.action,
+		label: command.label,
+		account: command.account
+	});
+};
+
+//#endregion
+//#region src/lib/handlers/instance/api/litestreamTelemetry.ts
+/** Private, bounded telemetry. Credentials stay in the controller DB / managed config. */
+const LITESTREAM_TELEMETRY = String.raw`
+import sys,os,json,pathlib,sqlite3,subprocess,time,datetime,re,signal,shutil,tempfile,fcntl,urllib.request,hashlib
+os.umask(0o077)
+root=pathlib.Path(sys.argv[1]).absolute();lsroot=pathlib.Path(sys.argv[2]).absolute();ident=sys.argv[3];action=sys.argv[4]
+if not re.fullmatch('[a-z0-9]{15}',ident):raise ValueError('Invalid id')
+def safe(path):
+ if path.resolve()!=path:raise ValueError('Invalid location')
+ return path
+safe(root);safe(lsroot)
+folder=safe(root/'instances'/ident/'pb_data');source=safe(folder/'data.db')
+private=safe(lsroot/'telemetry');private.mkdir(parents=True,exist_ok=True,mode=0o700);private.chmod(0o700)
+def stamp():return datetime.datetime.now(datetime.timezone.utc).isoformat()
+def load(path):
+ safe(path)
+ try:return json.loads(path.read_text())
+ except (FileNotFoundError,ValueError):return {}
+def save(path,value):
+ safe(path);tmp=path.with_name(path.name+'.'+str(os.getpid())+'.tmp')
+ with open(tmp,'x') as f:json.dump(value,f)
+ os.replace(tmp,path)
+def command(args,timeout=5):return subprocess.check_output(args,timeout=timeout,stderr=subprocess.DEVNULL,text=True)
+def policy():
+ db=sqlite3.connect((root/'mothership/pb_data/data.db').as_uri()+'?mode=ro',uri=True,timeout=2);db.row_factory=sqlite3.Row
+ try:
+  row=db.execute('SELECT * FROM instance_litestream_replicas WHERE instance=? LIMIT 1',(ident,)).fetchone()
+  return dict(row) if row else {}
+ finally:db.close()
+p=policy();binding=hashlib.sha256(json.dumps([p.get(k) for k in ['s3Endpoint','s3Bucket','replicaPath']],sort_keys=True).encode()).hexdigest();statefile=private/(ident+'-verification.json');remotefile=private/(ident+'-remote.json');config=lsroot/'litestream.yml'
+def failure(e):
+ code=str(getattr(e,'response',{}).get('Error',{}).get('Code',''))
+ if code in ['AccessDenied','InvalidAccessKeyId','SignatureDoesNotMatch']:return 'Accès S3 refusé : vérifiez les clés et les droits sur le préfixe.'
+ if code in ['NoSuchBucket','404']:return 'Bucket S3 introuvable.'
+ if isinstance(e,ImportError):return 'Le module Python botocore est requis pour contrôler S3.'
+ if isinstance(e,(TimeoutError,subprocess.TimeoutExpired)):return 'Délai de contrôle dépassé. Réessayez.'
+ return 'Contrôle indisponible : vérifiez le réseau, le stockage et la configuration Litestream.'
+def verification():
+ v=load(statefile)
+ if v.get('destinationBinding') and v.get('destinationBinding')!=binding:return {}
+ if v.get('status') in ['queued','running']:
+  try:
+   if not v.get('pid'):
+    if time.time()-datetime.datetime.fromisoformat(v['startedAt']).timestamp()>30:raise ProcessLookupError()
+   else:os.kill(v['pid'],0)
+  except (ProcessLookupError,PermissionError):v.update(status='interrupted',error='Le processus de vérification a été interrompu.')
+ return v
+if action=='worker':
+ # Lock fd is inherited from the launcher: at most one disk-heavy restore on this server.
+ lockfd=int(sys.argv[5]);started=time.monotonic();v=load(statefile);temporary=None;child=None
+ signal.signal(signal.SIGTERM,lambda *args:(_ for _ in ()).throw(InterruptedError()))
+ signal.signal(signal.SIGINT,lambda *args:(_ for _ in ()).throw(InterruptedError()))
+ try:
+  os.nice(19)
+  if v.get('destinationBinding')!=binding:raise ValueError()
+  v.update(status='running',pid=os.getpid(),startedAt=stamp());save(statefile,v)
+  temporary=pathlib.Path(tempfile.mkdtemp(prefix='restore-',dir=private));target=temporary/'data.db'
+  with open(temporary/'restore.log','w') as log:
+   child=subprocess.Popen(['litestream','restore','-no-expand-env','-config',str(config),'-o',str(target),'-parallelism','2','-integrity-check','full','-json',str(source)],stdout=log,stderr=log)
+   while child.poll() is None:
+    if time.monotonic()-started>3600:raise TimeoutError()
+    v.update(restoredBytes=max([x.stat().st_size for x in [target,temporary/'data.db.tmp'] if x.exists()]+[0]),elapsedSeconds=round(time.monotonic()-started),updatedAt=stamp());save(statefile,v);time.sleep(5)
+  if child.returncode:raise RuntimeError()
+  # The native restore has already performed the full integrity check. Never execute restored hooks.
+  db=sqlite3.connect(target.as_uri()+'?mode=ro',uri=True)
+  count=db.execute('SELECT count(*) FROM _collections').fetchone()[0];db.close()
+  success={'finishedAt':stamp(),'restoredBytes':target.stat().st_size,'collections':count,'integrity':'ok','seconds':round(time.monotonic()-started)}
+  v.update(status='passed',finishedAt=success['finishedAt'],restoredBytes=success['restoredBytes'],elapsedSeconds=success['seconds'],lastSuccess=success,error='')
+ except Exception as e:v.update(status='failed',finishedAt=stamp(),error=failure(e))
+ finally:
+  if child and child.poll() is None:
+   child.terminate()
+   try:child.wait(timeout=10)
+   except subprocess.TimeoutExpired:child.kill();child.wait()
+  if temporary:shutil.rmtree(temporary,ignore_errors=True)
+  v['history']=([ {k:v[k] for k in ['status','startedAt','finishedAt','restoredBytes','elapsedSeconds','error'] if k in v}]+v.get('history',[]))[:10]
+  save(statefile,v);os.close(lockfd)
+ sys.exit()
+if action=='verify':
+ if not p.get('enabled') or not source.is_file() or not config.is_file():
+  print(json.dumps({'error':'Activez Litestream et configurez une destination avant ce contrôle.'}));sys.exit()
+ lock=open(safe(private/'restore.lock'),'a+')
+ try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ except BlockingIOError:
+  print(json.dumps({'error':'Une vérification Litestream est déjà en cours sur ce serveur.'}));sys.exit()
+ size=source.stat().st_size
+ if shutil.disk_usage(private).free<size*2.5+1073741824:
+  print(json.dumps({'error':'Espace temporaire insuffisant : prévoyez 2,5 fois la taille de la base plus 1 Gio.'}));sys.exit()
+ v=verification();v={k:v[k] for k in ['lastSuccess','history'] if k in v};v.update(status='queued',startedAt=stamp(),restoredBytes=0,sourceBytes=size,destinationBinding=binding)
+ save(statefile,v)
+ child=subprocess.Popen([sys.executable,__file__,str(root),str(lsroot),ident,'worker',str(lock.fileno())],pass_fds=(lock.fileno(),),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+ # Worker writes its PID itself; no parent write can race its progress.
+ print(json.dumps({'started':True}));sys.exit()
+result={'checkedAt':stamp(),'enabled':bool(p.get('enabled')),'policy':{k:p.get(k) for k in ['status','s3Bucket','replicaPath','syncInterval','monitorInterval','checkpointInterval','snapshotInterval','snapshotRetention','validationInterval']},'sourceBytes':source.stat().st_size if source.exists() else 0,'service':{'state':'unavailable'},'local':{},'metrics':{},'remote':{},'verification':verification()}
+try:
+ processes=json.loads(command(['pm2','jlist']))
+ for proc in processes:
+  if proc.get('name')=='pockethost-litestream':
+   env=proc.get('pm2_env',{});monit=proc.get('monit',{})
+   result['service']={'state':env.get('status','unknown'),'restarts':env.get('restart_time',0),'since':env.get('pm_uptime'),'cpu':monit.get('cpu'),'memoryBytes':monit.get('memory')}
+except Exception:pass
+if not result['enabled']:
+ print(json.dumps(result));sys.exit()
+try:
+ rows=json.loads(command(['litestream','status','-no-expand-env','-config',str(config),'-json',str(source)]))
+ if isinstance(rows,list) and rows:result['local']={k:rows[0].get(k) for k in ['status','local_txid','wal_size']}
+except Exception:result['local']={'status':'unavailable'}
+try:
+ port=int(os.environ.get('LITESTREAM_METRICS_PORT','9199'))
+ if not 1024<=port<=65535:raise ValueError()
+ text=urllib.request.urlopen('http://127.0.0.1:'+str(port)+'/metrics',timeout=2).read(4000000).decode()
+ allow=['litestream_db_size','litestream_wal_size','litestream_total_wal_bytes','litestream_txid','litestream_sync_count','litestream_sync_error_count','litestream_sync_seconds','litestream_disk_full','litestream_compaction_verify_error_count']
+ for line in text.splitlines():
+  match=re.fullmatch(r'([a-z_]+)\{(.*)\}\s+([0-9.eE+\-]+)',line)
+  if not match or match[1] not in allow:continue
+  labels={m[1]:json.loads('"'+m[2]+'"') for m in re.finditer(r'(\w+)="((?:[^"\\]|\\.)*)"',match[2])}
+  if labels.get('db')==str(source):result['metrics'][match[1].replace('litestream_','',1)]=float(match[3])
+except Exception:pass
+cached=load(remotefile)
+if cached.get('destinationBinding')!=binding:cached={}
+if time.time()-cached.get('cachedAt',0)>30:
+ lock=open(safe(private/(ident+'-remote.lock')),'a+')
+ try:
+  fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  # Recheck after locking: concurrent readers share one bounded S3 scan.
+  cached=load(remotefile)
+  if cached.get('destinationBinding')!=binding:cached={}
+  if time.time()-cached.get('cachedAt',0)>30:
+   remote={'checkedAt':stamp(),'ok':False,'objects':0,'bytes':0,'partial':False,'maxTxid':None,'newestObjectAt':None,'uploads':[],'multipartAvailable':False}
+   signal.signal(signal.SIGALRM,lambda *args:(_ for _ in ()).throw(TimeoutError()));signal.alarm(20)
+   try:
+    import botocore.session,botocore.config
+    client=botocore.session.get_session().create_client('s3',region_name=p.get('s3Region') or 'auto',endpoint_url=p.get('s3Endpoint') or None,aws_access_key_id=p.get('s3AccessKeyId'),aws_secret_access_key=p.get('s3SecretAccessKey'),config=botocore.config.Config(s3={'addressing_style':'path' if p.get('s3ForcePathStyle') else 'auto'},connect_timeout=4,read_timeout=6,retries={'max_attempts':0},request_checksum_calculation='when_required',response_checksum_validation='when_required'))
+    prefix=(p.get('replicaPath') or '').rstrip('/')+'/'
+    if prefix=='/':raise ValueError()
+    token=None
+    for page_no in range(3):
+     args={'Bucket':p['s3Bucket'],'Prefix':prefix,'MaxKeys':1000}
+     if token:args['ContinuationToken']=token
+     page=client.list_objects_v2(**args)
+     for obj in page.get('Contents',[]):
+      remote['objects']+=1;remote['bytes']+=obj['Size'];date=obj['LastModified'].isoformat()
+      if not remote['newestObjectAt'] or date>remote['newestObjectAt']:remote['newestObjectAt']=date
+      m=re.search(r'/([0-9a-f]{16})-([0-9a-f]{16})\.ltx$',obj['Key'])
+      if m and (not remote['maxTxid'] or m[2]>remote['maxTxid']):remote['maxTxid']=m[2]
+     token=page.get('NextContinuationToken')
+     if not token:break
+    remote['partial']=bool(token);remote['ok']=True
+    # Optional multipart permissions must not turn a successful object listing into a false failure.
+    try:
+     page=client.list_multipart_uploads(Bucket=p['s3Bucket'],Prefix=prefix,MaxUploads=10)
+     remote['multipartAvailable']=True;remote['multipartPartial']=bool(page.get('IsTruncated'))
+     for upload in page.get('Uploads',[])[:10]:
+      partpage=client.list_parts(Bucket=p['s3Bucket'],Key=upload['Key'],UploadId=upload['UploadId'],MaxParts=1000)
+      name=upload['Key'].split('/')[-1];localfile=folder/'.data.db-litestream'/'ltx'/'0'/name
+      total=localfile.stat().st_size if localfile.is_file() and localfile.resolve()==localfile else None
+      sent=sum(x['Size'] for x in partpage.get('Parts',[]))
+      remote['uploads'].append({'bytes':sent,'totalBytes':total,'partial':bool(partpage.get('IsTruncated')),'startedAt':upload['Initiated'].isoformat()})
+    except Exception:remote['multipartAvailable']=False
+   except Exception as e:remote.update(ok=False,error=failure(e))
+   finally:signal.alarm(0)
+   history=cached.get('history',[])
+   sample={k:remote.get(k) for k in ['checkedAt','ok','objects','bytes','maxTxid','partial']}
+   if not history or history[-1].get('checkedAt')!=sample['checkedAt']:history=(history+[sample])[-60:]
+   cached={'cachedAt':time.time(),'value':remote,'history':history,'destinationBinding':binding};save(remotefile,cached)
+ except BlockingIOError:pass
+ finally:lock.close()
+result['remote']=cached.get('value',{'ok':False,'error':'Premier contrôle S3 en cours.'});result['history']=cached.get('history',[])
+# Positions are compared only after a complete listing. Idle databases do not acquire fake time lag.
+local=result['local'].get('local_txid');remote=result['remote']
+result['positionState']='unknown'
+if remote.get('ok') and not remote.get('partial') and re.fullmatch('[0-9a-f]{16}',local or '') and remote.get('maxTxid'):
+ result['positionState']='caught-up' if remote['maxTxid']>=local else 'pending'
+print(json.dumps(result))
+`;
+
+//#endregion
+//#region src/lib/handlers/instance/api/HandleInstanceLitestreamTelemetry.ts
+const telemetry = (id, action) => {
+	const root = $os.getenv("DATA_ROOT") || `${$app.dataDir()}`.replace(/\/mothership\/pb_data\/?$/, "");
+	const lsroot = $os.getenv("LITESTREAM_ROOT") || `${root}/litestream`;
+	const script = String.raw`
+import sys,pathlib,os,tempfile
+p=pathlib.Path(sys.argv[1]).absolute()
+if p.resolve()!=p:raise ValueError('Invalid path')
+p.mkdir(parents=True,exist_ok=True,mode=0o700)
+f=p/'telemetry-worker.py'
+if f.is_symlink():raise ValueError('Invalid file')
+fd,name=tempfile.mkstemp(prefix='.telemetry-',dir=p)
+with os.fdopen(fd,'w') as out:out.write(sys.argv[2])
+os.replace(name,f)
+os.chmod(f,0o600)
+`;
+	try {
+		$os.cmd("python3", "-c", script, lsroot, LITESTREAM_TELEMETRY).combinedOutput();
+		return JSON.parse(toString($os.cmd("python3", `${lsroot}/telemetry-worker.py`, root, lsroot, id, action).combinedOutput()));
+	} catch {
+		throw new BadRequestError("Le contrôle Litestream est indisponible. Réessayez dans quelques instants.");
+	}
+};
+const HandleInstanceLitestreamTelemetry = (e) => {
+	const { instance } = operationsAccess(e);
+	return operationJson(e, telemetry(instance.id, "read"));
+};
+const HandleInstanceLitestreamVerify = (e) => {
+	const { instance, user } = operationsAccess(e);
+	const value = telemetry(instance.id, "verify");
+	if (value.error) throw new BadRequestError(value.error);
+	recordInstanceAction(instance, user, "litestream.restore-check.started");
+	return operationJson(e, value, 202);
 };
 
 //#endregion
@@ -5411,7 +16103,7 @@ const HandleMetaUpdateAtBoot = (_e) => {
 	const settings = $app.settings();
 	settings.meta = {
 		...settings.meta,
-		appUrl: process.env.APP_URL || settings.meta.appUrl,
+		appURL: process.env.APP_URL || settings.meta.appURL,
 		verificationTemplate: {
 			...settings.meta.verificationTemplate,
 			actionUrl: `{APP_URL}/login/confirm-account/{TOKEN}`
@@ -5628,23 +16320,60 @@ const HandleUserWelcomeMessage = (e) => {
 };
 
 //#endregion
-//#region src/lib/handlers/operatorAdmin/auth.ts
-const requireOperatorAdmin = (e) => {
-	const authRecord = e.auth;
-	if (!authRecord) throw new UnauthorizedError("Authentification requise.");
-	if (!authRecord.getBool("superAdmin")) throw new ForbiddenError("Acces superadmin requis.");
-	return authRecord;
-};
+//#region src/lib/handlers/operatorAdmin/smtpTest.ts
+/** Bounded draft test; never changes the live mail configuration or echoes credentials. */
+const SMTP_TEST_WORKER = String.raw`
+import sys,json,smtplib,ssl,socket,signal,ipaddress
+from email.message import EmailMessage
+from email.utils import formataddr
+signal.signal(signal.SIGALRM,lambda *args:(_ for _ in ()).throw(TimeoutError()))
+signal.alarm(25)
+config=json.load(open(sys.argv[1]));client=None;phase='connexion'
+try:
+ local=config.get('localName') or None
+ if config.get('tls'):client=smtplib.SMTP_SSL(config['host'],int(config['port']),timeout=8,context=ssl.create_default_context(),local_hostname=local)
+ else:client=smtplib.SMTP(config['host'],int(config['port']),timeout=8,local_hostname=local)
+ client.ehlo_or_helo_if_needed()
+ if not config.get('tls') and client.has_extn('starttls'):
+  phase='TLS';client.starttls(context=ssl.create_default_context());client.ehlo()
+ if config.get('username'):
+  phase='authentification'
+  try:loopback=ipaddress.ip_address(client.sock.getpeername()[0]).is_loopback
+  except ValueError:loopback=False
+  if not isinstance(client.sock,ssl.SSLSocket) and not loopback:raise ValueError('Le relais ne propose pas TLS : les identifiants n’ont pas été transmis.')
+  client.user=config['username'];client.password=config.get('password','')
+  method=config.get('authMethod','PLAIN')
+  client.auth(method,client.auth_login if method=='LOGIN' else client.auth_plain,initial_response_ok=method!='LOGIN')
+ phase='envoi'
+ message=EmailMessage();message['From']=formataddr((config.get('senderName',''),config['senderAddress']));message['To']=config['to'];message['Subject']='Test SMTP - Gestion PocketBase'
+ message.set_content('Ce message confirme que le relais SMTP accepte les emails de Gestion PocketBase.')
+ client.send_message(message)
+ result={'ok':True,'message':'Email de test accepté par le relais SMTP. La réception dans la boîte destinataire reste à vérifier.'}
+except smtplib.SMTPAuthenticationError as e:result={'ok':False,'message':'Authentification SMTP refusée : vérifiez l’utilisateur, le mot de passe et la méthode PLAIN/LOGIN.','smtpCode':e.smtp_code}
+except smtplib.SMTPSenderRefused as e:result={'ok':False,'message':'Adresse expéditeur refusée par le relais : utilisez une adresse autorisée pour ce compte SMTP.','smtpCode':e.smtp_code}
+except smtplib.SMTPRecipientsRefused:result={'ok':False,'message':'Adresse destinataire refusée par le relais SMTP.'}
+except ssl.SSLError:result={'ok':False,'message':'La connexion TLS a échoué. Vérifiez le mode TLS direct et le certificat du relais.'}
+except socket.gaierror:result={'ok':False,'message':'Hôte SMTP introuvable : vérifiez son nom DNS.'}
+except (TimeoutError,socket.timeout):result={'ok':False,'message':'Délai SMTP dépassé pendant '+phase+' : vérifiez le port, le mode TLS et le pare-feu.'}
+except ConnectionRefusedError:result={'ok':False,'message':'Connexion SMTP refusée : vérifiez l’hôte et le port.'}
+except ValueError as e:result={'ok':False,'message':str(e) if phase=='authentification' else 'Configuration SMTP invalide.'}
+except Exception:result={'ok':False,'message':'Le relais SMTP a refusé le test pendant '+phase+'. Vérifiez les paramètres et les autorisations du compte.'}
+finally:
+ if client:
+  try:client.close()
+  except Exception:pass
+print(json.dumps(result))
+`;
 
 //#endregion
 //#region src/lib/handlers/operatorAdmin/api.ts
 const readJsonBody = (e) => {
-	const rawBody = readerToString(e.request.body);
-	if (!rawBody.trim()) return {};
 	try {
-		return JSON.parse(rawBody);
-	} catch (error) {
-		throw new BadRequestError(`Impossible d'analyser la requete JSON.`, error);
+		const body = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+		if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("object expected");
+		return body;
+	} catch {
+		throw new BadRequestError("Requête JSON invalide.");
 	}
 };
 const suggestUniqueAuthRecordUsername$1 = (collection, baseUsername) => {
@@ -5671,6 +16400,11 @@ const countInstancesForUser = (userId) => {
 		return 0;
 	}
 };
+const validateManagedInstances = (ids) => {
+	const unique = Array.from(new Set(ids));
+	if ($app.findRecordsByIds("instances", unique).length !== unique.length) throw new BadRequestError("Une base sélectionnée a été supprimée ou est introuvable. Rechargez la liste.");
+	return unique;
+};
 const serializeUser = (record) => ({
 	id: record.id,
 	email: record.getString("email"),
@@ -5684,7 +16418,8 @@ const serializeUser = (record) => ({
 	suspension: record.getString("suspension"),
 	created: record.getString("created"),
 	updated: record.getString("updated"),
-	instanceCount: countInstancesForUser(record.id)
+	instanceCount: countInstancesForUser(record.id),
+	managedInstances: record.getStringSlice("managedInstances") || []
 });
 const userTimestampMs = (record) => {
 	const timestamp = Date.parse(record.getString("created") || record.getString("updated") || "");
@@ -5692,8 +16427,7 @@ const userTimestampMs = (record) => {
 };
 const listOperatorUsers = () => $app.findRecordsByFilter("users", "id != \"\"", "").filter((record) => !!record).sort((a, b) => userTimestampMs(b) - userTimestampMs(a) || b.id.localeCompare(a.id)).map(serializeUser);
 const ensureAnotherSuperAdminExists = (currentUserId) => {
-	const superAdmins = $app.findRecordsByFilter("users", "superAdmin = true").filter((record) => !!record);
-	if (superAdmins.length <= 1 && superAdmins[0]?.id === currentUserId) throw new BadRequestError("Impossible de retirer le dernier superadmin.");
+	if (!$app.countRecords("users", $dbx.exp("[[superAdmin]]=true AND [[suspension]]=\"\" AND [[id]] != {:id}", { id: currentUserId }))) throw new BadRequestError("Impossible de retirer ou suspendre le dernier superadmin actif.");
 };
 const ensureValidServerTimezone = (timezoneName) => {
 	const loadedName = new Timezone(timezoneName).string();
@@ -5714,12 +16448,13 @@ const mergeOperatorSettingsInput = (current, input) => {
 		...current.backupS3,
 		...input.backupS3 || {}
 	};
-	if (!`${backupS3.secretAccessKey || ""}`.trim()) backupS3.secretAccessKey = current.backupS3.secretAccessKey;
+	if (backupS3.secretAccessKey === "" || backupS3.secretAccessKey === void 0) backupS3.secretAccessKey = current.backupS3.secretAccessKey;
 	const smtp = {
 		...current.smtp,
 		...input.smtp || {}
 	};
-	if (!`${smtp.password || ""}`.trim()) smtp.password = current.smtp.password;
+	if (smtp.password === "" || smtp.password === void 0) smtp.password = current.smtp.password;
+	if (input.smtp && Object.prototype.hasOwnProperty.call(input.smtp, "username") && !smtp.username.trim()) smtp.password = "";
 	return normalizeOperatorSettings({
 		...current,
 		...input,
@@ -5728,34 +16463,41 @@ const mergeOperatorSettingsInput = (current, input) => {
 	});
 };
 const sendOperatorSMTPTest = (settings, to) => {
-	if (!settings.smtp.enabled) throw new BadRequestError("SMTP est desactive.");
-	if (!settings.smtp.host) throw new BadRequestError("Hote SMTP obligatoire.");
-	if (!settings.smtp.port) throw new BadRequestError("Port SMTP obligatoire.");
-	if (!settings.smtp.senderAddress) throw new BadRequestError("Adresse expediteur obligatoire.");
-	const message = new MailerMessage({
-		from: {
-			address: settings.smtp.senderAddress,
-			name: settings.smtp.senderName || "Gestion PocketBase"
-		},
-		to: [{ address: to }],
-		subject: "Test SMTP - Gestion PocketBase",
-		text: `Ce message confirme que la configuration SMTP de Gestion PocketBase fonctionne.`,
-		html: `<p>Ce message confirme que la configuration SMTP de Gestion PocketBase fonctionne.</p>`
-	});
-	$app.newMailClient().send(message);
-	return {
-		to,
-		host: settings.smtp.host,
-		port: settings.smtp.port
-	};
+	validateSMTPConfiguration(settings.smtp);
+	if (!settings.smtp.enabled) throw new BadRequestError("SMTP est désactivé.");
+	const path = `${$app.dataDir()}/.smtp-test-${$security.randomString(32)}.json`;
+	try {
+		$os.writeFile(path, JSON.stringify({
+			...settings.smtp,
+			to
+		}), 384);
+		const result = JSON.parse(toString($os.cmd("python3", "-c", SMTP_TEST_WORKER, path).output()));
+		if (!result.ok) throw new BadRequestError(result.message);
+		return {
+			to,
+			host: settings.smtp.host,
+			port: settings.smtp.port,
+			message: result.message
+		};
+	} finally {
+		try {
+			$os.remove(path);
+		} catch {}
+	}
 };
 const HandleOperatorAdminOverview = (e) => {
 	requireOperatorAdmin(e);
+	e.response.header().set("Cache-Control", "no-store");
 	const users = listOperatorUsers();
 	const totalInstances = $app.countRecords("instances");
 	return e.json(200, {
 		settings: serializeOperatorSettings(readOperatorSettings()),
 		users,
+		instances: $app.findAllRecords("instances").map((record) => ({
+			id: record.id,
+			subdomain: record.getString("subdomain"),
+			uid: record.getString("uid")
+		})).sort((a, b) => a.subdomain.localeCompare(b.subdomain)),
 		stats: {
 			totalUsers: users.length,
 			verifiedUsers: users.filter((user) => user.verified).length,
@@ -5770,8 +16512,9 @@ const HandleOperatorAdminCreateUser = (e) => {
 	requireOperatorAdmin(e);
 	const settings = readOperatorSettings();
 	const body = readJsonBody(e);
-	const email = `${body.email || ""}`.trim().toLowerCase();
-	const password = `${body.password || ""}`.trim();
+	validateOperatorUserInput(body);
+	const email = normalizeEmailAddress(body.email);
+	const password = `${body.password || ""}`;
 	if (!email) throw new BadRequestError("L'email est obligatoire.");
 	if (userExists(email)) throw new BadRequestError("Ce compte existe deja.");
 	if (password.length < 8) throw new BadRequestError("Le mot de passe doit contenir au moins 8 caracteres.");
@@ -5784,31 +16527,43 @@ const HandleOperatorAdminCreateUser = (e) => {
 	record.set("subscription_quantity", body.subscription_quantity ?? settings.defaultUserQuota);
 	record.set("verified", body.verified ?? settings.autoVerifyUsers);
 	record.set("superAdmin", !!body.superAdmin);
+	record.set("managedInstances", validateManagedInstances(body.managedInstances || []));
 	record.set("suspension", `${body.suspension || ""}`.trim());
 	record.setPassword(password);
 	$app.save(record);
 	log(`created ${email}`);
-	if (!record.getBool("verified")) $mails.sendRecordVerification($app, record);
-	return e.json(200, { user: serializeUser(record) });
+	let warning = "";
+	if (!record.getBool("verified")) try {
+		$mails.sendRecordVerification($app, record);
+	} catch {
+		warning = "Compte créé, mais l’email de vérification n’a pas pu être envoyé. Vérifiez SMTP.";
+	}
+	return e.json(200, {
+		user: serializeUser(record),
+		warning
+	});
 };
 const HandleOperatorAdminUpdateUser = (e) => {
 	requireOperatorAdmin(e);
 	const id = e.request.pathValue("id");
 	if (!id) throw new BadRequestError("L'identifiant utilisateur est obligatoire.");
 	const body = readJsonBody(e);
+	validateOperatorUserInput(body);
 	const record = $app.findRecordById("users", id);
+	if (record.getBool("superAdmin") && (body.superAdmin === false || typeof body.suspension === "string" && body.suspension.trim())) ensureAnotherSuperAdminExists(record.id);
 	if (typeof body.email === "string") {
-		const email = body.email.trim().toLowerCase();
+		const email = normalizeEmailAddress(body.email);
 		if (!email) throw new BadRequestError("L'email est obligatoire.");
 		if (userExists(email, id)) throw new BadRequestError("Cet email est deja utilise.");
 		record.set("email", email);
 	}
 	if (typeof body.password === "string" && body.password.trim()) {
-		const password = body.password.trim();
+		const password = body.password;
 		if (password.length < 8) throw new BadRequestError("Le mot de passe doit contenir au moins 8 caracteres.");
 		record.setPassword(password);
 	}
 	if (typeof body.verified === "boolean") record.set("verified", body.verified);
+	if (body.managedInstances !== void 0) record.set("managedInstances", validateManagedInstances(body.managedInstances));
 	if (typeof body.subscription === "string") record.set("subscription", body.subscription);
 	if (typeof body.subscription_quantity !== "undefined") record.set("subscription_quantity", Math.max(0, Math.floor(Number(body.subscription_quantity) || 0)));
 	if (typeof body.suspension === "string") record.set("suspension", body.suspension.trim());
@@ -5821,15 +16576,31 @@ const HandleOperatorAdminUpdateUser = (e) => {
 };
 const HandleOperatorAdminUpdateSettings = (e) => {
 	requireOperatorAdmin(e);
-	const nextSettings = mergeOperatorSettingsInput(readOperatorSettings(), readJsonBody(e));
+	const current = readOperatorSettings();
+	const body = readJsonBody(e);
+	validateOperatorSettingsInput(body);
+	const nextSettings = mergeOperatorSettingsInput(current, body);
 	ensureValidServerTimezone(nextSettings.serverTimezone);
 	const settings = writeOperatorSettings(nextSettings);
 	ReconcileBackupPolicyCrons();
+	e.response.header().set("Cache-Control", "no-store");
 	return e.json(200, { settings: serializeOperatorSettings(settings) });
 };
 const HandleOperatorAdminTestBackupS3 = (e) => {
 	requireOperatorAdmin(e);
-	const result = TestBackupS3Config(mergeOperatorSettingsInput(readOperatorSettings(), readJsonBody(e)));
+	const current = readOperatorSettings();
+	const body = readJsonBody(e);
+	validateOperatorSettingsInput(body);
+	const settings = mergeOperatorSettingsInput(current, body);
+	validateS3Configuration(settings.backupS3);
+	let result;
+	try {
+		result = TestBackupS3Config(settings);
+	} catch (error) {
+		const raw = String(error);
+		const reason = /AccessDenied|Forbidden/i.test(raw) ? "Accès refusé : vérifiez les permissions du bucket." : /SignatureDoesNotMatch|InvalidAccessKeyId/i.test(raw) ? "Identifiants S3/R2 refusés." : /NoSuchBucket/i.test(raw) ? "Bucket introuvable." : /connect|timeout|endpoint/i.test(raw) ? "Connexion impossible : vérifiez l’endpoint et le réseau." : "Vérifiez l’activation, le bucket, les clés et la disponibilité du client AWS.";
+		throw new BadRequestError("Test S3/R2 échoué. " + reason);
+	}
 	return e.json(200, { test: {
 		...result,
 		message: `Connexion S3/R2 valide pour ${result.bucket}.`
@@ -5839,17 +16610,13 @@ const HandleOperatorAdminTestSMTP = (e) => {
 	requireOperatorAdmin(e);
 	const current = readOperatorSettings();
 	const body = readJsonBody(e);
+	validateOperatorSettingsInput(body);
 	const settings = mergeOperatorSettingsInput(current, body);
-	const target = normalizeEmailAddress(body.testEmail || settings.supportEmail || settings.smtp.senderAddress, "Email de test");
-	const savedSettings = writeOperatorSettings(settings);
-	const result = sendOperatorSMTPTest(savedSettings, target);
-	return e.json(200, {
-		settings: serializeOperatorSettings(savedSettings),
-		test: {
-			...result,
-			message: `Email de test envoye a ${result.to}.`
-		}
-	});
+	const result = sendOperatorSMTPTest(settings, normalizeEmailAddress(body.testEmail || settings.supportEmail || settings.smtp.senderAddress, "Email de test"));
+	return e.json(200, { test: {
+		...result,
+		message: result.message
+	} });
 };
 const HandleOperatorAdminDiskCleanupPreview = (e) => {
 	requireOperatorAdmin(e);
@@ -5857,7 +16624,412 @@ const HandleOperatorAdminDiskCleanupPreview = (e) => {
 };
 const HandleOperatorAdminDiskCleanupRun = (e) => {
 	requireOperatorAdmin(e);
-	return e.json(200, { cleanup: scanOrphanInstanceStorage(true) });
+	const input = readJsonBody(e);
+	return e.json(200, { cleanup: scanOrphanInstanceStorage(true, input.snapshot || "") });
+};
+
+//#endregion
+//#region ../common/platformMonitoring.ts
+const states = [
+	"ok",
+	"warning",
+	"error",
+	"unknown",
+	"paused"
+];
+const monitorGroups = [
+	"infrastructure",
+	"databases",
+	"hosting",
+	"backups",
+	"security"
+];
+const monitorState = (checks) => [
+	"error",
+	"warning",
+	"unknown"
+].find((state) => checks.some((row) => row.state === state)) || "ok";
+function monitoringReport(host, domain, checks, now = Date.now()) {
+	return {
+		version: 1,
+		checkedAt: new Date(now).toISOString(),
+		host,
+		domain,
+		checks,
+		counts: Object.fromEntries(states.map((state) => [state, checks.filter((row) => row.state === state).length])),
+		state: monitorState(checks)
+	};
+}
+/** A report crosses the privileged collector → operator dashboard boundary; project data is never trusted as HTML. */
+function parseMonitoringReport(value) {
+	const raw = value;
+	if (!raw || raw.version !== 1 || !Number.isFinite(Date.parse(raw.checkedAt)) || typeof raw.host !== "string" || raw.host.length > 150 || typeof raw.domain !== "string" || raw.domain.length > 253 || !Array.isArray(raw.checks) || raw.checks.length > 1e4) throw Error("Rapport de supervision invalide.");
+	const checks = raw.checks.map((row) => {
+		if (!row || typeof row.id !== "string" || row.id.length > 150 || !monitorGroups.includes(row.group) || !states.includes(row.state) || typeof row.name !== "string" || row.name.length > 200 || typeof row.detail !== "string" || row.detail.length > 600) throw Error("Contrôle de supervision invalide.");
+		const check = {
+			id: row.id,
+			group: row.group,
+			state: row.state,
+			name: row.name,
+			detail: row.detail
+		};
+		if (typeof row.href === "string" && /^\/(?:instances\/[a-z0-9]{15}|applications\/[a-z0-9]{15})(?:\/[a-z-]+)?$/.test(row.href)) check.href = row.href;
+		if (typeof row.latencyMs === "number" && Number.isFinite(row.latencyMs) && row.latencyMs >= 0) check.latencyMs = Math.round(row.latencyMs);
+		return check;
+	});
+	return monitoringReport(raw.host, raw.domain, checks, Date.parse(raw.checkedAt));
+}
+const monitoringStale = (report, now = Date.now()) => now - Date.parse(report.checkedAt) > 18e4 || Date.parse(report.checkedAt) > now + 3e4;
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/monitoring.ts
+const webhookKey = () => {
+	const key = $os.getenv("PLATFORM_MONITORING_KEY") || $os.getenv("WEB_APPS_MASTER_KEY");
+	if (key.length !== 32) throw new BadRequestError("Clé privée de supervision indisponible.");
+	return key;
+};
+const monitoringSettings = (store = $app) => {
+	try {
+		return store.findFirstRecordByFilter("platform_monitoring_settings", "key=\"global\"");
+	} catch {
+		return null;
+	}
+};
+const smtpReady = () => {
+	const smtp = readOperatorSettings().smtp;
+	return !!(smtp.enabled && smtp.host && smtp.senderAddress);
+};
+const publicSettings = (row) => ({
+	emailEnabled: row?.getBool("emailEnabled") || false,
+	emailRecipients: JSON.parse(row?.getString("emailRecipients") || "null") || [],
+	discordEnabled: row?.getBool("discordEnabled") || false,
+	hasDiscordWebhook: !!row?.getString("discordWebhookEncrypted"),
+	revision: row?.getString("revision") || "",
+	smtpReady: smtpReady()
+});
+/** A page refresh never wakes a database, launches Docker or sends alerts. */
+const HandleOperatorMonitoring = (e) => {
+	requireOperatorAdmin(e);
+	e.response.header().set("Cache-Control", "no-store");
+	const root = $os.getenv("DATA_ROOT") || $filepath.dir($filepath.dir($app.dataDir()));
+	try {
+		const content = toString($os.readFile(`${root}/monitoring/status.json`));
+		if (content.length > 4 * 1024 * 1024) throw Error("Report too large");
+		const report = parseMonitoringReport(JSON.parse(content));
+		return e.json(200, {
+			available: true,
+			stale: monitoringStale(report),
+			report,
+			settings: publicSettings(monitoringSettings())
+		});
+	} catch {
+		return e.json(200, {
+			available: false,
+			stale: true,
+			report: null,
+			settings: publicSettings(monitoringSettings())
+		});
+	}
+};
+const HandleOperatorMonitoringUpdate = (e) => {
+	const actor = requireOperatorAdmin(e), input = e.requestInfo().body || {};
+	e.response.header().set("Cache-Control", "no-store");
+	if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => ![
+		"revision",
+		"emailEnabled",
+		"emailRecipients",
+		"discordEnabled",
+		"discordWebhook",
+		"clearDiscordWebhook"
+	].includes(key))) throw new BadRequestError("Configuration invalide.");
+	for (const key of [
+		"emailEnabled",
+		"discordEnabled",
+		"clearDiscordWebhook"
+	]) if (input[key] !== void 0 && typeof input[key] !== "boolean") throw new BadRequestError("Activation explicite attendue.");
+	if (typeof input.revision !== "string") throw new BadRequestError("Révision attendue.");
+	if (input.discordWebhook !== void 0 && typeof input.discordWebhook !== "string") throw new BadRequestError("Webhook invalide.");
+	let saved;
+	$app.runInTransaction((tx) => {
+		const current = monitoringSettings(tx);
+		if (input.revision !== (current?.getString("revision") || "")) throw new BadRequestError("La configuration a changé. Actualisez avant de réessayer.");
+		const recipients = input.emailRecipients === void 0 ? publicSettings(current).emailRecipients : input.emailRecipients;
+		if (!Array.isArray(recipients) || recipients.length > 20 || recipients.some((value) => typeof value !== "string" || value.length > 254 || !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$/.test(value))) throw new BadRequestError("Jusqu’à 20 adresses e-mail valides sont autorisées.");
+		const emailEnabled = input.emailEnabled ?? current?.getBool("emailEnabled") ?? false, discordEnabled = input.discordEnabled ?? current?.getBool("discordEnabled") ?? false;
+		if (emailEnabled && (!recipients.length || !smtpReady())) throw new BadRequestError("Renseignez un destinataire et configurez SMTP dans Administration avant d’activer les e-mails.");
+		const webhook = input.discordWebhook?.trim() || "";
+		if (webhook && !/^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/[0-9]{15,25}\/[A-Za-z0-9_-]{30,200}$/.test(webhook)) throw new BadRequestError("Utilisez une URL de webhook Discord officielle, sans paramètres.");
+		const encrypted = input.clearDiscordWebhook ? "" : webhook ? $security.encrypt(webhook, webhookKey()) : current?.getString("discordWebhookEncrypted") || "";
+		if (discordEnabled && !encrypted) throw new BadRequestError("Renseignez un webhook avant d’activer Discord.");
+		const row = current || new Record(tx.findCollectionByNameOrId("platform_monitoring_settings"));
+		row.set("key", "global");
+		row.set("emailEnabled", emailEnabled);
+		row.set("emailRecipients", [...new Set(recipients.map((value) => value.trim().toLowerCase()))]);
+		row.set("discordEnabled", discordEnabled);
+		row.set("discordWebhookEncrypted", encrypted);
+		row.set("revision", $security.randomString(32));
+		row.set("updatedBy", actor.id);
+		tx.save(row);
+		saved = publicSettings(row);
+	});
+	return e.json(200, { settings: saved });
+};
+/** Collector-only delivery configuration: native superuser and unrelayed loopback socket required. */
+const HandleOperatorMonitoringDeliveryConfig = (e) => {
+	if (e.auth?.collection().name !== "_superusers" || !webDirectLoopback(e)) throw new ForbiddenError("Accès local du collecteur requis.");
+	e.response.header().set("Cache-Control", "no-store");
+	const row = monitoringSettings(), settings = publicSettings(row), encrypted = row?.getString("discordWebhookEncrypted") || "";
+	return e.json(200, {
+		revision: settings.revision,
+		emailEnabled: settings.emailEnabled,
+		emailRecipients: settings.emailRecipients,
+		discordEnabled: settings.discordEnabled,
+		discordWebhook: encrypted && settings.discordEnabled ? toString($security.decrypt(encrypted, webhookKey())) : "",
+		...settings.emailEnabled ? { smtp: readOperatorSettings().smtp } : {}
+	});
+};
+
+//#endregion
+//#region ../common/platformResources.ts
+/** Sanitized resource metrics shared by the local collector and operator console. */
+const PLATFORM_RESOURCE_CATEGORIES = [
+	"databases",
+	"hosting",
+	"builds",
+	"platform",
+	"backups",
+	"system"
+];
+const PLATFORM_RESOURCE_RANGES = [
+	"15m",
+	"1h",
+	"24h",
+	"7d"
+];
+const invalid$1 = () => {
+	throw Error("Mesures de ressources invalides.");
+};
+const object = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : invalid$1();
+const number = (value, maximum = Number.MAX_SAFE_INTEGER) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum ? value : invalid$1();
+const optionalNumber = (value, maximum = Number.MAX_SAFE_INTEGER) => value === null ? null : number(value, maximum);
+const date = (value) => {
+	if (typeof value !== "string" || value.length > 40 || !Number.isFinite(Date.parse(value))) return invalid$1();
+	return new Date(value).toISOString();
+};
+const text = (value, maximum) => typeof value === "string" && value.length <= maximum ? value : invalid$1();
+const values = (value) => {
+	const raw = object(value);
+	return {
+		cpuPercent: optionalNumber(raw.cpuPercent, 100),
+		memoryBytes: optionalNumber(raw.memoryBytes),
+		diskBytes: optionalNumber(raw.diskBytes)
+	};
+};
+const categoryId = (value) => PLATFORM_RESOURCE_CATEGORIES.includes(value) ? value : invalid$1();
+const array = (value, maximum) => Array.isArray(value) && value.length <= maximum ? value : invalid$1();
+const emptyPlatformResources = (range) => ({
+	available: false,
+	stale: true,
+	range,
+	sample: null,
+	history: {
+		points: [],
+		firstCollectedAt: null,
+		intervalSeconds: 15,
+		retentionDays: 7
+	}
+});
+/** Only explicit non-secret fields cross the privileged collector → operator API boundary. */
+function parsePlatformResources(value, range, now = Date.now()) {
+	const raw = object(value);
+	if (raw.range !== range || typeof raw.available !== "boolean") return invalid$1();
+	if (!raw.available || raw.sample === null) return emptyPlatformResources(range);
+	const source = object(raw.sample), host = object(source.host);
+	if (source.version !== 1 || source.diskAttribution !== "directory-estimate") return invalid$1();
+	const cpuCount = number(host.cpuCount, 65536);
+	if (!Number.isInteger(cpuCount) || cpuCount < 1) return invalid$1();
+	const categories = array(source.categories, 6).map((item) => {
+		const row = object(item), resourceCount = number(row.resourceCount, 1e5);
+		if (!Number.isInteger(resourceCount)) return invalid$1();
+		return {
+			id: categoryId(row.id),
+			resourceCount,
+			...values(row)
+		};
+	});
+	if (categories.length !== 6 || new Set(categories.map((row) => row.id)).size !== 6) return invalid$1();
+	const resources = array(source.resources, 4096).map((item) => {
+		const row = object(item), id = text(row.id, 160);
+		if (!/^[A-Za-z0-9:_@.-]{1,160}$/.test(id) || ![
+			"database",
+			"application",
+			"builder",
+			"service"
+		].includes(row.kind) || ![
+			"running",
+			"stopped",
+			"unknown"
+		].includes(row.state)) return invalid$1();
+		return {
+			id,
+			category: categoryId(row.category),
+			kind: row.kind,
+			state: row.state,
+			memoryLimitBytes: optionalNumber(row.memoryLimitBytes),
+			...values(row)
+		};
+	});
+	if (new Set(resources.map((row) => `${row.category}:${row.id}`)).size !== resources.length) return invalid$1();
+	const sample = {
+		version: 1,
+		collectedAt: date(source.collectedAt),
+		diskCollectedAt: source.diskCollectedAt === null ? null : date(source.diskCollectedAt),
+		diskAttribution: "directory-estimate",
+		host: {
+			hostname: text(host.hostname, 200),
+			uptimeSeconds: number(host.uptimeSeconds),
+			cpuCount,
+			cpuPercent: optionalNumber(host.cpuPercent, 100),
+			memoryTotalBytes: number(host.memoryTotalBytes),
+			memoryUsedBytes: number(host.memoryUsedBytes),
+			memoryAvailableBytes: number(host.memoryAvailableBytes),
+			diskTotalBytes: number(host.diskTotalBytes),
+			diskUsedBytes: number(host.diskUsedBytes),
+			diskAvailableBytes: number(host.diskAvailableBytes)
+		},
+		categories,
+		resources,
+		filesystems: array(source.filesystems, 64).map((item) => {
+			const row = object(item), mount = text(row.mount, 255);
+			if (!/^\/[A-Za-z0-9_./-]*$/.test(mount) || mount.split("/").includes("..")) return invalid$1();
+			return {
+				mount,
+				totalBytes: number(row.totalBytes),
+				usedBytes: number(row.usedBytes),
+				availableBytes: number(row.availableBytes),
+				usedPercent: number(row.usedPercent, 100)
+			};
+		}),
+		errors: array(source.errors, 64).map((item) => {
+			const code = text(item, 100);
+			return /^[A-Za-z0-9:_-]+$/.test(code) ? code : invalid$1();
+		})
+	};
+	const history = object(raw.history), points = array(history.points, 240).map((item) => {
+		const point = object(item), groups = object(point.categories), timestamp = number(point.timestamp, 864e13);
+		if (!Number.isInteger(timestamp)) return invalid$1();
+		return {
+			timestamp,
+			...values(point),
+			categories: Object.fromEntries(PLATFORM_RESOURCE_CATEGORIES.map((id) => [id, values(groups[id])]))
+		};
+	});
+	for (let index = 1; index < points.length; index++) if (points[index].timestamp <= points[index - 1].timestamp) return invalid$1();
+	const intervalSeconds = number(history.intervalSeconds, 86400), retentionDays = number(history.retentionDays, 31);
+	if (intervalSeconds < 1 || retentionDays < 1) return invalid$1();
+	const age = now - Date.parse(sample.collectedAt);
+	return {
+		available: true,
+		stale: raw.stale === true || age < -3e4 || age > 6e4,
+		range,
+		sample,
+		history: {
+			points,
+			firstCollectedAt: history.firstCollectedAt === null ? null : date(history.firstCollectedAt),
+			intervalSeconds,
+			retentionDays
+		}
+	};
+}
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/resources.ts
+const recordId = /^[a-z0-9]{15}$/;
+const labels = {
+	databases: "Base de données",
+	hosting: "Hébergement",
+	builds: "BuildKit",
+	platform: "Service de la plateforme",
+	backups: "Service de sauvegarde",
+	system: "Système et autres processus"
+};
+const serviceLabels = {
+	"platform:stack": "Console et services Kolab",
+	"platform:worker": "Worker d’hébergement",
+	"platform:terminal": "Terminal web",
+	"platform:bridge": "Relais privé des bases",
+	"platform:rootful": "Docker des bases",
+	"platform:containerd": "Runtime des conteneurs",
+	"platform:rootless": "Docker des hébergements",
+	"platform:collector": "Collecteur de supervision",
+	"backups:recovery": "Sauvegardes de la plateforme"
+};
+/** IDs and measurements come from the collector; human labels come from this authenticated controller. */
+const enrichResources = (response) => {
+	if (!response.sample) return response;
+	const rows = response.sample.resources;
+	for (const row of rows) row.name = serviceLabels[row.id] || labels[row.category];
+	for (const definition of [{
+		collection: "instances",
+		kind: "database",
+		category: "databases",
+		prefix: "/instances/"
+	}, {
+		collection: "web_apps",
+		kind: "application",
+		category: "hosting",
+		prefix: "/applications/"
+	}]) {
+		let records = [];
+		try {
+			records = $app.findRecordsByFilter(definition.collection, "", "id", 4096, 0);
+		} catch {}
+		const existing = new Map(rows.filter((row) => row.kind === definition.kind).map((row) => [row.id, row]));
+		for (const record of records) {
+			if (!recordId.test(record.id)) continue;
+			let row = existing.get(record.id);
+			if (!row && rows.length < 4096) {
+				const state = record.getString("status");
+				row = {
+					id: record.id,
+					category: definition.category,
+					kind: definition.kind,
+					state: [
+						"stopped",
+						"off",
+						"sleeping"
+					].includes(state) ? "stopped" : "unknown",
+					cpuPercent: null,
+					memoryBytes: null,
+					diskBytes: null,
+					memoryLimitBytes: null
+				};
+				rows.push(row);
+			}
+			if (row) {
+				row.name = (record.getString("name") || record.getString("subdomain") || labels[definition.category]).slice(0, 200);
+				row.href = definition.prefix + record.id;
+			}
+		}
+	}
+	for (const category of response.sample.categories) category.resourceCount = rows.filter((row) => row.category === category.id).length;
+	return response;
+};
+/** GET is a bounded file read: it never samples Docker, scans disk, runs a command or changes state. */
+const HandleOperatorResourceMetrics = (e) => {
+	requireOperatorAdmin(e);
+	e.response.header().set("Cache-Control", "no-store");
+	const selected = e.request.url.query().get("range") || "1h";
+	if (!PLATFORM_RESOURCE_RANGES.includes(selected)) throw new BadRequestError("Choisissez une période de 15 min, 1 h, 24 h ou 7 jours.");
+	const range = selected;
+	try {
+		const root = $os.getenv("PLATFORM_RESOURCES_ROOT") || "/var/lib/kolab-resource-monitoring";
+		const content = toString($os.readFile(`${root}/resources-${range}.json`));
+		if (content.length > 4 * 1024 * 1024) throw Error("Resource cache too large");
+		return e.json(200, enrichResources(parsePlatformResources(JSON.parse(content), range)));
+	} catch {
+		return e.json(200, emptyPlatformResources(range));
+	}
 };
 
 //#endregion
@@ -8108,78 +19280,6 @@ const HandleSesError = (e) => {
 };
 
 //#endregion
-//#region ../common/sshPublicKey.ts
-/** JSVM-safe ssh-ed25519 public key parsing. Safe for pb_hooks (Goja) and Node/browser consumers. */
-const ED25519_ALGO = "ssh-ed25519";
-const ED25519_WIRE_KEY_LEN = 32;
-const ED25519_WIRE_LEN = 51;
-const readUint32BE = (bytes, offset) => {
-	if (offset + 4 > bytes.length) throw new Error("Invalid public key encoding.");
-	return (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
-};
-const readSshString = (bytes, offset) => {
-	const length = readUint32BE(bytes, offset);
-	offset += 4;
-	if (length < 0 || offset + length > bytes.length) throw new Error("Invalid public key encoding.");
-	return {
-		value: bytes.slice(offset, offset + length),
-		nextOffset: offset + length
-	};
-};
-const bytesToAscii = (bytes) => {
-	let out = "";
-	for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
-	return out;
-};
-const decodeBase64 = (value) => {
-	const normalized = value.replace(/[\s\r\n]+/g, "");
-	if (!normalized || normalized.length % 4 === 1 || !/^[A-Za-z0-9+/]+=*$/.test(normalized)) throw new Error("Public key base64 is invalid.");
-	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	const bytes = [];
-	let buffer = 0;
-	let bits = 0;
-	for (const char of normalized.replace(/=+$/, "")) {
-		const index = alphabet.indexOf(char);
-		if (index === -1) throw new Error("Public key base64 is invalid.");
-		buffer = buffer << 6 | index;
-		bits += 6;
-		if (bits >= 8) {
-			bits -= 8;
-			bytes.push(buffer >> bits & 255);
-		}
-	}
-	return new Uint8Array(bytes);
-};
-const validateWire = (wire) => {
-	if (wire.length !== ED25519_WIRE_LEN) throw new Error("Invalid Ed25519 public key length.");
-	let offset = 0;
-	const algo = readSshString(wire, offset);
-	offset = algo.nextOffset;
-	if (bytesToAscii(algo.value) !== ED25519_ALGO) throw new Error("Public key algorithm must be ssh-ed25519.");
-	const key = readSshString(wire, offset);
-	if (key.value.length !== ED25519_WIRE_KEY_LEN) throw new Error("Invalid Ed25519 public key length.");
-	if (key.nextOffset !== wire.length) throw new Error("Invalid public key encoding.");
-};
-const parseSshEd25519PublicKey = (input) => {
-	const trimmed = input.trim();
-	if (!trimmed) throw new Error("Public key is required.");
-	const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-	if (lines.length > 1) throw new Error("Paste a single public key line only.");
-	const parts = (lines[0] ?? "").split(/\s+/).filter(Boolean);
-	if (parts.length < 2) throw new Error("Public key must look like: ssh-ed25519 AAAA… comment");
-	const algo = parts[0];
-	const keyData = parts[1];
-	if (algo !== ED25519_ALGO) throw new Error("Only ssh-ed25519 public keys are supported.");
-	const wire = decodeBase64(keyData);
-	validateWire(wire);
-	const comment = parts.slice(2).join(" ");
-	return {
-		normalized: comment ? `${ED25519_ALGO} ${keyData} ${comment}` : `${ED25519_ALGO} ${keyData}`,
-		wire
-	};
-};
-
-//#endregion
 //#region src/lib/handlers/sshKeys/model/validateSshKey.ts
 const validateSshKeyRecord = (record, authId) => {
 	const log = mkLog(`ssh-keys`);
@@ -8194,15 +19294,18 @@ const validateSshKeyRecord = (record, authId) => {
 	const allInstances = record.getBool("all_instances");
 	const instanceIds = record.getStringSlice("instances") || [];
 	if (!allInstances && instanceIds.length === 0) throw new BadRequestError("Sélectionnez au moins une instance ou choisissez toutes les instances.");
-	if (!allInstances) for (const instanceId of instanceIds) {
-		const instance = $app.findRecordById("instances", instanceId);
-		if (instance.getString("uid") !== authId) {
-			log({
-				instanceId,
-				authId,
-				uid: instance.getString("uid")
-			});
-			throw new BadRequestError("Une ou plusieurs instances sélectionnées ne vous appartiennent pas.");
+	if (!allInstances) {
+		const user = $app.findRecordById("users", authId);
+		for (const instanceId of instanceIds) {
+			const instance = $app.findRecordById("instances", instanceId);
+			if (!canManageInstance(instance, user)) {
+				log({
+					instanceId,
+					authId,
+					uid: instance.getString("uid")
+				});
+				throw new BadRequestError("Accès refusé à une ou plusieurs bases sélectionnées.");
+			}
 		}
 	}
 	if (allInstances) record.set("instances", []);
@@ -8272,19 +19375,2996 @@ const HandleStatsRefreshAtBoot = (_e) => {
 //#endregion
 //#region src/lib/handlers/user/api/HandleUserTokenRequest.ts
 const HandleUserTokenRequest = (e) => {
-	mkLog(`user-token`);
+	if (!e.hasSuperuserAuth()) throw new ForbiddenError("Accès technique requis.");
 	const id = e.request.pathValue("id");
 	if (!id) throw new BadRequestError(`L'identifiant utilisateur est obligatoire.`);
 	const rec = $app.findRecordById("users", id);
+	const instanceId = e.request?.url?.query().get("instanceId") || "";
+	e.response.header().set("Cache-Control", "no-store");
+	if (instanceId) {
+		if (!/^[a-z0-9]{15}$/.test(instanceId)) throw new BadRequestError("Instance invalide.");
+		const instance = $app.findRecordById("instances", instanceId);
+		if (instance.getString("uid") !== rec.id) throw new ForbiddenError("Propriétaire invalide.");
+		const native = migratedNativeAdmin(instance, rec);
+		if (native) return e.json(200, native);
+	}
 	const tokenKey = rec.getString("tokenKey");
 	const passwordHash = rec.getString("password:hash");
 	const email = rec.getString(`email`);
 	return e.json(200, {
+		...instanceId ? { id: rec.id } : {},
 		email,
 		passwordHash,
 		tokenKey
 	});
 };
+
+//#endregion
+//#region ../common/totp.ts
+/** RFC 4226 / RFC 6238, SHA-1; synchronous and compatible with PocketBase Goja. */
+const rotate = (value, bits) => value << bits | value >>> 32 - bits;
+const sha1 = (bytes) => {
+	const words = [];
+	for (let i = 0; i < bytes.length; i++) words[i >> 2] = (words[i >> 2] || 0) | bytes[i] << 24 - i % 4 * 8;
+	words[bytes.length >> 2] = (words[bytes.length >> 2] || 0) | 128 << 24 - bytes.length % 4 * 8;
+	const blockCount = Math.ceil((bytes.length + 9) / 64);
+	words[blockCount * 16 - 2] = Math.floor(bytes.length * 8 / 4294967296);
+	words[blockCount * 16 - 1] = bytes.length * 8 | 0;
+	let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+	for (let block = 0; block < blockCount; block++) {
+		const w = [];
+		for (let i = 0; i < 16; i++) w[i] = words[block * 16 + i] || 0;
+		for (let i = 16; i < 80; i++) w[i] = rotate(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+		let a = h0, b = h1, c = h2, d = h3, e = h4;
+		for (let i = 0; i < 80; i++) {
+			const f = i < 20 ? b & c | ~b & d : i < 40 ? b ^ c ^ d : i < 60 ? b & c | b & d | c & d : b ^ c ^ d;
+			const k = i < 20 ? 1518500249 : i < 40 ? 1859775393 : i < 60 ? 2400959708 : 3395469782;
+			const next = rotate(a, 5) + f + e + k + w[i] | 0;
+			e = d;
+			d = c;
+			c = rotate(b, 30);
+			b = a;
+			a = next;
+		}
+		h0 = h0 + a | 0;
+		h1 = h1 + b | 0;
+		h2 = h2 + c | 0;
+		h3 = h3 + d | 0;
+		h4 = h4 + e | 0;
+	}
+	const result = [];
+	for (const word of [
+		h0,
+		h1,
+		h2,
+		h3,
+		h4
+	]) for (let shift = 24; shift >= 0; shift -= 8) result.push(word >>> shift & 255);
+	return result;
+};
+const decodeBase32 = (value) => {
+	const clean = value.toUpperCase().replace(/=+$/, "");
+	if (!/^[A-Z2-7]{16,128}$/.test(clean)) throw new Error("Clé TOTP invalide.");
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+	const result = [];
+	let bits = 0, accumulator = 0;
+	for (const char of clean) {
+		accumulator = accumulator << 5 | alphabet.indexOf(char);
+		bits += 5;
+		if (bits >= 8) {
+			bits -= 8;
+			result.push(accumulator >>> bits & 255);
+			accumulator &= (1 << bits) - 1;
+		}
+	}
+	return result;
+};
+const totpAtCounter = (secret, counter, digits = 6) => {
+	if (!Number.isSafeInteger(counter) || counter < 0) throw new Error("Compteur TOTP invalide.");
+	let key = decodeBase32(secret);
+	if (key.length > 64) key = sha1(key);
+	const inner = [], outer = [], message = [];
+	for (let i = 0; i < 64; i++) {
+		inner.push((key[i] || 0) ^ 54);
+		outer.push((key[i] || 0) ^ 92);
+	}
+	for (let i = 7; i >= 0; i--) {
+		message[i] = counter % 256;
+		counter = Math.floor(counter / 256);
+	}
+	const digest = sha1(outer.concat(sha1(inner.concat(message))));
+	const offset = digest[19] & 15;
+	return `${((digest[offset] & 127) << 24 | digest[offset + 1] << 16 | digest[offset + 2] << 8 | digest[offset + 3]) % 10 ** digits}`.padStart(digits, "0");
+};
+const verifyTotp = (secret, code, lastCounter = -1, timestamp = Date.now()) => {
+	if (!/^\d{6}$/.test(code)) return null;
+	const counter = Math.floor(timestamp / 3e4);
+	for (const candidate of [
+		counter,
+		counter - 1,
+		counter + 1
+	]) {
+		if (candidate <= lastCounter || candidate < 0) continue;
+		const expected = totpAtCounter(secret, candidate);
+		let difference = 0;
+		for (let i = 0; i < 6; i++) difference |= code.charCodeAt(i) ^ expected.charCodeAt(i);
+		if (difference === 0) return candidate;
+	}
+	return null;
+};
+const totpUri = (secret, issuer, email) => `otpauth://totp/${encodeURIComponent(`${issuer}:${email}`)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+
+//#endregion
+//#region ../../../../node_modules/.pnpm/qrcode-generator@2.0.4/node_modules/qrcode-generator/dist/qrcode.mjs
+/**
+* qrcode
+* @param typeNumber 1 to 40
+* @param errorCorrectionLevel 'L','M','Q','H'
+*/
+const qrcode = function(typeNumber, errorCorrectionLevel) {
+	const PAD0 = 236;
+	const PAD1 = 17;
+	let _typeNumber = typeNumber;
+	const _errorCorrectionLevel = QRErrorCorrectionLevel[errorCorrectionLevel];
+	let _modules = null;
+	let _moduleCount = 0;
+	let _dataCache = null;
+	const _dataList = [];
+	const _this = {};
+	const makeImpl = function(test, maskPattern) {
+		_moduleCount = _typeNumber * 4 + 17;
+		_modules = function(moduleCount) {
+			const modules = new Array(moduleCount);
+			for (let row = 0; row < moduleCount; row += 1) {
+				modules[row] = new Array(moduleCount);
+				for (let col = 0; col < moduleCount; col += 1) modules[row][col] = null;
+			}
+			return modules;
+		}(_moduleCount);
+		setupPositionProbePattern(0, 0);
+		setupPositionProbePattern(_moduleCount - 7, 0);
+		setupPositionProbePattern(0, _moduleCount - 7);
+		setupPositionAdjustPattern();
+		setupTimingPattern();
+		setupTypeInfo(test, maskPattern);
+		if (_typeNumber >= 7) setupTypeNumber(test);
+		if (_dataCache == null) _dataCache = createData(_typeNumber, _errorCorrectionLevel, _dataList);
+		mapData(_dataCache, maskPattern);
+	};
+	const setupPositionProbePattern = function(row, col) {
+		for (let r = -1; r <= 7; r += 1) {
+			if (row + r <= -1 || _moduleCount <= row + r) continue;
+			for (let c = -1; c <= 7; c += 1) {
+				if (col + c <= -1 || _moduleCount <= col + c) continue;
+				if (0 <= r && r <= 6 && (c == 0 || c == 6) || 0 <= c && c <= 6 && (r == 0 || r == 6) || 2 <= r && r <= 4 && 2 <= c && c <= 4) _modules[row + r][col + c] = true;
+				else _modules[row + r][col + c] = false;
+			}
+		}
+	};
+	const getBestMaskPattern = function() {
+		let minLostPoint = 0;
+		let pattern = 0;
+		for (let i = 0; i < 8; i += 1) {
+			makeImpl(true, i);
+			const lostPoint = QRUtil.getLostPoint(_this);
+			if (i == 0 || minLostPoint > lostPoint) {
+				minLostPoint = lostPoint;
+				pattern = i;
+			}
+		}
+		return pattern;
+	};
+	const setupTimingPattern = function() {
+		for (let r = 8; r < _moduleCount - 8; r += 1) {
+			if (_modules[r][6] != null) continue;
+			_modules[r][6] = r % 2 == 0;
+		}
+		for (let c = 8; c < _moduleCount - 8; c += 1) {
+			if (_modules[6][c] != null) continue;
+			_modules[6][c] = c % 2 == 0;
+		}
+	};
+	const setupPositionAdjustPattern = function() {
+		const pos = QRUtil.getPatternPosition(_typeNumber);
+		for (let i = 0; i < pos.length; i += 1) for (let j = 0; j < pos.length; j += 1) {
+			const row = pos[i];
+			const col = pos[j];
+			if (_modules[row][col] != null) continue;
+			for (let r = -2; r <= 2; r += 1) for (let c = -2; c <= 2; c += 1) if (r == -2 || r == 2 || c == -2 || c == 2 || r == 0 && c == 0) _modules[row + r][col + c] = true;
+			else _modules[row + r][col + c] = false;
+		}
+	};
+	const setupTypeNumber = function(test) {
+		const bits = QRUtil.getBCHTypeNumber(_typeNumber);
+		for (let i = 0; i < 18; i += 1) {
+			const mod = !test && (bits >> i & 1) == 1;
+			_modules[Math.floor(i / 3)][i % 3 + _moduleCount - 8 - 3] = mod;
+		}
+		for (let i = 0; i < 18; i += 1) {
+			const mod = !test && (bits >> i & 1) == 1;
+			_modules[i % 3 + _moduleCount - 8 - 3][Math.floor(i / 3)] = mod;
+		}
+	};
+	const setupTypeInfo = function(test, maskPattern) {
+		const data = _errorCorrectionLevel << 3 | maskPattern;
+		const bits = QRUtil.getBCHTypeInfo(data);
+		for (let i = 0; i < 15; i += 1) {
+			const mod = !test && (bits >> i & 1) == 1;
+			if (i < 6) _modules[i][8] = mod;
+			else if (i < 8) _modules[i + 1][8] = mod;
+			else _modules[_moduleCount - 15 + i][8] = mod;
+		}
+		for (let i = 0; i < 15; i += 1) {
+			const mod = !test && (bits >> i & 1) == 1;
+			if (i < 8) _modules[8][_moduleCount - i - 1] = mod;
+			else if (i < 9) _modules[8][15 - i - 1 + 1] = mod;
+			else _modules[8][15 - i - 1] = mod;
+		}
+		_modules[_moduleCount - 8][8] = !test;
+	};
+	const mapData = function(data, maskPattern) {
+		let inc = -1;
+		let row = _moduleCount - 1;
+		let bitIndex = 7;
+		let byteIndex = 0;
+		const maskFunc = QRUtil.getMaskFunction(maskPattern);
+		for (let col = _moduleCount - 1; col > 0; col -= 2) {
+			if (col == 6) col -= 1;
+			while (true) {
+				for (let c = 0; c < 2; c += 1) if (_modules[row][col - c] == null) {
+					let dark = false;
+					if (byteIndex < data.length) dark = (data[byteIndex] >>> bitIndex & 1) == 1;
+					if (maskFunc(row, col - c)) dark = !dark;
+					_modules[row][col - c] = dark;
+					bitIndex -= 1;
+					if (bitIndex == -1) {
+						byteIndex += 1;
+						bitIndex = 7;
+					}
+				}
+				row += inc;
+				if (row < 0 || _moduleCount <= row) {
+					row -= inc;
+					inc = -inc;
+					break;
+				}
+			}
+		}
+	};
+	const createBytes = function(buffer, rsBlocks) {
+		let offset = 0;
+		let maxDcCount = 0;
+		let maxEcCount = 0;
+		const dcdata = new Array(rsBlocks.length);
+		const ecdata = new Array(rsBlocks.length);
+		for (let r = 0; r < rsBlocks.length; r += 1) {
+			const dcCount = rsBlocks[r].dataCount;
+			const ecCount = rsBlocks[r].totalCount - dcCount;
+			maxDcCount = Math.max(maxDcCount, dcCount);
+			maxEcCount = Math.max(maxEcCount, ecCount);
+			dcdata[r] = new Array(dcCount);
+			for (let i = 0; i < dcdata[r].length; i += 1) dcdata[r][i] = 255 & buffer.getBuffer()[i + offset];
+			offset += dcCount;
+			const rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
+			const modPoly = qrPolynomial(dcdata[r], rsPoly.getLength() - 1).mod(rsPoly);
+			ecdata[r] = new Array(rsPoly.getLength() - 1);
+			for (let i = 0; i < ecdata[r].length; i += 1) {
+				const modIndex = i + modPoly.getLength() - ecdata[r].length;
+				ecdata[r][i] = modIndex >= 0 ? modPoly.getAt(modIndex) : 0;
+			}
+		}
+		let totalCodeCount = 0;
+		for (let i = 0; i < rsBlocks.length; i += 1) totalCodeCount += rsBlocks[i].totalCount;
+		const data = new Array(totalCodeCount);
+		let index = 0;
+		for (let i = 0; i < maxDcCount; i += 1) for (let r = 0; r < rsBlocks.length; r += 1) if (i < dcdata[r].length) {
+			data[index] = dcdata[r][i];
+			index += 1;
+		}
+		for (let i = 0; i < maxEcCount; i += 1) for (let r = 0; r < rsBlocks.length; r += 1) if (i < ecdata[r].length) {
+			data[index] = ecdata[r][i];
+			index += 1;
+		}
+		return data;
+	};
+	const createData = function(typeNumber, errorCorrectionLevel, dataList) {
+		const rsBlocks = QRRSBlock.getRSBlocks(typeNumber, errorCorrectionLevel);
+		const buffer = qrBitBuffer();
+		for (let i = 0; i < dataList.length; i += 1) {
+			const data = dataList[i];
+			buffer.put(data.getMode(), 4);
+			buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber));
+			data.write(buffer);
+		}
+		let totalDataCount = 0;
+		for (let i = 0; i < rsBlocks.length; i += 1) totalDataCount += rsBlocks[i].dataCount;
+		if (buffer.getLengthInBits() > totalDataCount * 8) throw "code length overflow. (" + buffer.getLengthInBits() + ">" + totalDataCount * 8 + ")";
+		if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) buffer.put(0, 4);
+		while (buffer.getLengthInBits() % 8 != 0) buffer.putBit(false);
+		while (true) {
+			if (buffer.getLengthInBits() >= totalDataCount * 8) break;
+			buffer.put(PAD0, 8);
+			if (buffer.getLengthInBits() >= totalDataCount * 8) break;
+			buffer.put(PAD1, 8);
+		}
+		return createBytes(buffer, rsBlocks);
+	};
+	_this.addData = function(data, mode) {
+		mode = mode || "Byte";
+		let newData = null;
+		switch (mode) {
+			case "Numeric":
+				newData = qrNumber(data);
+				break;
+			case "Alphanumeric":
+				newData = qrAlphaNum(data);
+				break;
+			case "Byte":
+				newData = qr8BitByte(data);
+				break;
+			case "Kanji":
+				newData = qrKanji(data);
+				break;
+			default: throw "mode:" + mode;
+		}
+		_dataList.push(newData);
+		_dataCache = null;
+	};
+	_this.isDark = function(row, col) {
+		if (row < 0 || _moduleCount <= row || col < 0 || _moduleCount <= col) throw row + "," + col;
+		return _modules[row][col];
+	};
+	_this.getModuleCount = function() {
+		return _moduleCount;
+	};
+	_this.make = function() {
+		if (_typeNumber < 1) {
+			let typeNumber = 1;
+			for (; typeNumber < 40; typeNumber++) {
+				const rsBlocks = QRRSBlock.getRSBlocks(typeNumber, _errorCorrectionLevel);
+				const buffer = qrBitBuffer();
+				for (let i = 0; i < _dataList.length; i++) {
+					const data = _dataList[i];
+					buffer.put(data.getMode(), 4);
+					buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber));
+					data.write(buffer);
+				}
+				let totalDataCount = 0;
+				for (let i = 0; i < rsBlocks.length; i++) totalDataCount += rsBlocks[i].dataCount;
+				if (buffer.getLengthInBits() <= totalDataCount * 8) break;
+			}
+			_typeNumber = typeNumber;
+		}
+		makeImpl(false, getBestMaskPattern());
+	};
+	_this.createTableTag = function(cellSize, margin) {
+		cellSize = cellSize || 2;
+		margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+		let qrHtml = "";
+		qrHtml += "<table style=\"";
+		qrHtml += " border-width: 0px; border-style: none;";
+		qrHtml += " border-collapse: collapse;";
+		qrHtml += " padding: 0px; margin: " + margin + "px;";
+		qrHtml += "\">";
+		qrHtml += "<tbody>";
+		for (let r = 0; r < _this.getModuleCount(); r += 1) {
+			qrHtml += "<tr>";
+			for (let c = 0; c < _this.getModuleCount(); c += 1) {
+				qrHtml += "<td style=\"";
+				qrHtml += " border-width: 0px; border-style: none;";
+				qrHtml += " border-collapse: collapse;";
+				qrHtml += " padding: 0px; margin: 0px;";
+				qrHtml += " width: " + cellSize + "px;";
+				qrHtml += " height: " + cellSize + "px;";
+				qrHtml += " background-color: ";
+				qrHtml += _this.isDark(r, c) ? "#000000" : "#ffffff";
+				qrHtml += ";";
+				qrHtml += "\"/>";
+			}
+			qrHtml += "</tr>";
+		}
+		qrHtml += "</tbody>";
+		qrHtml += "</table>";
+		return qrHtml;
+	};
+	_this.createSvgTag = function(cellSize, margin, alt, title) {
+		let opts = {};
+		if (typeof arguments[0] == "object") {
+			opts = arguments[0];
+			cellSize = opts.cellSize;
+			margin = opts.margin;
+			alt = opts.alt;
+			title = opts.title;
+		}
+		cellSize = cellSize || 2;
+		margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+		alt = typeof alt === "string" ? { text: alt } : alt || {};
+		alt.text = alt.text || null;
+		alt.id = alt.text ? alt.id || "qrcode-description" : null;
+		title = typeof title === "string" ? { text: title } : title || {};
+		title.text = title.text || null;
+		title.id = title.text ? title.id || "qrcode-title" : null;
+		const size = _this.getModuleCount() * cellSize + margin * 2;
+		let c, mc, r, mr, qrSvg = "", rect;
+		rect = "l" + cellSize + ",0 0," + cellSize + " -" + cellSize + ",0 0,-" + cellSize + "z ";
+		qrSvg += "<svg version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\"";
+		qrSvg += !opts.scalable ? " width=\"" + size + "px\" height=\"" + size + "px\"" : "";
+		qrSvg += " viewBox=\"0 0 " + size + " " + size + "\" ";
+		qrSvg += " preserveAspectRatio=\"xMinYMin meet\"";
+		qrSvg += title.text || alt.text ? " role=\"img\" aria-labelledby=\"" + escapeXml([title.id, alt.id].join(" ").trim()) + "\"" : "";
+		qrSvg += ">";
+		qrSvg += title.text ? "<title id=\"" + escapeXml(title.id) + "\">" + escapeXml(title.text) + "</title>" : "";
+		qrSvg += alt.text ? "<description id=\"" + escapeXml(alt.id) + "\">" + escapeXml(alt.text) + "</description>" : "";
+		qrSvg += "<rect width=\"100%\" height=\"100%\" fill=\"white\" cx=\"0\" cy=\"0\"/>";
+		qrSvg += "<path d=\"";
+		for (r = 0; r < _this.getModuleCount(); r += 1) {
+			mr = r * cellSize + margin;
+			for (c = 0; c < _this.getModuleCount(); c += 1) if (_this.isDark(r, c)) {
+				mc = c * cellSize + margin;
+				qrSvg += "M" + mc + "," + mr + rect;
+			}
+		}
+		qrSvg += "\" stroke=\"transparent\" fill=\"black\"/>";
+		qrSvg += "</svg>";
+		return qrSvg;
+	};
+	_this.createDataURL = function(cellSize, margin) {
+		cellSize = cellSize || 2;
+		margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+		const size = _this.getModuleCount() * cellSize + margin * 2;
+		const min = margin;
+		const max = size - margin;
+		return createDataURL(size, size, function(x, y) {
+			if (min <= x && x < max && min <= y && y < max) {
+				const c = Math.floor((x - min) / cellSize);
+				const r = Math.floor((y - min) / cellSize);
+				return _this.isDark(r, c) ? 0 : 1;
+			} else return 1;
+		});
+	};
+	_this.createImgTag = function(cellSize, margin, alt) {
+		cellSize = cellSize || 2;
+		margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+		const size = _this.getModuleCount() * cellSize + margin * 2;
+		let img = "";
+		img += "<img";
+		img += " src=\"";
+		img += _this.createDataURL(cellSize, margin);
+		img += "\"";
+		img += " width=\"";
+		img += size;
+		img += "\"";
+		img += " height=\"";
+		img += size;
+		img += "\"";
+		if (alt) {
+			img += " alt=\"";
+			img += escapeXml(alt);
+			img += "\"";
+		}
+		img += "/>";
+		return img;
+	};
+	const escapeXml = function(s) {
+		let escaped = "";
+		for (let i = 0; i < s.length; i += 1) {
+			const c = s.charAt(i);
+			switch (c) {
+				case "<":
+					escaped += "&lt;";
+					break;
+				case ">":
+					escaped += "&gt;";
+					break;
+				case "&":
+					escaped += "&amp;";
+					break;
+				case "\"":
+					escaped += "&quot;";
+					break;
+				default:
+					escaped += c;
+					break;
+			}
+		}
+		return escaped;
+	};
+	const _createHalfASCII = function(margin) {
+		const cellSize = 1;
+		margin = typeof margin == "undefined" ? cellSize * 2 : margin;
+		const size = _this.getModuleCount() * cellSize + margin * 2;
+		const min = margin;
+		const max = size - margin;
+		let y, x, r1, r2, p;
+		const blocks = {
+			"██": "█",
+			"█ ": "▀",
+			" █": "▄",
+			"  ": " "
+		};
+		const blocksLastLineNoMargin = {
+			"██": "▀",
+			"█ ": "▀",
+			" █": " ",
+			"  ": " "
+		};
+		let ascii = "";
+		for (y = 0; y < size; y += 2) {
+			r1 = Math.floor((y - min) / cellSize);
+			r2 = Math.floor((y + 1 - min) / cellSize);
+			for (x = 0; x < size; x += 1) {
+				p = "█";
+				if (min <= x && x < max && min <= y && y < max && _this.isDark(r1, Math.floor((x - min) / cellSize))) p = " ";
+				if (min <= x && x < max && min <= y + 1 && y + 1 < max && _this.isDark(r2, Math.floor((x - min) / cellSize))) p += " ";
+				else p += "█";
+				ascii += margin < 1 && y + 1 >= max ? blocksLastLineNoMargin[p] : blocks[p];
+			}
+			ascii += "\n";
+		}
+		if (size % 2 && margin > 0) return ascii.substring(0, ascii.length - size - 1) + Array(size + 1).join("▀");
+		return ascii.substring(0, ascii.length - 1);
+	};
+	_this.createASCII = function(cellSize, margin) {
+		cellSize = cellSize || 1;
+		if (cellSize < 2) return _createHalfASCII(margin);
+		cellSize -= 1;
+		margin = typeof margin == "undefined" ? cellSize * 2 : margin;
+		const size = _this.getModuleCount() * cellSize + margin * 2;
+		const min = margin;
+		const max = size - margin;
+		let y, x, r, p;
+		const white = Array(cellSize + 1).join("██");
+		const black = Array(cellSize + 1).join("  ");
+		let ascii = "";
+		let line = "";
+		for (y = 0; y < size; y += 1) {
+			r = Math.floor((y - min) / cellSize);
+			line = "";
+			for (x = 0; x < size; x += 1) {
+				p = 1;
+				if (min <= x && x < max && min <= y && y < max && _this.isDark(r, Math.floor((x - min) / cellSize))) p = 0;
+				line += p ? white : black;
+			}
+			for (r = 0; r < cellSize; r += 1) ascii += line + "\n";
+		}
+		return ascii.substring(0, ascii.length - 1);
+	};
+	_this.renderTo2dContext = function(context, cellSize) {
+		cellSize = cellSize || 2;
+		const length = _this.getModuleCount();
+		for (let row = 0; row < length; row++) for (let col = 0; col < length; col++) {
+			context.fillStyle = _this.isDark(row, col) ? "black" : "white";
+			context.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+		}
+	};
+	return _this;
+};
+qrcode.stringToBytes = function(s) {
+	const bytes = [];
+	for (let i = 0; i < s.length; i += 1) {
+		const c = s.charCodeAt(i);
+		bytes.push(c & 255);
+	}
+	return bytes;
+};
+/**
+* @param unicodeData base64 string of byte array.
+* [16bit Unicode],[16bit Bytes], ...
+* @param numChars
+*/
+qrcode.createStringToBytes = function(unicodeData, numChars) {
+	const unicodeMap = function() {
+		const bin = base64DecodeInputStream(unicodeData);
+		const read = function() {
+			const b = bin.read();
+			if (b == -1) throw "eof";
+			return b;
+		};
+		let count = 0;
+		const unicodeMap = {};
+		while (true) {
+			const b0 = bin.read();
+			if (b0 == -1) break;
+			const b1 = read();
+			const b2 = read();
+			const b3 = read();
+			const k = String.fromCharCode(b0 << 8 | b1);
+			unicodeMap[k] = b2 << 8 | b3;
+			count += 1;
+		}
+		if (count != numChars) throw count + " != " + numChars;
+		return unicodeMap;
+	}();
+	const unknownChar = "?".charCodeAt(0);
+	return function(s) {
+		const bytes = [];
+		for (let i = 0; i < s.length; i += 1) {
+			const c = s.charCodeAt(i);
+			if (c < 128) bytes.push(c);
+			else {
+				const b = unicodeMap[s.charAt(i)];
+				if (typeof b == "number") if ((b & 255) == b) bytes.push(b);
+				else {
+					bytes.push(b >>> 8);
+					bytes.push(b & 255);
+				}
+				else bytes.push(unknownChar);
+			}
+		}
+		return bytes;
+	};
+};
+const QRMode = {
+	MODE_NUMBER: 1,
+	MODE_ALPHA_NUM: 2,
+	MODE_8BIT_BYTE: 4,
+	MODE_KANJI: 8
+};
+const QRErrorCorrectionLevel = {
+	L: 1,
+	M: 0,
+	Q: 3,
+	H: 2
+};
+const QRMaskPattern = {
+	PATTERN000: 0,
+	PATTERN001: 1,
+	PATTERN010: 2,
+	PATTERN011: 3,
+	PATTERN100: 4,
+	PATTERN101: 5,
+	PATTERN110: 6,
+	PATTERN111: 7
+};
+const QRUtil = function() {
+	const PATTERN_POSITION_TABLE = [
+		[],
+		[6, 18],
+		[6, 22],
+		[6, 26],
+		[6, 30],
+		[6, 34],
+		[
+			6,
+			22,
+			38
+		],
+		[
+			6,
+			24,
+			42
+		],
+		[
+			6,
+			26,
+			46
+		],
+		[
+			6,
+			28,
+			50
+		],
+		[
+			6,
+			30,
+			54
+		],
+		[
+			6,
+			32,
+			58
+		],
+		[
+			6,
+			34,
+			62
+		],
+		[
+			6,
+			26,
+			46,
+			66
+		],
+		[
+			6,
+			26,
+			48,
+			70
+		],
+		[
+			6,
+			26,
+			50,
+			74
+		],
+		[
+			6,
+			30,
+			54,
+			78
+		],
+		[
+			6,
+			30,
+			56,
+			82
+		],
+		[
+			6,
+			30,
+			58,
+			86
+		],
+		[
+			6,
+			34,
+			62,
+			90
+		],
+		[
+			6,
+			28,
+			50,
+			72,
+			94
+		],
+		[
+			6,
+			26,
+			50,
+			74,
+			98
+		],
+		[
+			6,
+			30,
+			54,
+			78,
+			102
+		],
+		[
+			6,
+			28,
+			54,
+			80,
+			106
+		],
+		[
+			6,
+			32,
+			58,
+			84,
+			110
+		],
+		[
+			6,
+			30,
+			58,
+			86,
+			114
+		],
+		[
+			6,
+			34,
+			62,
+			90,
+			118
+		],
+		[
+			6,
+			26,
+			50,
+			74,
+			98,
+			122
+		],
+		[
+			6,
+			30,
+			54,
+			78,
+			102,
+			126
+		],
+		[
+			6,
+			26,
+			52,
+			78,
+			104,
+			130
+		],
+		[
+			6,
+			30,
+			56,
+			82,
+			108,
+			134
+		],
+		[
+			6,
+			34,
+			60,
+			86,
+			112,
+			138
+		],
+		[
+			6,
+			30,
+			58,
+			86,
+			114,
+			142
+		],
+		[
+			6,
+			34,
+			62,
+			90,
+			118,
+			146
+		],
+		[
+			6,
+			30,
+			54,
+			78,
+			102,
+			126,
+			150
+		],
+		[
+			6,
+			24,
+			50,
+			76,
+			102,
+			128,
+			154
+		],
+		[
+			6,
+			28,
+			54,
+			80,
+			106,
+			132,
+			158
+		],
+		[
+			6,
+			32,
+			58,
+			84,
+			110,
+			136,
+			162
+		],
+		[
+			6,
+			26,
+			54,
+			82,
+			110,
+			138,
+			166
+		],
+		[
+			6,
+			30,
+			58,
+			86,
+			114,
+			142,
+			170
+		]
+	];
+	const G15 = 1335;
+	const G18 = 7973;
+	const G15_MASK = 21522;
+	const _this = {};
+	const getBCHDigit = function(data) {
+		let digit = 0;
+		while (data != 0) {
+			digit += 1;
+			data >>>= 1;
+		}
+		return digit;
+	};
+	_this.getBCHTypeInfo = function(data) {
+		let d = data << 10;
+		while (getBCHDigit(d) - getBCHDigit(G15) >= 0) d ^= G15 << getBCHDigit(d) - getBCHDigit(G15);
+		return (data << 10 | d) ^ G15_MASK;
+	};
+	_this.getBCHTypeNumber = function(data) {
+		let d = data << 12;
+		while (getBCHDigit(d) - getBCHDigit(G18) >= 0) d ^= G18 << getBCHDigit(d) - getBCHDigit(G18);
+		return data << 12 | d;
+	};
+	_this.getPatternPosition = function(typeNumber) {
+		return PATTERN_POSITION_TABLE[typeNumber - 1];
+	};
+	_this.getMaskFunction = function(maskPattern) {
+		switch (maskPattern) {
+			case QRMaskPattern.PATTERN000: return function(i, j) {
+				return (i + j) % 2 == 0;
+			};
+			case QRMaskPattern.PATTERN001: return function(i, j) {
+				return i % 2 == 0;
+			};
+			case QRMaskPattern.PATTERN010: return function(i, j) {
+				return j % 3 == 0;
+			};
+			case QRMaskPattern.PATTERN011: return function(i, j) {
+				return (i + j) % 3 == 0;
+			};
+			case QRMaskPattern.PATTERN100: return function(i, j) {
+				return (Math.floor(i / 2) + Math.floor(j / 3)) % 2 == 0;
+			};
+			case QRMaskPattern.PATTERN101: return function(i, j) {
+				return i * j % 2 + i * j % 3 == 0;
+			};
+			case QRMaskPattern.PATTERN110: return function(i, j) {
+				return (i * j % 2 + i * j % 3) % 2 == 0;
+			};
+			case QRMaskPattern.PATTERN111: return function(i, j) {
+				return (i * j % 3 + (i + j) % 2) % 2 == 0;
+			};
+			default: throw "bad maskPattern:" + maskPattern;
+		}
+	};
+	_this.getErrorCorrectPolynomial = function(errorCorrectLength) {
+		let a = qrPolynomial([1], 0);
+		for (let i = 0; i < errorCorrectLength; i += 1) a = a.multiply(qrPolynomial([1, QRMath.gexp(i)], 0));
+		return a;
+	};
+	_this.getLengthInBits = function(mode, type) {
+		if (1 <= type && type < 10) switch (mode) {
+			case QRMode.MODE_NUMBER: return 10;
+			case QRMode.MODE_ALPHA_NUM: return 9;
+			case QRMode.MODE_8BIT_BYTE: return 8;
+			case QRMode.MODE_KANJI: return 8;
+			default: throw "mode:" + mode;
+		}
+		else if (type < 27) switch (mode) {
+			case QRMode.MODE_NUMBER: return 12;
+			case QRMode.MODE_ALPHA_NUM: return 11;
+			case QRMode.MODE_8BIT_BYTE: return 16;
+			case QRMode.MODE_KANJI: return 10;
+			default: throw "mode:" + mode;
+		}
+		else if (type < 41) switch (mode) {
+			case QRMode.MODE_NUMBER: return 14;
+			case QRMode.MODE_ALPHA_NUM: return 13;
+			case QRMode.MODE_8BIT_BYTE: return 16;
+			case QRMode.MODE_KANJI: return 12;
+			default: throw "mode:" + mode;
+		}
+		else throw "type:" + type;
+	};
+	_this.getLostPoint = function(qrcode) {
+		const moduleCount = qrcode.getModuleCount();
+		let lostPoint = 0;
+		for (let row = 0; row < moduleCount; row += 1) for (let col = 0; col < moduleCount; col += 1) {
+			let sameCount = 0;
+			const dark = qrcode.isDark(row, col);
+			for (let r = -1; r <= 1; r += 1) {
+				if (row + r < 0 || moduleCount <= row + r) continue;
+				for (let c = -1; c <= 1; c += 1) {
+					if (col + c < 0 || moduleCount <= col + c) continue;
+					if (r == 0 && c == 0) continue;
+					if (dark == qrcode.isDark(row + r, col + c)) sameCount += 1;
+				}
+			}
+			if (sameCount > 5) lostPoint += 3 + sameCount - 5;
+		}
+		for (let row = 0; row < moduleCount - 1; row += 1) for (let col = 0; col < moduleCount - 1; col += 1) {
+			let count = 0;
+			if (qrcode.isDark(row, col)) count += 1;
+			if (qrcode.isDark(row + 1, col)) count += 1;
+			if (qrcode.isDark(row, col + 1)) count += 1;
+			if (qrcode.isDark(row + 1, col + 1)) count += 1;
+			if (count == 0 || count == 4) lostPoint += 3;
+		}
+		for (let row = 0; row < moduleCount; row += 1) for (let col = 0; col < moduleCount - 6; col += 1) if (qrcode.isDark(row, col) && !qrcode.isDark(row, col + 1) && qrcode.isDark(row, col + 2) && qrcode.isDark(row, col + 3) && qrcode.isDark(row, col + 4) && !qrcode.isDark(row, col + 5) && qrcode.isDark(row, col + 6)) lostPoint += 40;
+		for (let col = 0; col < moduleCount; col += 1) for (let row = 0; row < moduleCount - 6; row += 1) if (qrcode.isDark(row, col) && !qrcode.isDark(row + 1, col) && qrcode.isDark(row + 2, col) && qrcode.isDark(row + 3, col) && qrcode.isDark(row + 4, col) && !qrcode.isDark(row + 5, col) && qrcode.isDark(row + 6, col)) lostPoint += 40;
+		let darkCount = 0;
+		for (let col = 0; col < moduleCount; col += 1) for (let row = 0; row < moduleCount; row += 1) if (qrcode.isDark(row, col)) darkCount += 1;
+		const ratio = Math.abs(100 * darkCount / moduleCount / moduleCount - 50) / 5;
+		lostPoint += ratio * 10;
+		return lostPoint;
+	};
+	return _this;
+}();
+const QRMath = function() {
+	const EXP_TABLE = new Array(256);
+	const LOG_TABLE = new Array(256);
+	for (let i = 0; i < 8; i += 1) EXP_TABLE[i] = 1 << i;
+	for (let i = 8; i < 256; i += 1) EXP_TABLE[i] = EXP_TABLE[i - 4] ^ EXP_TABLE[i - 5] ^ EXP_TABLE[i - 6] ^ EXP_TABLE[i - 8];
+	for (let i = 0; i < 255; i += 1) LOG_TABLE[EXP_TABLE[i]] = i;
+	const _this = {};
+	_this.glog = function(n) {
+		if (n < 1) throw "glog(" + n + ")";
+		return LOG_TABLE[n];
+	};
+	_this.gexp = function(n) {
+		while (n < 0) n += 255;
+		while (n >= 256) n -= 255;
+		return EXP_TABLE[n];
+	};
+	return _this;
+}();
+const qrPolynomial = function(num, shift) {
+	if (typeof num.length == "undefined") throw num.length + "/" + shift;
+	const _num = function() {
+		let offset = 0;
+		while (offset < num.length && num[offset] == 0) offset += 1;
+		const _num = new Array(num.length - offset + shift);
+		for (let i = 0; i < num.length - offset; i += 1) _num[i] = num[i + offset];
+		return _num;
+	}();
+	const _this = {};
+	_this.getAt = function(index) {
+		return _num[index];
+	};
+	_this.getLength = function() {
+		return _num.length;
+	};
+	_this.multiply = function(e) {
+		const num = new Array(_this.getLength() + e.getLength() - 1);
+		for (let i = 0; i < _this.getLength(); i += 1) for (let j = 0; j < e.getLength(); j += 1) num[i + j] ^= QRMath.gexp(QRMath.glog(_this.getAt(i)) + QRMath.glog(e.getAt(j)));
+		return qrPolynomial(num, 0);
+	};
+	_this.mod = function(e) {
+		if (_this.getLength() - e.getLength() < 0) return _this;
+		const ratio = QRMath.glog(_this.getAt(0)) - QRMath.glog(e.getAt(0));
+		const num = new Array(_this.getLength());
+		for (let i = 0; i < _this.getLength(); i += 1) num[i] = _this.getAt(i);
+		for (let i = 0; i < e.getLength(); i += 1) num[i] ^= QRMath.gexp(QRMath.glog(e.getAt(i)) + ratio);
+		return qrPolynomial(num, 0).mod(e);
+	};
+	return _this;
+};
+const QRRSBlock = function() {
+	const RS_BLOCK_TABLE = [
+		[
+			1,
+			26,
+			19
+		],
+		[
+			1,
+			26,
+			16
+		],
+		[
+			1,
+			26,
+			13
+		],
+		[
+			1,
+			26,
+			9
+		],
+		[
+			1,
+			44,
+			34
+		],
+		[
+			1,
+			44,
+			28
+		],
+		[
+			1,
+			44,
+			22
+		],
+		[
+			1,
+			44,
+			16
+		],
+		[
+			1,
+			70,
+			55
+		],
+		[
+			1,
+			70,
+			44
+		],
+		[
+			2,
+			35,
+			17
+		],
+		[
+			2,
+			35,
+			13
+		],
+		[
+			1,
+			100,
+			80
+		],
+		[
+			2,
+			50,
+			32
+		],
+		[
+			2,
+			50,
+			24
+		],
+		[
+			4,
+			25,
+			9
+		],
+		[
+			1,
+			134,
+			108
+		],
+		[
+			2,
+			67,
+			43
+		],
+		[
+			2,
+			33,
+			15,
+			2,
+			34,
+			16
+		],
+		[
+			2,
+			33,
+			11,
+			2,
+			34,
+			12
+		],
+		[
+			2,
+			86,
+			68
+		],
+		[
+			4,
+			43,
+			27
+		],
+		[
+			4,
+			43,
+			19
+		],
+		[
+			4,
+			43,
+			15
+		],
+		[
+			2,
+			98,
+			78
+		],
+		[
+			4,
+			49,
+			31
+		],
+		[
+			2,
+			32,
+			14,
+			4,
+			33,
+			15
+		],
+		[
+			4,
+			39,
+			13,
+			1,
+			40,
+			14
+		],
+		[
+			2,
+			121,
+			97
+		],
+		[
+			2,
+			60,
+			38,
+			2,
+			61,
+			39
+		],
+		[
+			4,
+			40,
+			18,
+			2,
+			41,
+			19
+		],
+		[
+			4,
+			40,
+			14,
+			2,
+			41,
+			15
+		],
+		[
+			2,
+			146,
+			116
+		],
+		[
+			3,
+			58,
+			36,
+			2,
+			59,
+			37
+		],
+		[
+			4,
+			36,
+			16,
+			4,
+			37,
+			17
+		],
+		[
+			4,
+			36,
+			12,
+			4,
+			37,
+			13
+		],
+		[
+			2,
+			86,
+			68,
+			2,
+			87,
+			69
+		],
+		[
+			4,
+			69,
+			43,
+			1,
+			70,
+			44
+		],
+		[
+			6,
+			43,
+			19,
+			2,
+			44,
+			20
+		],
+		[
+			6,
+			43,
+			15,
+			2,
+			44,
+			16
+		],
+		[
+			4,
+			101,
+			81
+		],
+		[
+			1,
+			80,
+			50,
+			4,
+			81,
+			51
+		],
+		[
+			4,
+			50,
+			22,
+			4,
+			51,
+			23
+		],
+		[
+			3,
+			36,
+			12,
+			8,
+			37,
+			13
+		],
+		[
+			2,
+			116,
+			92,
+			2,
+			117,
+			93
+		],
+		[
+			6,
+			58,
+			36,
+			2,
+			59,
+			37
+		],
+		[
+			4,
+			46,
+			20,
+			6,
+			47,
+			21
+		],
+		[
+			7,
+			42,
+			14,
+			4,
+			43,
+			15
+		],
+		[
+			4,
+			133,
+			107
+		],
+		[
+			8,
+			59,
+			37,
+			1,
+			60,
+			38
+		],
+		[
+			8,
+			44,
+			20,
+			4,
+			45,
+			21
+		],
+		[
+			12,
+			33,
+			11,
+			4,
+			34,
+			12
+		],
+		[
+			3,
+			145,
+			115,
+			1,
+			146,
+			116
+		],
+		[
+			4,
+			64,
+			40,
+			5,
+			65,
+			41
+		],
+		[
+			11,
+			36,
+			16,
+			5,
+			37,
+			17
+		],
+		[
+			11,
+			36,
+			12,
+			5,
+			37,
+			13
+		],
+		[
+			5,
+			109,
+			87,
+			1,
+			110,
+			88
+		],
+		[
+			5,
+			65,
+			41,
+			5,
+			66,
+			42
+		],
+		[
+			5,
+			54,
+			24,
+			7,
+			55,
+			25
+		],
+		[
+			11,
+			36,
+			12,
+			7,
+			37,
+			13
+		],
+		[
+			5,
+			122,
+			98,
+			1,
+			123,
+			99
+		],
+		[
+			7,
+			73,
+			45,
+			3,
+			74,
+			46
+		],
+		[
+			15,
+			43,
+			19,
+			2,
+			44,
+			20
+		],
+		[
+			3,
+			45,
+			15,
+			13,
+			46,
+			16
+		],
+		[
+			1,
+			135,
+			107,
+			5,
+			136,
+			108
+		],
+		[
+			10,
+			74,
+			46,
+			1,
+			75,
+			47
+		],
+		[
+			1,
+			50,
+			22,
+			15,
+			51,
+			23
+		],
+		[
+			2,
+			42,
+			14,
+			17,
+			43,
+			15
+		],
+		[
+			5,
+			150,
+			120,
+			1,
+			151,
+			121
+		],
+		[
+			9,
+			69,
+			43,
+			4,
+			70,
+			44
+		],
+		[
+			17,
+			50,
+			22,
+			1,
+			51,
+			23
+		],
+		[
+			2,
+			42,
+			14,
+			19,
+			43,
+			15
+		],
+		[
+			3,
+			141,
+			113,
+			4,
+			142,
+			114
+		],
+		[
+			3,
+			70,
+			44,
+			11,
+			71,
+			45
+		],
+		[
+			17,
+			47,
+			21,
+			4,
+			48,
+			22
+		],
+		[
+			9,
+			39,
+			13,
+			16,
+			40,
+			14
+		],
+		[
+			3,
+			135,
+			107,
+			5,
+			136,
+			108
+		],
+		[
+			3,
+			67,
+			41,
+			13,
+			68,
+			42
+		],
+		[
+			15,
+			54,
+			24,
+			5,
+			55,
+			25
+		],
+		[
+			15,
+			43,
+			15,
+			10,
+			44,
+			16
+		],
+		[
+			4,
+			144,
+			116,
+			4,
+			145,
+			117
+		],
+		[
+			17,
+			68,
+			42
+		],
+		[
+			17,
+			50,
+			22,
+			6,
+			51,
+			23
+		],
+		[
+			19,
+			46,
+			16,
+			6,
+			47,
+			17
+		],
+		[
+			2,
+			139,
+			111,
+			7,
+			140,
+			112
+		],
+		[
+			17,
+			74,
+			46
+		],
+		[
+			7,
+			54,
+			24,
+			16,
+			55,
+			25
+		],
+		[
+			34,
+			37,
+			13
+		],
+		[
+			4,
+			151,
+			121,
+			5,
+			152,
+			122
+		],
+		[
+			4,
+			75,
+			47,
+			14,
+			76,
+			48
+		],
+		[
+			11,
+			54,
+			24,
+			14,
+			55,
+			25
+		],
+		[
+			16,
+			45,
+			15,
+			14,
+			46,
+			16
+		],
+		[
+			6,
+			147,
+			117,
+			4,
+			148,
+			118
+		],
+		[
+			6,
+			73,
+			45,
+			14,
+			74,
+			46
+		],
+		[
+			11,
+			54,
+			24,
+			16,
+			55,
+			25
+		],
+		[
+			30,
+			46,
+			16,
+			2,
+			47,
+			17
+		],
+		[
+			8,
+			132,
+			106,
+			4,
+			133,
+			107
+		],
+		[
+			8,
+			75,
+			47,
+			13,
+			76,
+			48
+		],
+		[
+			7,
+			54,
+			24,
+			22,
+			55,
+			25
+		],
+		[
+			22,
+			45,
+			15,
+			13,
+			46,
+			16
+		],
+		[
+			10,
+			142,
+			114,
+			2,
+			143,
+			115
+		],
+		[
+			19,
+			74,
+			46,
+			4,
+			75,
+			47
+		],
+		[
+			28,
+			50,
+			22,
+			6,
+			51,
+			23
+		],
+		[
+			33,
+			46,
+			16,
+			4,
+			47,
+			17
+		],
+		[
+			8,
+			152,
+			122,
+			4,
+			153,
+			123
+		],
+		[
+			22,
+			73,
+			45,
+			3,
+			74,
+			46
+		],
+		[
+			8,
+			53,
+			23,
+			26,
+			54,
+			24
+		],
+		[
+			12,
+			45,
+			15,
+			28,
+			46,
+			16
+		],
+		[
+			3,
+			147,
+			117,
+			10,
+			148,
+			118
+		],
+		[
+			3,
+			73,
+			45,
+			23,
+			74,
+			46
+		],
+		[
+			4,
+			54,
+			24,
+			31,
+			55,
+			25
+		],
+		[
+			11,
+			45,
+			15,
+			31,
+			46,
+			16
+		],
+		[
+			7,
+			146,
+			116,
+			7,
+			147,
+			117
+		],
+		[
+			21,
+			73,
+			45,
+			7,
+			74,
+			46
+		],
+		[
+			1,
+			53,
+			23,
+			37,
+			54,
+			24
+		],
+		[
+			19,
+			45,
+			15,
+			26,
+			46,
+			16
+		],
+		[
+			5,
+			145,
+			115,
+			10,
+			146,
+			116
+		],
+		[
+			19,
+			75,
+			47,
+			10,
+			76,
+			48
+		],
+		[
+			15,
+			54,
+			24,
+			25,
+			55,
+			25
+		],
+		[
+			23,
+			45,
+			15,
+			25,
+			46,
+			16
+		],
+		[
+			13,
+			145,
+			115,
+			3,
+			146,
+			116
+		],
+		[
+			2,
+			74,
+			46,
+			29,
+			75,
+			47
+		],
+		[
+			42,
+			54,
+			24,
+			1,
+			55,
+			25
+		],
+		[
+			23,
+			45,
+			15,
+			28,
+			46,
+			16
+		],
+		[
+			17,
+			145,
+			115
+		],
+		[
+			10,
+			74,
+			46,
+			23,
+			75,
+			47
+		],
+		[
+			10,
+			54,
+			24,
+			35,
+			55,
+			25
+		],
+		[
+			19,
+			45,
+			15,
+			35,
+			46,
+			16
+		],
+		[
+			17,
+			145,
+			115,
+			1,
+			146,
+			116
+		],
+		[
+			14,
+			74,
+			46,
+			21,
+			75,
+			47
+		],
+		[
+			29,
+			54,
+			24,
+			19,
+			55,
+			25
+		],
+		[
+			11,
+			45,
+			15,
+			46,
+			46,
+			16
+		],
+		[
+			13,
+			145,
+			115,
+			6,
+			146,
+			116
+		],
+		[
+			14,
+			74,
+			46,
+			23,
+			75,
+			47
+		],
+		[
+			44,
+			54,
+			24,
+			7,
+			55,
+			25
+		],
+		[
+			59,
+			46,
+			16,
+			1,
+			47,
+			17
+		],
+		[
+			12,
+			151,
+			121,
+			7,
+			152,
+			122
+		],
+		[
+			12,
+			75,
+			47,
+			26,
+			76,
+			48
+		],
+		[
+			39,
+			54,
+			24,
+			14,
+			55,
+			25
+		],
+		[
+			22,
+			45,
+			15,
+			41,
+			46,
+			16
+		],
+		[
+			6,
+			151,
+			121,
+			14,
+			152,
+			122
+		],
+		[
+			6,
+			75,
+			47,
+			34,
+			76,
+			48
+		],
+		[
+			46,
+			54,
+			24,
+			10,
+			55,
+			25
+		],
+		[
+			2,
+			45,
+			15,
+			64,
+			46,
+			16
+		],
+		[
+			17,
+			152,
+			122,
+			4,
+			153,
+			123
+		],
+		[
+			29,
+			74,
+			46,
+			14,
+			75,
+			47
+		],
+		[
+			49,
+			54,
+			24,
+			10,
+			55,
+			25
+		],
+		[
+			24,
+			45,
+			15,
+			46,
+			46,
+			16
+		],
+		[
+			4,
+			152,
+			122,
+			18,
+			153,
+			123
+		],
+		[
+			13,
+			74,
+			46,
+			32,
+			75,
+			47
+		],
+		[
+			48,
+			54,
+			24,
+			14,
+			55,
+			25
+		],
+		[
+			42,
+			45,
+			15,
+			32,
+			46,
+			16
+		],
+		[
+			20,
+			147,
+			117,
+			4,
+			148,
+			118
+		],
+		[
+			40,
+			75,
+			47,
+			7,
+			76,
+			48
+		],
+		[
+			43,
+			54,
+			24,
+			22,
+			55,
+			25
+		],
+		[
+			10,
+			45,
+			15,
+			67,
+			46,
+			16
+		],
+		[
+			19,
+			148,
+			118,
+			6,
+			149,
+			119
+		],
+		[
+			18,
+			75,
+			47,
+			31,
+			76,
+			48
+		],
+		[
+			34,
+			54,
+			24,
+			34,
+			55,
+			25
+		],
+		[
+			20,
+			45,
+			15,
+			61,
+			46,
+			16
+		]
+	];
+	const qrRSBlock = function(totalCount, dataCount) {
+		const _this = {};
+		_this.totalCount = totalCount;
+		_this.dataCount = dataCount;
+		return _this;
+	};
+	const _this = {};
+	const getRsBlockTable = function(typeNumber, errorCorrectionLevel) {
+		switch (errorCorrectionLevel) {
+			case QRErrorCorrectionLevel.L: return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+			case QRErrorCorrectionLevel.M: return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+			case QRErrorCorrectionLevel.Q: return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+			case QRErrorCorrectionLevel.H: return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+			default: return;
+		}
+	};
+	_this.getRSBlocks = function(typeNumber, errorCorrectionLevel) {
+		const rsBlock = getRsBlockTable(typeNumber, errorCorrectionLevel);
+		if (typeof rsBlock == "undefined") throw "bad rs block @ typeNumber:" + typeNumber + "/errorCorrectionLevel:" + errorCorrectionLevel;
+		const length = rsBlock.length / 3;
+		const list = [];
+		for (let i = 0; i < length; i += 1) {
+			const count = rsBlock[i * 3 + 0];
+			const totalCount = rsBlock[i * 3 + 1];
+			const dataCount = rsBlock[i * 3 + 2];
+			for (let j = 0; j < count; j += 1) list.push(qrRSBlock(totalCount, dataCount));
+		}
+		return list;
+	};
+	return _this;
+}();
+const qrBitBuffer = function() {
+	const _buffer = [];
+	let _length = 0;
+	const _this = {};
+	_this.getBuffer = function() {
+		return _buffer;
+	};
+	_this.getAt = function(index) {
+		return (_buffer[Math.floor(index / 8)] >>> 7 - index % 8 & 1) == 1;
+	};
+	_this.put = function(num, length) {
+		for (let i = 0; i < length; i += 1) _this.putBit((num >>> length - i - 1 & 1) == 1);
+	};
+	_this.getLengthInBits = function() {
+		return _length;
+	};
+	_this.putBit = function(bit) {
+		const bufIndex = Math.floor(_length / 8);
+		if (_buffer.length <= bufIndex) _buffer.push(0);
+		if (bit) _buffer[bufIndex] |= 128 >>> _length % 8;
+		_length += 1;
+	};
+	return _this;
+};
+const qrNumber = function(data) {
+	const _mode = QRMode.MODE_NUMBER;
+	const _data = data;
+	const _this = {};
+	_this.getMode = function() {
+		return _mode;
+	};
+	_this.getLength = function(buffer) {
+		return _data.length;
+	};
+	_this.write = function(buffer) {
+		const data = _data;
+		let i = 0;
+		while (i + 2 < data.length) {
+			buffer.put(strToNum(data.substring(i, i + 3)), 10);
+			i += 3;
+		}
+		if (i < data.length) {
+			if (data.length - i == 1) buffer.put(strToNum(data.substring(i, i + 1)), 4);
+			else if (data.length - i == 2) buffer.put(strToNum(data.substring(i, i + 2)), 7);
+		}
+	};
+	const strToNum = function(s) {
+		let num = 0;
+		for (let i = 0; i < s.length; i += 1) num = num * 10 + chatToNum(s.charAt(i));
+		return num;
+	};
+	const chatToNum = function(c) {
+		if ("0" <= c && c <= "9") return c.charCodeAt(0) - "0".charCodeAt(0);
+		throw "illegal char :" + c;
+	};
+	return _this;
+};
+const qrAlphaNum = function(data) {
+	const _mode = QRMode.MODE_ALPHA_NUM;
+	const _data = data;
+	const _this = {};
+	_this.getMode = function() {
+		return _mode;
+	};
+	_this.getLength = function(buffer) {
+		return _data.length;
+	};
+	_this.write = function(buffer) {
+		const s = _data;
+		let i = 0;
+		while (i + 1 < s.length) {
+			buffer.put(getCode(s.charAt(i)) * 45 + getCode(s.charAt(i + 1)), 11);
+			i += 2;
+		}
+		if (i < s.length) buffer.put(getCode(s.charAt(i)), 6);
+	};
+	const getCode = function(c) {
+		if ("0" <= c && c <= "9") return c.charCodeAt(0) - "0".charCodeAt(0);
+		else if ("A" <= c && c <= "Z") return c.charCodeAt(0) - "A".charCodeAt(0) + 10;
+		else switch (c) {
+			case " ": return 36;
+			case "$": return 37;
+			case "%": return 38;
+			case "*": return 39;
+			case "+": return 40;
+			case "-": return 41;
+			case ".": return 42;
+			case "/": return 43;
+			case ":": return 44;
+			default: throw "illegal char :" + c;
+		}
+	};
+	return _this;
+};
+const qr8BitByte = function(data) {
+	const _mode = QRMode.MODE_8BIT_BYTE;
+	const _bytes = qrcode.stringToBytes(data);
+	const _this = {};
+	_this.getMode = function() {
+		return _mode;
+	};
+	_this.getLength = function(buffer) {
+		return _bytes.length;
+	};
+	_this.write = function(buffer) {
+		for (let i = 0; i < _bytes.length; i += 1) buffer.put(_bytes[i], 8);
+	};
+	return _this;
+};
+const qrKanji = function(data) {
+	const _mode = QRMode.MODE_KANJI;
+	const stringToBytes = qrcode.stringToBytes;
+	(function(c, code) {
+		const test = stringToBytes(c);
+		if (test.length != 2 || (test[0] << 8 | test[1]) != code) throw "sjis not supported.";
+	})("友", 38726);
+	const _bytes = stringToBytes(data);
+	const _this = {};
+	_this.getMode = function() {
+		return _mode;
+	};
+	_this.getLength = function(buffer) {
+		return ~~(_bytes.length / 2);
+	};
+	_this.write = function(buffer) {
+		const data = _bytes;
+		let i = 0;
+		while (i + 1 < data.length) {
+			let c = (255 & data[i]) << 8 | 255 & data[i + 1];
+			if (33088 <= c && c <= 40956) c -= 33088;
+			else if (57408 <= c && c <= 60351) c -= 49472;
+			else throw "illegal char at " + (i + 1) + "/" + c;
+			c = (c >>> 8 & 255) * 192 + (c & 255);
+			buffer.put(c, 13);
+			i += 2;
+		}
+		if (i < data.length) throw "illegal char at " + (i + 1);
+	};
+	return _this;
+};
+const byteArrayOutputStream = function() {
+	const _bytes = [];
+	const _this = {};
+	_this.writeByte = function(b) {
+		_bytes.push(b & 255);
+	};
+	_this.writeShort = function(i) {
+		_this.writeByte(i);
+		_this.writeByte(i >>> 8);
+	};
+	_this.writeBytes = function(b, off, len) {
+		off = off || 0;
+		len = len || b.length;
+		for (let i = 0; i < len; i += 1) _this.writeByte(b[i + off]);
+	};
+	_this.writeString = function(s) {
+		for (let i = 0; i < s.length; i += 1) _this.writeByte(s.charCodeAt(i));
+	};
+	_this.toByteArray = function() {
+		return _bytes;
+	};
+	_this.toString = function() {
+		let s = "";
+		s += "[";
+		for (let i = 0; i < _bytes.length; i += 1) {
+			if (i > 0) s += ",";
+			s += _bytes[i];
+		}
+		s += "]";
+		return s;
+	};
+	return _this;
+};
+const base64EncodeOutputStream = function() {
+	let _buffer = 0;
+	let _buflen = 0;
+	let _length = 0;
+	let _base64 = "";
+	const _this = {};
+	const writeEncoded = function(b) {
+		_base64 += String.fromCharCode(encode(b & 63));
+	};
+	const encode = function(n) {
+		if (n < 0) throw "n:" + n;
+		else if (n < 26) return 65 + n;
+		else if (n < 52) return 97 + (n - 26);
+		else if (n < 62) return 48 + (n - 52);
+		else if (n == 62) return 43;
+		else if (n == 63) return 47;
+		else throw "n:" + n;
+	};
+	_this.writeByte = function(n) {
+		_buffer = _buffer << 8 | n & 255;
+		_buflen += 8;
+		_length += 1;
+		while (_buflen >= 6) {
+			writeEncoded(_buffer >>> _buflen - 6);
+			_buflen -= 6;
+		}
+	};
+	_this.flush = function() {
+		if (_buflen > 0) {
+			writeEncoded(_buffer << 6 - _buflen);
+			_buffer = 0;
+			_buflen = 0;
+		}
+		if (_length % 3 != 0) {
+			const padlen = 3 - _length % 3;
+			for (let i = 0; i < padlen; i += 1) _base64 += "=";
+		}
+	};
+	_this.toString = function() {
+		return _base64;
+	};
+	return _this;
+};
+const base64DecodeInputStream = function(str) {
+	const _str = str;
+	let _pos = 0;
+	let _buffer = 0;
+	let _buflen = 0;
+	const _this = {};
+	_this.read = function() {
+		while (_buflen < 8) {
+			if (_pos >= _str.length) {
+				if (_buflen == 0) return -1;
+				throw "unexpected end of file./" + _buflen;
+			}
+			const c = _str.charAt(_pos);
+			_pos += 1;
+			if (c == "=") {
+				_buflen = 0;
+				return -1;
+			} else if (c.match(/^\s$/)) continue;
+			_buffer = _buffer << 6 | decode(c.charCodeAt(0));
+			_buflen += 6;
+		}
+		const n = _buffer >>> _buflen - 8 & 255;
+		_buflen -= 8;
+		return n;
+	};
+	const decode = function(c) {
+		if (65 <= c && c <= 90) return c - 65;
+		else if (97 <= c && c <= 122) return c - 97 + 26;
+		else if (48 <= c && c <= 57) return c - 48 + 52;
+		else if (c == 43) return 62;
+		else if (c == 47) return 63;
+		else throw "c:" + c;
+	};
+	return _this;
+};
+const gifImage = function(width, height) {
+	const _width = width;
+	const _height = height;
+	const _data = new Array(width * height);
+	const _this = {};
+	_this.setPixel = function(x, y, pixel) {
+		_data[y * _width + x] = pixel;
+	};
+	_this.write = function(out) {
+		out.writeString("GIF87a");
+		out.writeShort(_width);
+		out.writeShort(_height);
+		out.writeByte(128);
+		out.writeByte(0);
+		out.writeByte(0);
+		out.writeByte(0);
+		out.writeByte(0);
+		out.writeByte(0);
+		out.writeByte(255);
+		out.writeByte(255);
+		out.writeByte(255);
+		out.writeString(",");
+		out.writeShort(0);
+		out.writeShort(0);
+		out.writeShort(_width);
+		out.writeShort(_height);
+		out.writeByte(0);
+		const lzwMinCodeSize = 2;
+		const raster = getLZWRaster(lzwMinCodeSize);
+		out.writeByte(lzwMinCodeSize);
+		let offset = 0;
+		while (raster.length - offset > 255) {
+			out.writeByte(255);
+			out.writeBytes(raster, offset, 255);
+			offset += 255;
+		}
+		out.writeByte(raster.length - offset);
+		out.writeBytes(raster, offset, raster.length - offset);
+		out.writeByte(0);
+		out.writeString(";");
+	};
+	const bitOutputStream = function(out) {
+		const _out = out;
+		let _bitLength = 0;
+		let _bitBuffer = 0;
+		const _this = {};
+		_this.write = function(data, length) {
+			if (data >>> length != 0) throw "length over";
+			while (_bitLength + length >= 8) {
+				_out.writeByte(255 & (data << _bitLength | _bitBuffer));
+				length -= 8 - _bitLength;
+				data >>>= 8 - _bitLength;
+				_bitBuffer = 0;
+				_bitLength = 0;
+			}
+			_bitBuffer = data << _bitLength | _bitBuffer;
+			_bitLength = _bitLength + length;
+		};
+		_this.flush = function() {
+			if (_bitLength > 0) _out.writeByte(_bitBuffer);
+		};
+		return _this;
+	};
+	const getLZWRaster = function(lzwMinCodeSize) {
+		const clearCode = 1 << lzwMinCodeSize;
+		const endCode = (1 << lzwMinCodeSize) + 1;
+		let bitLength = lzwMinCodeSize + 1;
+		const table = lzwTable();
+		for (let i = 0; i < clearCode; i += 1) table.add(String.fromCharCode(i));
+		table.add(String.fromCharCode(clearCode));
+		table.add(String.fromCharCode(endCode));
+		const byteOut = byteArrayOutputStream();
+		const bitOut = bitOutputStream(byteOut);
+		bitOut.write(clearCode, bitLength);
+		let dataIndex = 0;
+		let s = String.fromCharCode(_data[dataIndex]);
+		dataIndex += 1;
+		while (dataIndex < _data.length) {
+			const c = String.fromCharCode(_data[dataIndex]);
+			dataIndex += 1;
+			if (table.contains(s + c)) s = s + c;
+			else {
+				bitOut.write(table.indexOf(s), bitLength);
+				if (table.size() < 4095) {
+					if (table.size() == 1 << bitLength) bitLength += 1;
+					table.add(s + c);
+				}
+				s = c;
+			}
+		}
+		bitOut.write(table.indexOf(s), bitLength);
+		bitOut.write(endCode, bitLength);
+		bitOut.flush();
+		return byteOut.toByteArray();
+	};
+	const lzwTable = function() {
+		const _map = {};
+		let _size = 0;
+		const _this = {};
+		_this.add = function(key) {
+			if (_this.contains(key)) throw "dup key:" + key;
+			_map[key] = _size;
+			_size += 1;
+		};
+		_this.size = function() {
+			return _size;
+		};
+		_this.indexOf = function(key) {
+			return _map[key];
+		};
+		_this.contains = function(key) {
+			return typeof _map[key] != "undefined";
+		};
+		return _this;
+	};
+	return _this;
+};
+const createDataURL = function(width, height, getPixel) {
+	const gif = gifImage(width, height);
+	for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) gif.setPixel(x, y, getPixel(x, y));
+	const b = byteArrayOutputStream();
+	gif.write(b);
+	const base64 = base64EncodeOutputStream();
+	const bytes = b.toByteArray();
+	for (let i = 0; i < bytes.length; i += 1) base64.writeByte(bytes[i]);
+	base64.flush();
+	return "data:image/gif;base64," + base64;
+};
+const stringToBytes = qrcode.stringToBytes;
+
+//#endregion
+//#region src/lib/security/totpSecurity.ts
+const TABLE = "ph_two_factor";
+const fields = () => [
+	{
+		name: "authCollection",
+		type: "text",
+		required: true,
+		max: 100
+	},
+	{
+		name: "authRecord",
+		type: "text",
+		required: true,
+		max: 100
+	},
+	{
+		name: "enabled",
+		type: "bool"
+	},
+	{
+		name: "secret",
+		type: "text",
+		hidden: true,
+		max: 1e3
+	},
+	{
+		name: "pendingSecret",
+		type: "text",
+		hidden: true,
+		max: 1e3
+	},
+	{
+		name: "nonce",
+		type: "text",
+		hidden: true,
+		max: 100
+	},
+	{
+		name: "recoveryHashes",
+		type: "json",
+		hidden: true,
+		maxSize: 1e4
+	},
+	{
+		name: "lastCounter",
+		type: "number",
+		onlyInt: true
+	},
+	{
+		name: "failures",
+		type: "number",
+		onlyInt: true
+	},
+	{
+		name: "lockedUntil",
+		type: "date"
+	},
+	{
+		name: "pendingUntil",
+		type: "date"
+	}
+];
+const createTotpSecurity = (config) => {
+	const keyPath = () => `${$app.dataDir()}/.pockethost-totp.key`;
+	const readKey = () => toString($os.readFile(keyPath())).trim();
+	const decrypt = (value) => toString($security.decrypt(value, readKey()));
+	const data = (e) => JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	const json = (e, value) => {
+		e.response.header().set("Cache-Control", "no-store");
+		return e.json(200, value);
+	};
+	const findState = (record, app = $app) => {
+		return app.findRecordsByFilter(TABLE, "authCollection = {:collection} && authRecord = {:id}", "", 1, 0, {
+			collection: record.collection().id,
+			id: record.id
+		})[0] || null;
+	};
+	const requireAuth = (e) => {
+		if (!e.auth || e.auth.collection().name !== config.authCollection) throw new UnauthorizedError("Connexion requise.");
+		return e.auth;
+	};
+	const recoveryHashes = (state) => JSON.parse(state.getString("recoveryHashes") || "[]");
+	const failure = (state, app) => {
+		const attempts = state.getInt("failures") + 1;
+		state.set("failures", attempts);
+		if (attempts >= 5) state.set("lockedUntil", new Date(Date.now() + 5 * 6e4).toISOString());
+		app.save(state);
+	};
+	const assertUnlocked = (state) => {
+		if (Date.parse(state.getString("lockedUntil")) > Date.now()) throw new TooManyRequestsError("Trop de tentatives. Réessayez dans cinq minutes.");
+	};
+	const ensureState = (record) => {
+		let state = findState(record);
+		if (state) return state;
+		$app.runInTransaction((app) => {
+			state = findState(record, app);
+			if (state) return;
+			state = new Record(app.findCollectionByNameOrId(TABLE));
+			state.set("authCollection", record.collection().id);
+			state.set("authRecord", record.id);
+			state.set("lastCounter", -1);
+			state.set("recoveryHashes", []);
+			app.save(state);
+		});
+		return state;
+	};
+	const assertPassword = (e, record) => {
+		assertUnlocked(ensureState(record));
+		if (record.validatePassword(`${data(e).password || ""}`)) return;
+		$app.runInTransaction((app) => failure(findState(record, app), app));
+		throw new UnauthorizedError("Mot de passe incorrect.");
+	};
+	const generateRecovery = () => Array.from({ length: 10 }, () => {
+		return $security.randomStringWithAlphabet(20, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789").match(/.{1,5}/g).join("-");
+	});
+	const hashRecovery = (code) => $security.sha256(code.replace(/[\s-]/g, "").toUpperCase());
+	const codeError = (message) => new ApiError(401, message, { totpRequired: new ValidationError("totp_required", message) });
+	const verify = (record, raw, pending = false, onSuccess) => {
+		const code = raw.trim().replace(/\s/g, "");
+		if (!code) throw codeError("Saisissez le code de votre application d’authentification ou un code de secours.");
+		let success = false;
+		let result = null;
+		$app.runInTransaction((app) => {
+			const state = findState(record, app);
+			if (!state) throw codeError("Authentification à deux facteurs non configurée.");
+			assertUnlocked(state);
+			if (pending && Date.parse(state.getString("pendingUntil")) <= Date.now()) throw new BadRequestError("Configuration expirée. Recommencez.");
+			const encrypted = state.getString(pending ? "pendingSecret" : "secret");
+			if (!encrypted || !pending && !state.getBool("enabled")) throw new BadRequestError("Authentification à deux facteurs non configurée.");
+			const counter = /^\d{6}$/.test(code) ? verifyTotp(decrypt(encrypted), code, pending ? -1 : state.getInt("lastCounter")) : null;
+			let hashes = recoveryHashes(state);
+			let usedRecovery = -1;
+			if (counter === null && !pending && code.length <= 80) {
+				const digest = hashRecovery(code);
+				usedRecovery = hashes.findIndex((hash) => $security.equal(hash, digest));
+			}
+			if (counter === null && usedRecovery < 0) {
+				failure(state, app);
+				return;
+			}
+			if (counter !== null) state.set("lastCounter", counter);
+			if (usedRecovery >= 0) {
+				hashes = hashes.filter((_, index) => index !== usedRecovery);
+				state.set("recoveryHashes", hashes);
+			}
+			state.set("failures", 0);
+			state.set("lockedUntil", "");
+			onSuccess?.(state, app);
+			app.save(state);
+			success = true;
+			result = state;
+		});
+		if (!success) throw codeError("Code incorrect, expiré ou déjà utilisé.");
+		return result;
+	};
+	const claims = (token) => JSON.parse(JSON.stringify($security.parseUnverifiedJWT(token)));
+	const markToken = (token, record, state) => {
+		const payload = claims(token);
+		return $security.createJWT({
+			...payload,
+			ph_totp: state.getString("nonce")
+		}, record.getString("tokenKey") + record.collection().authToken.secret, Math.max(1, Number(payload.exp) - Math.floor(Date.now() / 1e3)));
+	};
+	const requestHeaders = (e) => JSON.parse(JSON.stringify(e.requestInfo().headers || {}));
+	const tokenFromRequest = (e) => (requestHeaders(e).authorization || "").replace(/^Bearer\s+/i, "").trim();
+	const hasProof = (token, state) => {
+		try {
+			return $security.equal(`${claims(token).ph_totp || ""}`, state.getString("nonce"));
+		} catch {
+			return false;
+		}
+	};
+	const rotateToken = (record, app, state) => {
+		const current = app.findRecordById(record.collection().id, record.id);
+		current.set("tokenKey", $security.randomString(50));
+		app.save(current);
+		const token = current.newAuthToken();
+		return state ? markToken(token, current, state) : token;
+	};
+	return {
+		trustedToken: (record) => {
+			const state = findState(record);
+			const token = record.newAuthToken();
+			return state?.getBool("enabled") ? markToken(token, record, state) : token;
+		},
+		initialize: () => {
+			try {
+				$app.findCollectionByNameOrId(TABLE);
+			} catch {
+				const collection = new Collection({
+					name: TABLE,
+					type: "base",
+					listRule: null,
+					viewRule: null,
+					createRule: null,
+					updateRule: null,
+					deleteRule: null,
+					fields: fields(),
+					indexes: ["CREATE UNIQUE INDEX idx_ph_two_factor_account ON ph_two_factor (authCollection, authRecord)"]
+				});
+				$app.save(collection);
+			}
+			if (!(() => {
+				try {
+					$os.stat(keyPath());
+					return true;
+				} catch {
+					return false;
+				}
+			})()) {
+				if ($app.findRecordsByFilter(TABLE, "secret != \"\" || pendingSecret != \"\"", "", 1).length) throw new Error("Clé TOTP manquante : restaurez .pockethost-totp.key avec la base de données.");
+				$os.writeFile(keyPath(), $security.randomString(32), 384);
+			}
+			if (readKey().length !== 32) throw new Error("Clé de chiffrement TOTP invalide.");
+			const hostUid = $os.getenv("PH_HOST_UID");
+			const hostGid = $os.getenv("PH_HOST_GID");
+			if (/^\d+$/.test(hostUid) && /^\d+$/.test(hostGid)) $os.cmd("chown", `${hostUid}:${hostGid}`, keyPath()).combinedOutput();
+		},
+		status: (e) => {
+			const state = findState(requireAuth(e));
+			return json(e, {
+				enabled: state?.getBool("enabled") || false,
+				recoveryCodesRemaining: state ? recoveryHashes(state).length : 0
+			});
+		},
+		setup: (e) => {
+			const record = requireAuth(e);
+			assertPassword(e, record);
+			const state = ensureState(record);
+			if (state.getBool("enabled")) throw new BadRequestError("Le TOTP est déjà activé.");
+			const secret = $security.randomStringWithAlphabet(32, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567");
+			state.set("pendingSecret", $security.encrypt(secret, readKey()));
+			state.set("pendingUntil", new Date(Date.now() + 15 * 6e4).toISOString());
+			$app.save(state);
+			const uri = totpUri(secret, config.issuer, record.getString("email"));
+			const qr = qrcode(0, "M");
+			qr.addData(uri);
+			qr.make();
+			return json(e, {
+				secret,
+				uri,
+				qrSvg: qr.createSvgTag({
+					cellSize: 4,
+					margin: 4,
+					scalable: true
+				})
+			});
+		},
+		confirm: (e) => {
+			const record = requireAuth(e);
+			assertPassword(e, record);
+			const codes = generateRecovery();
+			let token = "";
+			verify(record, `${data(e).code || ""}`, true, (state, app) => {
+				if (state.getBool("enabled")) throw new BadRequestError("Le TOTP est déjà activé.");
+				state.set("secret", state.getString("pendingSecret"));
+				state.set("pendingSecret", "");
+				state.set("pendingUntil", "");
+				state.set("enabled", true);
+				state.set("nonce", $security.randomString(48));
+				state.set("recoveryHashes", codes.map(hashRecovery));
+				token = rotateToken(record, app, state);
+			});
+			return json(e, {
+				enabled: true,
+				token,
+				recoveryCodes: codes
+			});
+		},
+		disable: (e) => {
+			const record = requireAuth(e);
+			assertPassword(e, record);
+			let token = "";
+			verify(record, `${data(e).code || ""}`, false, (state, app) => {
+				state.set("enabled", false);
+				state.set("secret", "");
+				state.set("pendingSecret", "");
+				state.set("nonce", "");
+				state.set("recoveryHashes", []);
+				token = rotateToken(record, app);
+			});
+			return json(e, {
+				enabled: false,
+				token
+			});
+		},
+		regenerate: (e) => {
+			const record = requireAuth(e);
+			assertPassword(e, record);
+			const codes = generateRecovery();
+			verify(record, `${data(e).code || ""}`, false, (state) => state.set("recoveryHashes", codes.map(hashRecovery)));
+			return json(e, { recoveryCodes: codes });
+		},
+		authenticate: (e) => {
+			if (!e.record) return e.next();
+			const state = findState(e.record);
+			if (!state?.getBool("enabled")) return e.next();
+			if (!e.authMethod && hasProof(tokenFromRequest(e), state)) {
+				e.token = markToken(e.token, e.record, state);
+				return e.next();
+			}
+			const verified = verify(e.record, `${data(e).totpCode || requestHeaders(e).x_pockethost_totp || ""}`);
+			e.token = markToken(e.token, e.record, verified);
+			return e.next();
+		},
+		guard: (e) => {
+			const path = e.request?.url?.path || "";
+			if (/\/auth-with-(password|oauth2|otp)$/.test(path)) return e.next();
+			const token = tokenFromRequest(e);
+			if (!token) return e.next();
+			let record;
+			try {
+				const payload = claims(token);
+				const collection = $app.findCachedCollectionByNameOrId(config.authCollection);
+				if (payload.collectionId === collection.id && payload.type === "auth") record = $app.findAuthRecordByToken(token, "auth");
+			} catch {}
+			if (!record) return e.next();
+			const state = findState(record);
+			if (state?.getBool("enabled") && !hasProof(token, state)) throw codeError("Une connexion avec le second facteur est requise.");
+			return e.next();
+		}
+	};
+};
+
+//#endregion
+//#region src/lib/handlers/user/api/HandleUserTotp.ts
+const security = createTotpSecurity({
+	authCollection: "users",
+	issuer: `PocketHost ${$os.getenv("APP_URL") || ""}`.trim()
+});
+const InitializeDashboardTotp = security.initialize;
+const HandleDashboardTotpStatus = security.status;
+const HandleDashboardTotpSetup = security.setup;
+const HandleDashboardTotpConfirm = security.confirm;
+const HandleDashboardTotpDisable = security.disable;
+const HandleDashboardTotpRegenerate = security.regenerate;
+const HandleDashboardTotpAuth = security.authenticate;
+const GuardDashboardTotp = security.guard;
 
 //#endregion
 //#region src/lib/handlers/versions/api/HandleVersionsRequest.ts
@@ -8294,10 +22374,3011 @@ const HandleVersionsRequest = (e) => {
 };
 
 //#endregion
+//#region src/lib/handlers/webApps/apply.ts
+const HandleWebApplyRuntime = (e) => {
+	const { user, app: found, role } = requireWebAppPermission(e, "app.deploy"), app = found, blind = !webRoleAllows(role, "variables.reveal");
+	let result;
+	$app.runInTransaction((tx) => {
+		const current = tx.findRecordById("web_apps", app.id);
+		if (tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Attendez la fin du traitement de cette application avant d’appliquer les variables.");
+		if (!environmentDeploymentState(current, tx, blind).canApplyRuntime) throw new BadRequestError("Aucune modification uniquement à l’exécution à appliquer. Les changements de construction nécessitent un déploiement.");
+		const active = tx.findRecordById("web_deployments", current.getString("activeDeployment"));
+		const previous = JSON.parse(active.getString("result") || "{}");
+		if (active.getString("status") !== "ready" || previous.available === false || !(new RegExp(`^ph-web/${app.id}:[a-z0-9]{15}$`).test(previous.image || "") || /^sha256:[a-f0-9]{64}$/.test(previous.image || ""))) throw new BadRequestError("L’image publiée n’est plus disponible. Effectuez un déploiement complet.");
+		assertWebDeploymentInScope(current, active, tx);
+		assertWebQueueCapacity(current, "apply-runtime", tx);
+		const resolved = resolveWebEnvironment(current, tx);
+		const snapshot = {
+			config: webConfig(current),
+			env: resolved.env,
+			projectEnvironment: resolved.context,
+			runtime: runtimeWorkerSnapshot(current, tx),
+			storage: storageWorkerSnapshot(current, tx),
+			domains: [],
+			rollbackResult: previous
+		};
+		try {
+			snapshot.domains = tx.findRecordsByFilter("web_app_domains", "appId={:id} && (status=\"active\" || status=\"pending_certificate\" || status=\"verified\")", "", 100, 0, { id: app.id }).map((r) => ({
+				id: r.id,
+				host: r.getString("host"),
+				certificate: r.getString("status") === "active"
+			}));
+		} catch {}
+		const row = new Record(tx.findCollectionByNameOrId("web_deployments"));
+		row.set("appId", app.id);
+		row.set("actorId", user.id);
+		row.set("action", "apply-runtime");
+		row.set("commit", active.getString("commit"));
+		row.set("status", "queued");
+		row.set("stage", "Application des variables à l’exécution");
+		row.set("snapshotEncrypted", encryptWebValue(snapshot));
+		tx.save(row);
+		result = serializeWebDeployment(row);
+	});
+	return webJson(e, { deployment: result }, 202);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/connect.ts
+/** Fixed GitHub transport; sensitive conversion results never enter browser responses. */
+const GITHUB_CONNECT_READER = String.raw`
+import sys,json,pathlib,tempfile,subprocess,time,base64,urllib.request,urllib.error,urllib.parse,os,signal,re
+os.umask(0o077)
+source=pathlib.Path(sys.argv[1]);data=json.loads(source.read_text());source.unlink()
+action=data['action']
+signal.signal(signal.SIGALRM,lambda *args:(_ for _ in ()).throw(TimeoutError()));signal.alarm(30)
+def request(path,body=None,token=''):
+ req=urllib.request.Request('https://api.github.com'+path,headers={'Accept':'application/vnd.github+json','User-Agent':'PocketHost-Web-Connect','X-GitHub-Api-Version':'2022-11-28',**({'Authorization':'Bearer '+token} if token else {})},data=None if body is None else json.dumps(body).encode())
+ with urllib.request.urlopen(req,timeout=8) as response:return json.loads(response.read(2000000))
+def jwt(config):
+ b64=lambda value:base64.urlsafe_b64encode(value).rstrip(b'=').decode()
+ now=int(time.time());part=b64(b'{"alg":"RS256","typ":"JWT"}')+'.'+b64(json.dumps({'iat':now-60,'exp':now+540,'iss':config['githubAppId']}).encode())
+ with tempfile.TemporaryDirectory(prefix='ph-github-key-')as folder:
+  key=pathlib.Path(folder)/'key.pem';key.write_text(config['privateKey']);key.chmod(0o600)
+  signature=subprocess.check_output(['openssl','dgst','-sha256','-sign',str(key)],input=part.encode(),stderr=subprocess.DEVNULL,timeout=3)
+ return part+'.'+b64(signature)
+try:
+ if action=='convert':
+  result=request('/app-manifests/'+urllib.parse.quote(data['code'],safe='')+'/conversions',{})
+  # The transport response is private. The controller validates and encrypts it before use.
+  result={key:result.get(key) for key in ['id','slug','pem','webhook_secret','owner','permissions','events']}
+ elif action in ['verify-installation','discover-installation']:
+  config=data['config'];identity=jwt(config)
+  if action=='discover-installation':
+   installations=request('/app/installations?per_page=100',token=identity)
+   matches=[row for row in installations if str(row.get('app_id'))==str(config['githubAppId']) and str(row.get('account',{}).get('id'))==str(config['ownerId']) and not row.get('suspended_at')]
+   if len(matches)!=1:raise ValueError('Installez cette GitHub App sur son compte propriétaire et sélectionnez au moins un dépôt, puis vérifiez à nouveau.')
+   ident=str(matches[0]['id'])
+  else:ident=data['installationId']
+  installation=request('/app/installations/'+urllib.parse.quote(ident,safe=''),token=identity)
+  if str(installation.get('app_id'))!=str(config['githubAppId']) or str(installation.get('account',{}).get('id'))!=str(config['ownerId']) or installation.get('suspended_at'):
+   raise ValueError('L’installation ne correspond pas au compte propriétaire de cette GitHub App privée.')
+  if 'push' not in installation.get('events',[]):raise ValueError('Activez les notifications push dans cette GitHub App avant de continuer.')
+  permissions=installation.get('permissions')or{}
+  if permissions.get('contents')!='read' or permissions.get('metadata')!='read' or any(value=='write' for value in permissions.values()):
+   raise ValueError('Cette installation doit autoriser uniquement la lecture du code et des métadonnées.')
+  token=request('/app/installations/'+ident+'/access_tokens',{'permissions':{'contents':'read','metadata':'read'}},identity)['token']
+  repos=request('/installation/repositories?per_page=1',token=token)
+  count=repos.get('total_count')
+  if not isinstance(count,int) or count<1:raise ValueError('Sélectionnez au moins un dépôt dans l’installation GitHub avant de continuer.')
+  result={'installationId':ident,'account':installation['account'].get('login',''),'accountId':str(installation['account']['id']),'repositoryCount':count}
+ else:raise ValueError('Opération GitHub inconnue.')
+ print(json.dumps({'result':result}))
+except Exception as error:
+ status=getattr(error,'code',0)
+ if isinstance(error,ValueError):message=str(error)
+ elif isinstance(error,(TimeoutError,subprocess.TimeoutExpired)):message='GitHub ne répond pas dans le délai prévu. Réessayez avec une nouvelle étape de connexion.'
+ elif status in [401,403,404]:message='GitHub refuse cette étape. Vérifiez le compte connecté et les dépôts sélectionnés.'
+ elif status in [410,422]:message='Le code GitHub est expiré ou déjà utilisé. Recommencez la création de la connexion.'
+ else:message='La connexion à GitHub a échoué. La connexion enregistrée auparavant reste conservée.'
+ print(json.dumps({'error':message}))
+finally:signal.alarm(0)
+`;
+const COLLECTION$2 = "web_github_setup_sessions";
+const lifetime = 1800 * 1e3;
+const token = () => $security.randomString(64);
+const hash = (value) => $security.sha256(value);
+const now = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const publicInfo = (row) => JSON.parse(row.getString("publicInfo") || "{}");
+const pendingConfig = (row) => decryptWebValue(row.getString("pendingEncrypted"));
+const stateValue = (value) => {
+	if (typeof value !== "string" || !/^[A-Za-z0-9]{64}$/.test(value)) throw new BadRequestError("Cette étape de connexion est invalide ou expirée. Recommencez depuis les paramètres GitHub.");
+	return value;
+};
+/** Ligne d'une connexion par sa clé (`github` ou `github:<id>`), filtre paramétré. */
+const settingsRow = (store = $app, key = "github") => store.findRecordsByFilter("web_app_settings", "key = {:key}", "", 1, 0, { key })[0];
+/** Empreinte de la seule connexion ciblée : modifier une autre connexion n'invalide pas la session. */
+const revision = (store = $app, key = "github") => {
+	const row = settingsRow(store, key);
+	return hash(row ? row.getString("valueEncrypted") : "no-connection");
+};
+const origin = () => {
+	const host = $os.getenv("APP_HOST") || `app.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`;
+	if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)) throw new BadRequestError("Le domaine HTTPS du dashboard doit être configuré avant la connexion GitHub.");
+	return `https://${host}`;
+};
+const appMeta = (config) => ({
+	id: `${config.githubAppId}`,
+	slug: config.githubAppSlug,
+	owner: config.ownerLogin
+});
+const installUrl = (slug, state) => `https://github.com/apps/${encodeURIComponent(slug)}/installations/new?state=${encodeURIComponent(state)}`;
+const transport$1 = (action, values) => {
+	const file = `${$app.dataDir()}/.web-github-connect-${$security.randomString(24)}.json`;
+	try {
+		$os.writeFile(file, JSON.stringify({
+			action,
+			...values
+		}), 384);
+		const result = JSON.parse(toString($os.cmd("python3", "-c", GITHUB_CONNECT_READER, file).combinedOutput()));
+		if (result.error) throw new BadRequestError(result.error);
+		if (!result.result) throw new Error("Invalid GitHub response");
+		return result.result;
+	} catch (error) {
+		if (error instanceof BadRequestError) throw error;
+		throw new BadRequestError("GitHub est indisponible. Votre connexion actuelle reste conservée.");
+	} finally {
+		try {
+			$os.remove(file);
+		} catch {}
+	}
+};
+const valid = (row, actorId) => {
+	if (row.getString("actorId") !== actorId) throw new ForbiddenError("Cette connexion appartient à une autre session administrateur.");
+	if (!Number.isFinite(Date.parse(row.getString("expiresAt"))) || Date.parse(row.getString("expiresAt")) <= Date.now()) throw new BadRequestError("Cette connexion GitHub a expiré. Recommencez depuis les paramètres.");
+};
+/** Atomically consume an actor-bound state before making any external request. */
+const consume = (actorId, state, kind) => {
+	let id = "";
+	$app.runInTransaction((tx) => {
+		const field = kind === "manifest" ? "manifestStateHash" : "installStateHash";
+		const row = tx.findRecordsByFilter(COLLECTION$2, `${field} = {:hash}`, "", 1, 0, { hash: hash(state) })[0];
+		if (!row) throw new BadRequestError("Cette étape GitHub est invalide ou a déjà été utilisée.");
+		valid(row, actorId);
+		if (row.getString("status") !== (kind === "manifest" ? "created" : "awaiting_installation")) throw new BadRequestError("Cette étape GitHub a déjà été utilisée. Reprenez la connexion depuis les paramètres.");
+		row.set("status", kind === "manifest" ? "manifest_exchanging" : "installation_verifying");
+		row.set("lastError", "");
+		tx.save(row);
+		id = row.id;
+	});
+	return $app.findRecordById(COLLECTION$2, id);
+};
+const markFailed = (id, status, error) => {
+	const row = $app.findRecordById(COLLECTION$2, id);
+	if (!["manifest_exchanging", "installation_verifying"].includes(row.getString("status"))) return;
+	row.set("status", status);
+	row.set("lastError", error instanceof BadRequestError ? `${error.message}`.slice(0, 500) : "La connexion GitHub n’a pas pu être finalisée.");
+	$app.save(row);
+};
+const validatedConversion = (result) => {
+	const id = `${result.id || ""}`, ownerId = `${result.owner?.id || ""}`, ownerLogin = `${result.owner?.login || ""}`;
+	if (!/^[1-9][0-9]{0,19}$/.test(id) || !/^[1-9][0-9]{0,19}$/.test(ownerId) || !/^[A-Za-z0-9-]{1,100}$/.test(ownerLogin) || !/^[a-z0-9-]{1,100}$/.test(result.slug || "") || !/^-----BEGIN (RSA )?PRIVATE KEY-----/.test(result.pem || "") || typeof result.webhook_secret !== "string" || result.webhook_secret.length < 20 || result.webhook_secret.length > 256) throw new BadRequestError("GitHub a renvoyé une configuration incomplète. Recommencez la connexion.");
+	const permissions = result.permissions || {};
+	if (permissions.contents !== "read" || permissions.metadata !== "read" || Object.values(permissions).some((v) => v === "write") || !Array.isArray(result.events) || !result.events.includes("push")) throw new BadRequestError("La GitHub App doit autoriser la lecture du code et recevoir les événements push.");
+	return {
+		githubAppId: id,
+		githubAppSlug: result.slug,
+		privateKey: result.pem,
+		webhookSecret: result.webhook_secret,
+		ownerId,
+		ownerLogin
+	};
+};
+/**
+* Mode par défaut `add` (non destructif : un ancien dashboard qui n'envoie que {organization} ajoute une connexion).
+* `replace` + `connectionId` : recrée la GitHub App de cette connexion existante.
+*/
+const HandleWebGithubConnectStart = (e) => {
+	const user = requirePlatformAdmin(e), input = webInput(e), organization = `${input.organization || ""}`.trim();
+	if (organization && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(organization)) throw new BadRequestError("Le nom de l’organisation GitHub est invalide.");
+	if (input.mode !== void 0 && input.mode !== "add" && input.mode !== "replace") throw new BadRequestError("Mode attendu : add ou replace.");
+	const mode = input.mode === "replace" ? "replace" : "add", label = input.label === void 0 || input.label === null || input.label === "" ? "" : githubConnectionLabel(input.label);
+	const base = origin(), state = token(), expiresAt = new Date(Date.now() + lifetime).toISOString();
+	let id = "", target = "";
+	$app.runInTransaction((tx) => {
+		const connections = listWebGithubConnections(tx);
+		if (mode === "replace") {
+			const wanted = `${input.connectionId || ""}`;
+			if (!connections.some((c) => c.id === wanted)) throw new BadRequestError("Connexion GitHub introuvable.");
+			target = wanted;
+		} else if (!settingsRow(tx, "github")) target = GITHUB_PRINCIPAL;
+		else {
+			if (connections.length >= 10) throw new BadRequestError(`${10} connexions GitHub maximum.`);
+			target = newGithubConnectionId(connections.map((c) => c.id));
+		}
+		const pending = tx.findRecordsByFilter(COLLECTION$2, "actorId = {:actor} && expiresAt > {:now} && status != \"completed\" && status != \"cancelled\"", "", 20, 0, {
+			actor: user.id,
+			now: now()
+		});
+		for (const old of pending) {
+			old.set("status", "cancelled");
+			old.set("pendingEncrypted", "");
+			tx.save(old);
+		}
+		const row = new Record(tx.findCollectionByNameOrId(COLLECTION$2));
+		row.set("actorId", user.id);
+		row.set("manifestStateHash", hash(state));
+		row.set("baselineDigest", revision(tx, githubSettingsKey(target)));
+		row.set("status", "created");
+		row.set("expiresAt", expiresAt);
+		row.set("publicInfo", {
+			organization,
+			label,
+			connectionId: target,
+			mode
+		});
+		tx.save(row);
+		id = row.id;
+	});
+	const manifest = {
+		name: `PocketHost-${$security.randomString(10).toLowerCase()}`,
+		url: `${base}/applications`,
+		hook_attributes: {
+			url: `${base}/api/web-apps/github/webhook${target === "default" ? "" : `/${target}`}`,
+			active: true
+		},
+		redirect_url: `${base}/applications/settings/github/manifest`,
+		setup_url: `${base}/applications/settings/github/install`,
+		public: false,
+		default_permissions: {
+			contents: "read",
+			metadata: "read",
+			pull_requests: "read"
+		},
+		default_events: ["push", "pull_request"],
+		request_oauth_on_install: false
+	};
+	const endpoint = organization ? `https://github.com/organizations/${encodeURIComponent(organization)}/settings/apps/new` : "https://github.com/settings/apps/new";
+	return webJson(e, {
+		sessionId: id,
+		state,
+		createUrl: `${endpoint}?state=${state}`,
+		manifest,
+		expiresAt,
+		connectionId: target,
+		mode
+	}, 201);
+};
+const HandleWebGithubConnectManifest = (e) => {
+	const user = requirePlatformAdmin(e), input = webInput(e), state = stateValue(input.state);
+	if (typeof input.code !== "string" || !/^[A-Za-z0-9_-]{20,200}$/.test(input.code)) throw new BadRequestError("Code GitHub invalide.");
+	const row = consume(user.id, state, "manifest");
+	try {
+		const config = validatedConversion(transport$1("convert", { code: input.code }));
+		const info = publicInfo(row);
+		if (info.organization && info.organization.toLowerCase() !== config.ownerLogin.toLowerCase()) throw new BadRequestError("La GitHub App n’appartient pas à l’organisation choisie.");
+		const nextState = token();
+		$app.runInTransaction((tx) => {
+			const current = tx.findRecordById(COLLECTION$2, row.id);
+			valid(current, user.id);
+			if (current.getString("status") !== "manifest_exchanging") throw new BadRequestError("Cette connexion n’est plus active.");
+			current.set("pendingEncrypted", encryptWebValue(config));
+			current.set("publicInfo", {
+				...info,
+				app: appMeta(config)
+			});
+			current.set("installStateHash", hash(nextState));
+			current.set("status", "awaiting_installation");
+			tx.save(current);
+		});
+		return webJson(e, {
+			sessionId: row.id,
+			status: "awaiting_installation",
+			app: appMeta(config),
+			installUrl: installUrl(config.githubAppSlug, nextState),
+			state: nextState,
+			expiresAt: row.getString("expiresAt")
+		});
+	} catch (error) {
+		markFailed(row.id, "manifest_failed", error);
+		throw error;
+	}
+};
+const HandleWebGithubConnectInstallStart = (e) => {
+	const user = requirePlatformAdmin(e), id = `${webInput(e).sessionId || ""}`;
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Connexion GitHub invalide.");
+	const state = token();
+	let config, expiresAt = "";
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById(COLLECTION$2, id);
+		valid(row, user.id);
+		if (!["awaiting_installation", "installation_failed"].includes(row.getString("status"))) throw new BadRequestError("Recommencez la création de la GitHub App depuis les paramètres.");
+		config = pendingConfig(row);
+		if (!config.githubAppSlug) throw new BadRequestError("La création de la GitHub App n’est pas terminée.");
+		row.set("installStateHash", hash(state));
+		row.set("status", "awaiting_installation");
+		row.set("lastError", "");
+		tx.save(row);
+		expiresAt = row.getString("expiresAt");
+	});
+	return webJson(e, {
+		sessionId: id,
+		installUrl: installUrl(config.githubAppSlug, state),
+		state,
+		expiresAt
+	});
+};
+const activateConnection = (row, actorId, config, result, expectedInstallation) => {
+	const installationId = `${result.installationId || ""}`;
+	if (!/^[1-9][0-9]{0,19}$/.test(installationId) || expectedInstallation && installationId !== expectedInstallation || `${result.accountId}` !== `${config.ownerId}` || !Number.isInteger(result.repositoryCount) || result.repositoryCount < 1) throw new BadRequestError("L’installation GitHub n’a pas pu être vérifiée.");
+	let target = GITHUB_PRINCIPAL, mode = "replace", label = "";
+	$app.runInTransaction((tx) => {
+		const current = tx.findRecordById(COLLECTION$2, row.id);
+		valid(current, actorId);
+		if (current.getString("status") !== "installation_verifying") throw new BadRequestError("Cette connexion n’est plus active.");
+		const info = publicInfo(current), session = githubSessionTarget(info);
+		target = session.connectionId;
+		mode = session.mode;
+		const key = githubSettingsKey(target);
+		if (current.getString("baselineDigest") !== revision(tx, key)) throw new BadRequestError("La connexion GitHub a été modifiée pendant cette étape. Recommencez pour conserver ce changement.");
+		assertGithubConnectionUnique(tx, config.githubAppId, installationId, key);
+		const existing = settingsRow(tx, key);
+		if (mode === "add") {
+			if (existing) throw new BadRequestError("Cette connexion GitHub existe déjà. Recommencez l’ajout.");
+			if (listWebGithubConnections(tx).length >= 10) throw new BadRequestError(`${10} connexions GitHub maximum.`);
+		} else if (!existing && !session.legacy) throw new BadRequestError("Connexion GitHub introuvable.");
+		const previous = existing ? decryptWebValue(existing.getString("valueEncrypted")) || {} : {}, meta = mode === "add" ? {
+			label: `${info.label || config.ownerLogin || ""}`.slice(0, 60) || "Connexion GitHub",
+			disabled: false,
+			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+			createdBy: actorId
+		} : previous.meta;
+		label = githubConnectionMeta(target, meta ? {
+			...config,
+			meta
+		} : config).label;
+		const active = existing || new Record(tx.findCollectionByNameOrId("web_app_settings"));
+		active.set("key", key);
+		active.set("valueEncrypted", encryptWebValue({
+			...config,
+			githubInstallationId: installationId,
+			...meta ? { meta } : {}
+		}));
+		tx.save(active);
+		current.set("status", "completed");
+		current.set("pendingEncrypted", "");
+		current.set("installStateHash", "");
+		current.set("lastError", "");
+		tx.save(current);
+	});
+	return {
+		connected: true,
+		connectionId: target,
+		label,
+		mode,
+		app: appMeta(config),
+		installation: {
+			id: installationId,
+			account: result.account
+		},
+		repositoryCount: result.repositoryCount
+	};
+};
+const HandleWebGithubConnectInstall = (e) => {
+	const user = requirePlatformAdmin(e), input = webInput(e), state = stateValue(input.state);
+	const installationId = `${input.installationId || ""}`;
+	if (!/^[1-9][0-9]{0,19}$/.test(installationId)) throw new BadRequestError("Identifiant d’installation GitHub invalide.");
+	const row = consume(user.id, state, "installation");
+	try {
+		const config = pendingConfig(row), result = transport$1("verify-installation", {
+			config,
+			installationId
+		});
+		return webJson(e, activateConnection(row, user.id, config, result, installationId));
+	} catch (error) {
+		markFailed(row.id, "installation_failed", error);
+		throw error;
+	}
+};
+/** Recovery for already installed Apps: still authenticated, actor-bound and tied to the new private App owner. */
+const HandleWebGithubConnectInstallCheck = (e) => {
+	const user = requirePlatformAdmin(e), id = `${webInput(e).sessionId || ""}`;
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Connexion GitHub invalide.");
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById(COLLECTION$2, id);
+		valid(row, user.id);
+		if (!["awaiting_installation", "installation_failed"].includes(row.getString("status"))) throw new BadRequestError("Cette connexion GitHub ne peut pas être vérifiée maintenant.");
+		row.set("installStateHash", hash(token()));
+		row.set("status", "installation_verifying");
+		row.set("lastError", "");
+		tx.save(row);
+	});
+	const row = $app.findRecordById(COLLECTION$2, id);
+	try {
+		const config = pendingConfig(row);
+		if (!config.githubAppId) throw new BadRequestError("La création de la GitHub App n’est pas terminée.");
+		const result = transport$1("discover-installation", { config });
+		return webJson(e, activateConnection(row, user.id, config, result));
+	} catch (error) {
+		markFailed(row.id, "installation_failed", error);
+		throw error;
+	}
+};
+const HandleWebGithubConnectStatus = (e) => {
+	const user = requirePlatformAdmin(e), rows = $app.findRecordsByFilter(COLLECTION$2, "actorId = {:actor} && expiresAt > {:now} && status != \"completed\" && status != \"cancelled\"", "-created,-id", 1, 0, {
+		actor: user.id,
+		now: now()
+	});
+	const connections = listWebGithubConnections(), row = rows[0], info = row ? publicInfo(row) : {}, target = githubSessionTarget(info);
+	return webJson(e, {
+		configured: connections.some((c) => !c.meta.disabled && githubConnectionConfigured(c.value)),
+		connections: connections.length,
+		pending: row ? {
+			sessionId: row.id,
+			status: row.getString("status"),
+			expiresAt: row.getString("expiresAt"),
+			app: info.app || null,
+			error: row.getString("lastError"),
+			connectionId: target.connectionId,
+			mode: target.mode,
+			label: typeof info.label === "string" ? info.label : ""
+		} : null
+	});
+};
+const HandleWebGithubConnectMaintenance = () => {
+	try {
+		$app.findCollectionByNameOrId(COLLECTION$2);
+	} catch {
+		return;
+	}
+	const expired = $app.findRecordsByFilter(COLLECTION$2, "expiresAt < {:now}", "expiresAt", 500, 0, { now: now() });
+	for (const row of expired) $app.delete(row);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/source.ts
+/** URL comparable : schéma et hôte en minuscules, port par défaut retiré, sans requête, fragment ni / final. */
+const normalizeWebhookUrl = (value) => {
+	const match = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]+)([^?#]*)/i.exec(`${value || ""}`.trim());
+	if (!match) return null;
+	const scheme = match[1].toLowerCase(), port = scheme === "https" ? ":443" : scheme === "http" ? ":80" : "";
+	let host = match[2].toLowerCase();
+	if (port && host.endsWith(port)) host = host.slice(0, -port.length);
+	return {
+		origin: `${scheme}://${host}`,
+		path: match[3].replace(/\/+$/, "") || "/"
+	};
+};
+/**
+* Décalage entre l'URL configurée sur GitHub et celle de la connexion. Un chemin différent est toujours signalé (le
+* routage se fait par le chemin). Un hôte différent (alias, URL saisie à la main avant l'assistant) ne l'est pas si
+* cette connexion a reçu une livraison depuis moins de 24 h : l'alias atteint bien ce serveur.
+*/
+const githubWebhookUrlMismatch = (configuredUrl, expectedUrl, lastReceivedAt = "") => {
+	if (!configuredUrl) return false;
+	const configured = normalizeWebhookUrl(configuredUrl), expected = normalizeWebhookUrl(expectedUrl);
+	if (!configured || !expected || configured.path !== expected.path) return true;
+	if (configured.origin === expected.origin) return false;
+	const last = Date.parse(`${lastReceivedAt || ""}`.replace(" ", "T"));
+	return !(Number.isFinite(last) && Date.now() - last < 24 * 36e5);
+};
+/**
+* GET /api/web-apps/github/health?connectionId= — plateforme. Sans paramètre : connexion principale. Consultable pour
+* une connexion désactivée. `webhook.urlMismatch` : l'URL configurée sur GitHub (`/app/hook/config`) diffère de celle
+* de cette connexion, cause la plus probable de pushs perdus avec plusieurs Apps.
+*/
+const HandleWebGithubHealth = (e) => {
+	requirePlatformAdmin(e);
+	const connection = webGithubConnection(e.request.url.query().get("connectionId") || "default", $app, {
+		allowDisabled: true,
+		allowMissing: true
+	}), id = connection.id, configured = githubConnectionConfigured(connection.value);
+	let value = {
+		configured,
+		ok: false
+	};
+	try {
+		value = {
+			...webGithub("health", {}, id, { allowDisabled: true }),
+			configured
+		};
+	} catch {
+		value.error = "La connexion GitHub ne peut pas être vérifiée. Vérifiez l’installation, la clé et les autorisations.";
+	}
+	value.ok = value.ok === true && configured;
+	if (!configured && !value.error) value.error = "Terminez la connexion GitHub et la configuration du webhook.";
+	const url = githubWebhookUrl(id);
+	let configuredUrl = "";
+	if (configured) try {
+		configuredUrl = `${webGithub("hook-config", {}, id, { allowDisabled: true }).url || ""}`;
+	} catch {}
+	let last;
+	try {
+		last = $app.findRecordsByFilter("web_webhook_deliveries", "connectionId = {:id}", "-created", 1, 0, { id })[0];
+	} catch {}
+	const lastReceivedAt = last?.getString("lastReceivedAt") || last?.getString("created") || "", urlMismatch = githubWebhookUrlMismatch(configuredUrl, url, lastReceivedAt);
+	return webJson(e, {
+		...value,
+		connectionId: id,
+		label: connection.meta.label,
+		disabled: connection.meta.disabled,
+		checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
+		webhook: {
+			url,
+			configuredUrl,
+			urlMismatch,
+			lastReceivedAt,
+			lastStatus: last?.getString("status") || ""
+		}
+	});
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/terminal.ts
+const COLLECTION$1 = "web_terminal_sessions";
+const stamp$3 = () => (/* @__PURE__ */ new Date()).toISOString();
+const closedReasons = [
+	"disconnected",
+	"idle",
+	"expired",
+	"revoked",
+	"container_changed",
+	"access_revoked",
+	"connect_failed",
+	"shell_exited",
+	"broker_shutdown",
+	"protocol_error"
+];
+const active = (row, now = Date.now()) => {
+	if (![
+		"issued",
+		"connecting",
+		"open"
+	].includes(row.getString("status"))) return false;
+	if (Date.parse(row.getString("absoluteExpiresAt")) <= now) return false;
+	if (row.getString("status") === "issued") return Date.parse(row.getString("expiresAt")) > now;
+	return Date.parse(row.getString("lastSeenAt")) > now - 9e4;
+};
+const close = (row, reason, store = $app) => {
+	if (row.getString("status") === "closed") return;
+	row.set("status", "closed");
+	row.set("reason", closedReasons.includes(reason) ? reason : "connect_failed");
+	row.set("closedAt", stamp$3());
+	row.set("grantHash", "");
+	row.set("leaseHash", "");
+	store.save(row);
+};
+const currentPublication = (appId, deploymentId = "", store = $app) => {
+	const app = store.findRecordById("web_apps", appId);
+	const id = app.getString("activeDeployment");
+	if (app.getString("status") !== "running" || !/^[a-z0-9]{15}$/.test(id) || deploymentId && deploymentId !== id) throw new BadRequestError("Le terminal nécessite une version publiée et en fonctionnement.");
+	const deployment = store.findRecordById("web_deployments", id);
+	const result = JSON.parse(deployment.getString("result") || "{}");
+	const expected = `ph-web-${appId}-${id}`;
+	if (deployment.getString("appId") !== appId || deployment.getString("status") !== "ready" || result.container !== expected) throw new BadRequestError("Le conteneur publié ne permet pas l’ouverture du terminal.");
+	return {
+		app,
+		deployment,
+		containerName: expected
+	};
+};
+/** Revalidation périodique (broker) : l'auteur doit encore pouvoir ouvrir un terminal sur le projet actuel. */
+const validateActor = (row, store = $app) => {
+	if (!webActorCan(row.getString("actorId"), { appId: row.getString("appId") }, "terminal.open", store)) throw new ForbiddenError("Accès au terminal révoqué.");
+};
+const requireBroker = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const expected = $os.getenv("WEB_APPS_WORKER_SECRET"), received = e.request.header.get("X-Web-Worker") || "";
+	if (expected.length < 32 || !$security.equal(expected, received)) throw new UnauthorizedError("Terminal non autorisé.");
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
+};
+const sessionId = (value) => {
+	if (typeof value !== "string" || !/^[a-z0-9]{15}$/.test(value)) throw new BadRequestError("Session invalide.");
+	return value;
+};
+const lease$1 = (input, store = $app) => {
+	const row = store.findRecordById(COLLECTION$1, sessionId(input.sessionId));
+	if (typeof input.proof !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.proof) || !row.getString("leaseHash") || !$security.equal(row.getString("leaseHash"), $security.sha256(input.proof))) throw new UnauthorizedError("Session de terminal invalide.");
+	return row;
+};
+const metadata = (row) => ({
+	id: row.id,
+	actorId: row.getString("actorId"),
+	status: row.getString("status"),
+	shell: row.getString("shell"),
+	created: row.getString("created"),
+	openedAt: row.getString("openedAt"),
+	closedAt: row.getString("closedAt"),
+	reason: row.getString("reason")
+});
+const HandleWebTerminalSession = (e) => {
+	const { user: actor, app: found } = requireWebAppPermission(e, "terminal.open"), app = found, input = webInput(e);
+	if (Object.keys(input).some((key) => key !== "shell")) throw new BadRequestError("Options de terminal invalides.");
+	const shell = input.shell === void 0 || input.shell === "sh" ? "/bin/sh" : input.shell === "bash" ? "/bin/bash" : "";
+	if (!shell) throw new BadRequestError("Choisissez sh ou bash.");
+	const token = $security.randomString(80);
+	let rowId = "", expiresAt = "";
+	$app.runInTransaction((tx) => {
+		const publication = currentPublication(app.id, "", tx);
+		const rows = tx.findRecordsByFilter(COLLECTION$1, "status != \"closed\"", "created", 100, 0);
+		const live = [];
+		for (const row of rows) if (active(row)) live.push(row);
+		else close(row, "expired", tx);
+		if (live.length >= 16) throw new BadRequestError("Seize terminaux sont déjà ouverts sur ce serveur.");
+		if (live.filter((r) => r.getString("appId") === app.id).length >= 2) throw new BadRequestError("Deux terminaux sont déjà ouverts sur cette application. Fermez une session avant de continuer.");
+		if (live.filter((r) => r.getString("actorId") === actor.id).length >= 2) throw new BadRequestError("Deux terminaux sont déjà ouverts pour ce compte. Fermez une session avant de continuer.");
+		const row = new Record(tx.findCollectionByNameOrId(COLLECTION$1));
+		expiresAt = new Date(Date.now() + 6e4).toISOString();
+		row.set("appId", app.id);
+		row.set("actorId", actor.id);
+		row.set("deploymentId", publication.deployment.id);
+		row.set("containerName", publication.containerName);
+		row.set("grantHash", $security.sha256(token));
+		row.set("shell", shell);
+		row.set("status", "issued");
+		row.set("expiresAt", expiresAt);
+		row.set("absoluteExpiresAt", new Date(Date.now() + 30 * 6e4).toISOString());
+		tx.save(row);
+		rowId = row.id;
+	});
+	return webJson(e, {
+		sessionId: rowId,
+		token,
+		expiresAt,
+		wsPath: "/api/web-terminal/connect",
+		shell,
+		idleTimeoutSeconds: 600,
+		maxDurationSeconds: 1800
+	}, 201);
+};
+const HandleWebTerminalClaim = (e) => {
+	requireBroker(e);
+	const input = webInput(e);
+	if (typeof input.token !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.token)) throw new UnauthorizedError("Autorisation de terminal invalide.");
+	let result;
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordsByFilter(COLLECTION$1, "grantHash = {:hash}", "", 1, 0, { hash: $security.sha256(input.token) })[0];
+		if (!row || row.getString("status") !== "issued" || !active(row)) throw new UnauthorizedError("Cette autorisation a expiré ou a déjà été utilisée.");
+		validateActor(row, tx);
+		currentPublication(row.getString("appId"), row.getString("deploymentId"), tx);
+		const proof = $security.randomString(80);
+		row.set("grantHash", "");
+		row.set("leaseHash", $security.sha256(proof));
+		row.set("status", "connecting");
+		row.set("lastSeenAt", stamp$3());
+		tx.save(row);
+		result = {
+			sessionId: row.id,
+			appId: row.getString("appId"),
+			actorId: row.getString("actorId"),
+			deploymentId: row.getString("deploymentId"),
+			containerName: row.getString("containerName"),
+			shell: row.getString("shell"),
+			proof,
+			absoluteExpiresAt: row.getString("absoluteExpiresAt")
+		};
+	});
+	return webJson(e, result);
+};
+const HandleWebTerminalValidate = (e) => {
+	requireBroker(e);
+	const input = webInput(e);
+	let result = { valid: false };
+	$app.runInTransaction((tx) => {
+		const row = lease$1(input, tx);
+		if (!active(row)) {
+			close(row, "expired", tx);
+			return;
+		}
+		try {
+			validateActor(row, tx);
+		} catch {
+			close(row, "access_revoked", tx);
+			return;
+		}
+		try {
+			currentPublication(row.getString("appId"), row.getString("deploymentId"), tx);
+		} catch {
+			close(row, "container_changed", tx);
+			return;
+		}
+		if (typeof input.containerId !== "string" || !/^[a-f0-9]{64}$/.test(input.containerId)) throw new BadRequestError("Conteneur invalide.");
+		if (row.getString("containerId") && row.getString("containerId") !== input.containerId) {
+			close(row, "container_changed", tx);
+			return;
+		}
+		row.set("containerId", input.containerId);
+		row.set("lastSeenAt", stamp$3());
+		if (!row.getString("openedAt")) {
+			row.set("openedAt", stamp$3());
+			row.set("status", "open");
+		}
+		tx.save(row);
+		result = {
+			valid: true,
+			absoluteExpiresAt: row.getString("absoluteExpiresAt")
+		};
+	});
+	return webJson(e, result);
+};
+const HandleWebTerminalClose = (e) => {
+	requireBroker(e);
+	const input = webInput(e);
+	$app.runInTransaction((tx) => {
+		close(lease$1(input, tx), input.reason, tx);
+	});
+	return webJson(e, { closed: true });
+};
+const HandleWebTerminalHistory = (e) => {
+	const app = requireWebAppPermission(e, "terminal.open").app;
+	return webJson(e, { items: $app.findRecordsByFilter(COLLECTION$1, "appId={:id}", "-created", 30, 0, { id: app.id }).map(metadata) });
+};
+const HandleWebTerminalRevoke = (e) => {
+	const app = requireWebAppPermission(e, "terminal.open").app;
+	const row = $app.findRecordById(COLLECTION$1, sessionId(e.request.pathValue("sessionId")));
+	if (row.getString("appId") !== app.id) throw new ForbiddenError("Session invalide.");
+	close(row, "revoked");
+	return webJson(e, { closed: true });
+};
+const HandleWebTerminalMaintenance = () => {
+	if (!webEnabled()) return;
+	try {
+		$app.findCollectionByNameOrId(COLLECTION$1);
+	} catch {
+		return;
+	}
+	const rows = $app.findRecordsByFilter(COLLECTION$1, "status != \"closed\"", "created", 200, 0);
+	for (const row of rows) if (!active(row)) close(row, "expired");
+	const cutoff = (/* @__PURE__ */ new Date(Date.now() - 30 * 864e5)).toISOString().replace("T", " ");
+	for (const row of $app.findRecordsByFilter(COLLECTION$1, "status = \"closed\" && closedAt < {:cutoff}", "", 500, 0, { cutoff })) $app.delete(row);
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/health.ts
+const CONFIG = "web_app_health", EVENTS = "web_app_health_events", MAX_EVENTS = 1e3;
+const id = /^[a-z0-9]{15}$/;
+const PUBLIC_ERRORS = [
+	"",
+	"not_checked",
+	"public_dns",
+	"public_address_refused",
+	"public_timeout",
+	"public_connection",
+	"public_tls",
+	"public_http_error"
+];
+const PRIVATE_SUFFIX = /\.(local|internal|localhost|lan|home|invalid|test|example)$/;
+const ipLiteral = (host) => /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+/**
+* Hôte public sondé par le worker en HTTPS:443 (DNS, TLS et proxy vus depuis Internet) : domaine personnalisé actif
+* vérifié, sinon domaine généré. Vide quand l'hôte n'est pas public, ou quand le serveur est une installation locale
+* (WEB_HEALTH_PUBLIC_CHECK=false) : la sonde rendrait sinon « adresse privée refusée », donc « dégradé ».
+*/
+const publicHostOf = (appId, store = $app) => {
+	if ($os.getenv("WEB_HEALTH_PUBLIC_CHECK") === "false") return "";
+	let host = "";
+	try {
+		host = store.findRecordsByFilter("web_app_domains", "appId={:id} && status=\"active\"", "created", 1, 0, { id: appId })[0]?.getString("host") || "";
+	} catch {}
+	if (!host) try {
+		host = webConfig(store.findRecordById("web_apps", appId)).generatedDomain || "";
+	} catch {}
+	host = `${host}`.toLowerCase().replace(/\.$/, "").replace(/:\d+$/, "");
+	if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) || PRIVATE_SUFFIX.test(host) || ipLiteral(host)) return "";
+	return host;
+};
+const pathSafe = (value) => typeof value === "string" && value.length <= 512 && /^\/[A-Za-z0-9/_~.-]*$/.test(value) && !value.includes("//") && !value.split("/").some((part) => part === "." || part === "..");
+const defaults = (app) => {
+	const existing = webConfig(app).healthPath;
+	return {
+		enabled: false,
+		path: pathSafe(existing) ? existing : "/",
+		intervalSeconds: 60,
+		timeoutSeconds: 5,
+		failureThreshold: 3
+	};
+};
+const record = (appId, store = $app) => store.findRecordsByFilter(CONFIG, "appId={:id}", "", 1, 0, { id: appId })[0];
+const config = (app, row) => row ? {
+	enabled: row.getBool("enabled"),
+	path: row.getString("path"),
+	intervalSeconds: row.getInt("intervalSeconds"),
+	timeoutSeconds: row.getInt("timeoutSeconds"),
+	failureThreshold: row.getInt("failureThreshold"),
+	revision: row.getString("revision")
+} : {
+	...defaults(app),
+	revision: ""
+};
+const snapshot = (app, row) => {
+	const cfg = config(app, row), checkedAt = row?.getString("lastCheckedAt") || "";
+	const sameDeployment = row?.getString("deploymentId") === app.getString("activeDeployment");
+	const reference = sameDeployment ? checkedAt || row?.getString("statusSince") || "" : app.getString("updated") || row?.getString("statusSince") || "";
+	const stale = !!reference && Date.now() - Date.parse(reference) > cfg.intervalSeconds * 2e3 + cfg.timeoutSeconds * 1e3 + 3e4;
+	let background = false;
+	try {
+		const profile = $app.findRecordsByFilter("web_runtime_profiles", "appId={:id}", "", 1, 0, { id: app.id })[0];
+		background = !!profile && JSON.parse(profile.getString("profile") || "{}").kind === "worker";
+	} catch {}
+	return {
+		config: cfg,
+		state: {
+			status: background ? "not_applicable" : !cfg.enabled ? "disabled" : app.getString("status") !== "running" ? "paused" : !sameDeployment || !checkedAt ? stale ? "stale" : "unknown" : stale ? "stale" : row?.getString("status") || "unknown",
+			checkedAt: sameDeployment ? checkedAt : "",
+			statusSince: sameDeployment ? row?.getString("statusSince") || "" : "",
+			httpStatus: sameDeployment ? row?.getInt("httpStatus") || 0 : 0,
+			durationMs: sameDeployment ? row?.getInt("durationMs") || 0 : 0,
+			consecutiveFailures: sameDeployment ? row?.getInt("consecutiveFailures") || 0 : 0,
+			lastResult: sameDeployment ? row?.getString("lastResult") || "" : ""
+		},
+		retention: {
+			days: 30,
+			maxEvents: MAX_EVENTS
+		},
+		automaticRecovery: false
+	};
+};
+const requireWorker$2 = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const secret = $os.getenv("WEB_APPS_WORKER_SECRET");
+	if (secret.length < 32 || !$security.equal(secret, e.request.header.get("X-Web-Worker") || "")) throw new UnauthorizedError("Contrôle de santé non autorisé.");
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
+};
+const publication$1 = (appId, store = $app) => {
+	try {
+		const app = store.findRecordById("web_apps", appId), deploymentId = app.getString("activeDeployment");
+		if (app.getString("status") !== "running" || !id.test(deploymentId)) return null;
+		const deployment = store.findRecordById("web_deployments", deploymentId), result = JSON.parse(deployment.getString("result") || "{}");
+		if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+		const target = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})$/.exec(result.target || "");
+		if (deployment.getString("appId") !== appId || deployment.getString("status") !== "ready" || result.available === false || result.container !== `ph-web-${appId}-${deploymentId}` || !target || Number(target[1]) < 1024 || Number(target[1]) > 65535) return null;
+		return {
+			deploymentId,
+			containerName: result.container,
+			expectedTarget: result.target
+		};
+	} catch {
+		return null;
+	}
+};
+const event = (row, previous, reason, store = $app, actorId = "") => {
+	const item = new Record(store.findCollectionByNameOrId(EVENTS));
+	for (const key of [
+		"appId",
+		"deploymentId",
+		"httpStatus",
+		"durationMs",
+		"consecutiveFailures"
+	]) item.set(key, row.get(key));
+	item.set("actorId", actorId);
+	item.set("fromStatus", previous);
+	item.set("status", row.getString("status"));
+	item.set("reason", reason);
+	item.set("checkedAt", row.getString("lastCheckedAt") || (/* @__PURE__ */ new Date()).toISOString());
+	store.save(item);
+	const appId = row.getString("appId"), cutoff = (/* @__PURE__ */ new Date(Date.now() - 30 * 864e5)).toISOString().replace("T", " ");
+	for (const old of store.findRecordsByFilter(EVENTS, "appId={:id} && checkedAt < {:cutoff}", "", MAX_EVENTS, 0, {
+		id: appId,
+		cutoff
+	})) store.delete(old);
+	for (const old of store.findRecordsByFilter(EVENTS, "appId={:id}", "-created,-id", MAX_EVENTS, MAX_EVENTS, { id: appId })) store.delete(old);
+};
+const HandleWebHealthGet = (e) => {
+	const app = requireWebAppPermission(e, "app.read").app;
+	return webJson(e, snapshot(app, record(app.id)));
+};
+const HandleWebHealthUpdate = (e) => {
+	const { user: actor, app: found } = requireWebAppPermission(e, "health.manage"), app = found, input = webInput(e);
+	if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => ![
+		"enabled",
+		"path",
+		"intervalSeconds",
+		"timeoutSeconds",
+		"failureThreshold",
+		"revision"
+	].includes(key))) throw new BadRequestError("Configuration de surveillance invalide.");
+	$app.runInTransaction((tx) => {
+		let row = record(app.id, tx);
+		if (input.revision !== void 0 && input.revision !== (row?.getString("revision") || "")) throw new BadRequestError("La configuration a changé. Rechargez cette page.");
+		const cfg = {
+			...config(app, row),
+			...input
+		};
+		if (typeof cfg.enabled !== "boolean" || !pathSafe(cfg.path)) throw new BadRequestError("Indiquez un chemin local sans paramètres, par exemple /api/health.");
+		for (const [key, min, max] of [
+			[
+				"intervalSeconds",
+				60,
+				3600
+			],
+			[
+				"timeoutSeconds",
+				1,
+				10
+			],
+			[
+				"failureThreshold",
+				1,
+				10
+			]
+		]) if (!Number.isInteger(cfg[key]) || cfg[key] < min || cfg[key] > max) throw new BadRequestError("Intervalle, délai ou seuil de santé invalide.");
+		const previous = row?.getString("status") || "disabled";
+		if (!row) {
+			row = new Record(tx.findCollectionByNameOrId(CONFIG));
+			row.set("appId", app.id);
+		}
+		for (const key of [
+			"enabled",
+			"path",
+			"intervalSeconds",
+			"timeoutSeconds",
+			"failureThreshold"
+		]) row.set(key, cfg[key]);
+		row.set("alertState", cfg.enabled ? row.getString("alertState") : "");
+		row.set("revision", $security.randomString(24));
+		row.set("status", cfg.enabled ? "unknown" : "disabled");
+		row.set("statusSince", (/* @__PURE__ */ new Date()).toISOString());
+		for (const key of [
+			"deploymentId",
+			"containerId",
+			"lastCheckedAt",
+			"lastResult"
+		]) row.set(key, "");
+		for (const key of [
+			"consecutiveFailures",
+			"httpStatus",
+			"durationMs"
+		]) row.set(key, 0);
+		tx.save(row);
+		event(row, previous, cfg.enabled ? "configuration_changed" : "disabled", tx, actor.id);
+	});
+	return webJson(e, snapshot(app, record(app.id)));
+};
+const HandleWebHealthHistory = (e) => {
+	const app = requireWebAppPermission(e, "app.read").app, query = e.request.url.query();
+	const page = Math.max(1, Math.min(1e4, Math.floor(Number(query.get("page")) || 1))), perPage = Math.max(1, Math.min(100, Math.floor(Number(query.get("perPage")) || 20)));
+	const rows = $app.findRecordsByFilter(EVENTS, "appId={:id}", "-created,-id", perPage, (page - 1) * perPage, { id: app.id }), totalItems = $app.countRecords(EVENTS, $dbx.exp("appId={:id}", { id: app.id }));
+	return webJson(e, {
+		items: rows.map((row) => ({
+			id: row.id,
+			deploymentId: row.getString("deploymentId"),
+			fromStatus: row.getString("fromStatus"),
+			status: row.getString("status"),
+			reason: row.getString("reason"),
+			checkedAt: row.getString("checkedAt"),
+			httpStatus: row.getInt("httpStatus"),
+			durationMs: row.getInt("durationMs"),
+			consecutiveFailures: row.getInt("consecutiveFailures")
+		})),
+		page,
+		perPage,
+		totalItems,
+		totalPages: Math.ceil(totalItems / perPage),
+		hasMore: page * perPage < totalItems
+	});
+};
+const HandleWebHealthConfig = (e) => {
+	requireWorker$2(e);
+	const input = webInput(e), page = Math.max(1, Math.min(1e4, Math.floor(Number(input.page) || 1))), perPage = 100;
+	const rows = $app.findRecordsByFilter(CONFIG, "enabled=true", "appId", 101, (page - 1) * perPage);
+	const items = [];
+	for (const row of rows.slice(0, perPage)) try {
+		const current = publication$1(row.getString("appId"));
+		if (!current) continue;
+		items.push({
+			appId: row.getString("appId"),
+			...current,
+			path: row.getString("path"),
+			intervalSeconds: row.getInt("intervalSeconds"),
+			timeoutSeconds: row.getInt("timeoutSeconds"),
+			failureThreshold: row.getInt("failureThreshold"),
+			revision: row.getString("revision"),
+			publicHost: publicHostOf(row.getString("appId"))
+		});
+	} catch {}
+	return webJson(e, {
+		items,
+		page,
+		hasMore: rows.length > perPage
+	});
+};
+const HandleWebHealthReport = (e) => {
+	requireWorker$2(e);
+	const input = webInput(e);
+	if (typeof input.appId !== "string" || !id.test(input.appId) || typeof input.deploymentId !== "string" || !id.test(input.deploymentId) || typeof input.revision !== "string" || !/^[A-Za-z0-9]{24}$/.test(input.revision) || ![
+		"",
+		"http_error",
+		"timeout",
+		"connection_error",
+		"container_unavailable",
+		"target_mismatch"
+	].includes(input.errorCode) || !Number.isInteger(input.statusCode) || input.statusCode !== 0 && input.statusCode < 100 || input.statusCode > 599 || !Number.isInteger(input.durationMs) || input.durationMs < 0 || input.durationMs > 12e4 || typeof input.checkedAt !== "string" || typeof input.containerId !== "string" || input.containerId !== "" && !/^[a-f0-9]{64}$/.test(input.containerId)) throw new BadRequestError("Résultat de santé invalide.");
+	if (input.publicHost !== void 0 && (typeof input.publicHost !== "string" || input.publicHost.length > 253) || input.publicStatusCode !== void 0 && (!Number.isInteger(input.publicStatusCode) || input.publicStatusCode < 0 || input.publicStatusCode > 599) || input.publicDurationMs !== void 0 && (!Number.isInteger(input.publicDurationMs) || input.publicDurationMs < 0 || input.publicDurationMs > 12e4) || input.publicErrorCode !== void 0 && !PUBLIC_ERRORS.includes(input.publicErrorCode)) throw new BadRequestError("Résultat de santé invalide.");
+	const publicError = typeof input.publicErrorCode === "string" && input.publicErrorCode !== "not_checked" ? input.publicErrorCode : "";
+	const checked = Date.parse(input.checkedAt);
+	if (!Number.isFinite(checked) || checked > Date.now() + 5e3 || checked < Date.now() - 5 * 6e4) throw new BadRequestError("Date de contrôle invalide.");
+	let accepted = false;
+	$app.runInTransaction((tx) => {
+		const row = record(input.appId, tx), current = publication$1(input.appId, tx);
+		if (!row?.getBool("enabled") || row.getString("revision") !== input.revision || !current || current.deploymentId !== input.deploymentId) return;
+		if (row.getString("deploymentId") === input.deploymentId && Date.parse(row.getString("lastCheckedAt")) >= checked) return;
+		let previous = row.getString("status") || "unknown";
+		const owed = row.getString("alertState") === "degraded";
+		if (row.getString("deploymentId") !== input.deploymentId) {
+			row.set("consecutiveFailures", 0);
+			row.set("statusSince", new Date(checked).toISOString());
+			previous = "unknown";
+		}
+		const success = !input.errorCode && input.statusCode >= 200 && input.statusCode < 400 && !!input.containerId;
+		const failures = success ? 0 : Math.min(1e5, row.getInt("consecutiveFailures") + 1);
+		const next = success ? "healthy" : failures >= row.getInt("failureThreshold") ? "degraded" : previous;
+		row.set("deploymentId", input.deploymentId);
+		row.set("containerId", input.containerId);
+		row.set("consecutiveFailures", failures);
+		row.set("status", next);
+		row.set("lastCheckedAt", new Date(checked).toISOString());
+		row.set("httpStatus", input.statusCode);
+		row.set("durationMs", input.durationMs);
+		row.set("lastResult", success ? "ok" : publicError || input.errorCode || "http_error");
+		if (next !== previous || !row.getString("statusSince")) row.set("statusSince", new Date(checked).toISOString());
+		if (next === "degraded") row.set("alertState", "degraded");
+		const recovered = success && owed;
+		if (recovered) row.set("alertState", "");
+		tx.save(row);
+		if (next !== previous || recovered) event(row, recovered ? "degraded" : previous, success ? recovered || previous === "degraded" ? "recovered" : "healthy" : publicError && next === "degraded" ? publicError : "failure_threshold", tx);
+		accepted = true;
+	});
+	return webJson(e, { accepted });
+};
+const HandleWebHealthMaintenance = () => {
+	if (!webEnabled()) return;
+	try {
+		$app.findCollectionByNameOrId(EVENTS);
+	} catch {
+		return;
+	}
+	const cutoff = (/* @__PURE__ */ new Date(Date.now() - 30 * 864e5)).toISOString().replace("T", " ");
+	for (const row of $app.findRecordsByFilter(EVENTS, "checkedAt < {:cutoff}", "checkedAt", 500, 0, { cutoff })) $app.delete(row);
+};
+
+//#endregion
+//#region ../common/webCron.ts
+const parseWebCron = (expression) => {
+	if (typeof expression !== "string" || expression.length > 100) throw new Error("Expression cron invalide.");
+	const parts = expression.trim().split(/\s+/);
+	if (parts.length !== 5) throw new Error("Utilisez cinq champs : minute heure jour mois jour-de-semaine.");
+	const ranges = [
+		[0, 59],
+		[0, 23],
+		[1, 31],
+		[1, 12],
+		[0, 7]
+	];
+	const fields = parts.map((part, index) => {
+		const [min, max] = ranges[index];
+		const values = /* @__PURE__ */ new Set();
+		for (const item of part.split(",")) {
+			if (!/^(?:\*|[0-9]{1,2}(?:-[0-9]{1,2})?)(?:\/[0-9]{1,2})?$/.test(item)) throw new Error("Seuls *, nombres, listes, plages et pas sont acceptés.");
+			const [span, stepText] = item.split("/");
+			const step = stepText ? Number(stepText) : 1;
+			if (step < 1 || step > max - min + 1 || stepText && span !== "*" && !span.includes("-")) throw new Error("Pas cron invalide : utilisez */n ou début-fin/n.");
+			const [low, high] = span === "*" ? [min, max] : span.includes("-") ? span.split("-").map(Number) : [Number(span), Number(span)];
+			if (low < min || high > max || low > high) throw new Error("Valeur cron hors limites.");
+			for (let value = low; value <= high; value += step) values.add(index === 4 && value === 7 ? 0 : value);
+		}
+		return values;
+	});
+	return {
+		expression: parts.join(" "),
+		fields,
+		anyDay: parts[2] === "*",
+		anyWeekday: parts[4] === "*"
+	};
+};
+const dayMatches = (cron, date) => {
+	const day = cron.fields[2].has(date.getUTCDate()), weekday = cron.fields[4].has(date.getUTCDay());
+	return cron.anyDay ? weekday : cron.anyWeekday ? day : day || weekday;
+};
+const nextWebCron = (cron, after) => {
+	const date = /* @__PURE__ */ new Date(Math.floor(after / 6e4) * 6e4 + 6e4);
+	const limit = date.getUTCFullYear() + 5;
+	while (date.getUTCFullYear() <= limit) {
+		if (!cron.fields[3].has(date.getUTCMonth() + 1)) {
+			date.setUTCMonth(date.getUTCMonth() + 1, 1);
+			date.setUTCHours(0, 0, 0, 0);
+			continue;
+		}
+		if (!dayMatches(cron, date)) {
+			date.setUTCDate(date.getUTCDate() + 1);
+			date.setUTCHours(0, 0, 0, 0);
+			continue;
+		}
+		if (!cron.fields[1].has(date.getUTCHours())) {
+			date.setUTCHours(date.getUTCHours() + 1, 0, 0, 0);
+			continue;
+		}
+		if (!cron.fields[0].has(date.getUTCMinutes())) {
+			date.setUTCMinutes(date.getUTCMinutes() + 1, 0, 0);
+			continue;
+		}
+		return date.toISOString();
+	}
+	return null;
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/scheduledTasks.ts
+const TASKS = "web_scheduled_tasks", RUNS = "web_task_runs";
+const stamp$2 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
+const ident = (value) => {
+	if (typeof value !== "string" || !/^[a-z0-9]{15}$/.test(value)) throw new BadRequestError("Tâche invalide.");
+	return value;
+};
+const taskFor = (e, permission) => {
+	const { user: actor, app: found } = requireWebAppPermission(e, permission), app = found, task = $app.findRecordById(TASKS, ident(e.request.pathValue("taskId")));
+	if (task.getString("appId") !== app.id) throw new NotFoundError();
+	return {
+		actor,
+		app,
+		task
+	};
+};
+const command = (row) => String(decryptWebValue(row.getString("commandEncrypted")).command || "");
+const runMetadata = (row, includeLog = true) => ({
+	id: row.id,
+	taskId: row.getString("taskId"),
+	taskName: row.getString("taskName"),
+	trigger: row.getString("trigger"),
+	status: row.getString("status"),
+	scheduledAt: row.getString("scheduledAt"),
+	startedAt: row.getString("startedAt"),
+	finishedAt: row.getString("finishedAt"),
+	deadline: row.getString("deadline"),
+	durationMs: row.getInt("durationMs"),
+	exitCode: row.getString("status") === "queued" || row.getString("status") === "running" ? null : row.getInt("exitCode"),
+	log: includeLog ? row.getString("log") : "",
+	truncated: row.getBool("truncated"),
+	error: row.getString("error"),
+	created: row.getString("created")
+});
+/** La commande déchiffrée peut contenir des identifiants écrits en clair : réservée à tasks.manage. */
+const taskMetadata = (row, canManage = true) => {
+	const last = $app.findRecordsByFilter(RUNS, "taskId={:id}", "-created", 1, 0, { id: row.id })[0];
+	return {
+		id: row.id,
+		name: row.getString("name"),
+		...canManage ? { command: command(row) } : {},
+		schedule: row.getString("schedule"),
+		timezone: "UTC",
+		enabled: row.getBool("enabled"),
+		timeoutSeconds: row.getInt("timeoutSeconds"),
+		nextRunAt: row.getString("nextRunAt"),
+		lastRun: last ? runMetadata(last, false) : null,
+		updated: row.getString("updated")
+	};
+};
+const next = (schedule, now = Date.now()) => {
+	try {
+		const parsed = parseWebCron(schedule), due = nextWebCron(parsed, now);
+		if (!due) throw new Error("Cette expression ne produit aucune occurrence dans les cinq prochaines années.");
+		return {
+			schedule: parsed.expression,
+			due
+		};
+	} catch (error) {
+		throw new BadRequestError(error instanceof Error ? error.message : "Expression cron invalide.");
+	}
+};
+const validate = (body, row) => {
+	if (Object.keys(body).some((key) => ![
+		"name",
+		"command",
+		"schedule",
+		"enabled",
+		"timeoutSeconds",
+		"timezone"
+	].includes(key))) throw new BadRequestError("Options de tâche invalides.");
+	const name = body.name === void 0 ? row?.getString("name") : body.name;
+	const cmd = body.command === void 0 ? row && command(row) : body.command;
+	const schedule = body.schedule === void 0 ? row?.getString("schedule") : body.schedule;
+	const enabled = body.enabled === void 0 ? row ? row.getBool("enabled") : true : body.enabled;
+	const timeout = body.timeoutSeconds === void 0 ? row ? row.getInt("timeoutSeconds") : 60 : body.timeoutSeconds;
+	if (typeof name !== "string" || !name.trim() || name.trim().length > 80 || name.includes("\0")) throw new BadRequestError("Nommez la tâche avec 1 à 80 caractères.");
+	if (typeof cmd !== "string" || !cmd.trim() || cmd.length > 4e3 || cmd.includes("\0")) throw new BadRequestError("Commande requise, limitée à 4 000 caractères.");
+	if (typeof enabled !== "boolean" || !Number.isInteger(timeout) || timeout < 1 || timeout > 900) throw new BadRequestError("La durée maximale doit être comprise entre 1 et 900 secondes.");
+	if (body.timezone !== void 0 && body.timezone !== "UTC") throw new BadRequestError("Les horaires sont exprimés en UTC.");
+	return {
+		name: name.trim(),
+		command: cmd,
+		enabled,
+		timeoutSeconds: timeout,
+		...next(schedule)
+	};
+};
+/**
+* Les tâches appartiennent à l'application, pas à leur auteur : actives tant que l'application existe dans un projet
+* (legacy : tant que l'auteur reste superAdmin). Les droits sont vérifiés à l'écriture et au lancement manuel.
+*/
+const actorValid = (id, appId, store = $app) => webAppSettingActive(appId, id, store);
+const publication = (appId, store = $app) => {
+	const app = store.findRecordById("web_apps", appId), id = app.getString("activeDeployment");
+	if (app.getString("status") !== "running" || !/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Démarrez une version publiée avant de lancer une tâche.");
+	const deployment = store.findRecordById("web_deployments", id), result = JSON.parse(deployment.getString("result") || "{}");
+	if (deployment.getString("appId") !== appId || deployment.getString("status") !== "ready" || result.container !== `ph-web-${appId}-${id}`) throw new BadRequestError("Le conteneur publié est indisponible.");
+	return {
+		app,
+		deployment,
+		containerName: result.container
+	};
+};
+const overlap = (taskId, store = $app) => store.findRecordsByFilter(RUNS, "taskId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: taskId }).length > 0;
+const enqueue = (task, actorId, trigger, occurrence, scheduledAt, store) => {
+	if (overlap(task.id, store)) throw new BadRequestError("Cette tâche possède déjà une exécution en attente ou en cours.");
+	const row = new Record(store.findCollectionByNameOrId(RUNS));
+	row.set("appId", task.getString("appId"));
+	row.set("taskId", task.id);
+	row.set("taskName", task.getString("name"));
+	row.set("actorId", actorId);
+	row.set("trigger", trigger);
+	row.set("occurrence", occurrence);
+	row.set("scheduledAt", scheduledAt);
+	row.set("status", "queued");
+	row.set("timeoutSeconds", task.getInt("timeoutSeconds"));
+	row.set("exitCode", -1);
+	row.set("snapshotEncrypted", encryptWebValue({
+		command: command(task),
+		timeoutSeconds: task.getInt("timeoutSeconds")
+	}));
+	store.save(row);
+	return row;
+};
+const HandleWebTasksList = (e) => {
+	const { app: found, role } = requireWebAppPermission(e, "app.read"), app = found, canManage = webRoleAllows(role, "tasks.manage");
+	let worker = {
+		ready: false,
+		checkedAt: ""
+	};
+	try {
+		const value = JSON.parse(toString($os.readFile(`${webRoot()}/tasks-status.json`)));
+		worker = {
+			ready: value.ready === true && Date.parse(value.checkedAt) > Date.now() - 25e3,
+			checkedAt: value.checkedAt || ""
+		};
+	} catch {}
+	return webJson(e, {
+		items: $app.findRecordsByFilter(TASKS, "appId={:id}", "created", 100, 0, { id: app.id }).map((row) => taskMetadata(row, canManage)),
+		timezone: "UTC",
+		worker
+	});
+};
+const HandleWebTasksCreate = (e) => {
+	const { user: actor, app: found } = requireWebAppPermission(e, "tasks.manage"), app = found, value = validate(webInput(e));
+	let result;
+	$app.runInTransaction((tx) => {
+		if (tx.findRecordsByFilter(TASKS, "appId={:id}", "", 20, 0, { id: app.id }).length >= 20) throw new BadRequestError("Vingt tâches maximum par application.");
+		const row = new Record(tx.findCollectionByNameOrId(TASKS));
+		row.set("appId", app.id);
+		row.set("actorId", actor.id);
+		row.set("name", value.name);
+		row.set("commandEncrypted", encryptWebValue({ command: value.command }));
+		row.set("schedule", value.schedule);
+		row.set("enabled", value.enabled);
+		row.set("timeoutSeconds", value.timeoutSeconds);
+		row.set("nextRunAt", value.due);
+		tx.save(row);
+		result = row;
+	});
+	return webJson(e, { task: taskMetadata(result) }, 201);
+};
+const HandleWebTaskUpdate = (e) => {
+	const { actor, task } = taskFor(e, "tasks.manage"), value = validate(webInput(e), task);
+	task.set("actorId", actor.id);
+	task.set("name", value.name);
+	task.set("commandEncrypted", encryptWebValue({ command: value.command }));
+	task.set("timeoutSeconds", value.timeoutSeconds);
+	if (task.getString("schedule") !== value.schedule || !task.getBool("enabled") && value.enabled) task.set("nextRunAt", value.due);
+	task.set("schedule", value.schedule);
+	task.set("enabled", value.enabled);
+	$app.save(task);
+	return webJson(e, { task: taskMetadata(task) });
+};
+const HandleWebTaskDelete = (e) => {
+	const { task } = taskFor(e, "tasks.manage");
+	$app.runInTransaction((tx) => {
+		const rows = tx.findRecordsByFilter(RUNS, "taskId={:id} && (status=\"queued\" || status=\"running\")", "", 100, 0, { id: task.id });
+		if (rows.some((row) => row.getString("status") === "running")) throw new BadRequestError("Attendez la fin de l’exécution avant de supprimer cette tâche.");
+		for (const row of rows) {
+			row.set("status", "cancelled");
+			row.set("finishedAt", stamp$2());
+			row.set("snapshotEncrypted", "");
+			row.set("error", "Tâche supprimée avant son exécution.");
+			tx.save(row);
+		}
+		tx.delete(task);
+	});
+	return webJson(e, { deleted: true });
+};
+const HandleWebTaskRun = (e) => {
+	const { actor, app, task } = taskFor(e, "tasks.run");
+	let result;
+	if (Object.keys(webInput(e)).length) throw new BadRequestError("Aucune option d’exécution n’est attendue.");
+	$app.runInTransaction((tx) => {
+		publication(app.id, tx);
+		result = enqueue(tx.findRecordById(TASKS, task.id), actor.id, "manual", `manual:${$security.randomString(32)}`, stamp$2(), tx);
+	});
+	return webJson(e, { run: runMetadata(result) }, 202);
+};
+const HandleWebTaskRuns = (e) => {
+	const app = requireWebAppPermission(e, "logs.read").app, query = e.request.url.query(), page = Math.max(1, Math.min(1e5, Math.floor(Number(query.get("page")) || 1))), taskId = query.get("taskId") || "";
+	if (taskId) ident(taskId);
+	const filter = "appId={:id}" + (taskId ? " && taskId={:taskId}" : ""), rows = $app.findRecordsByFilter(RUNS, filter, "-created,-id", 11, (page - 1) * 10, {
+		id: app.id,
+		taskId
+	});
+	const logRunId = query.get("logRunId") || "";
+	if (logRunId) ident(logRunId);
+	return webJson(e, {
+		items: rows.slice(0, 10).map((row) => runMetadata(row, row.id === logRunId)),
+		page,
+		hasMore: rows.length > 10
+	});
+};
+const requireWorker$1 = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const expected = $os.getenv("WEB_APPS_WORKER_SECRET"), received = e.request.header.get("X-Web-Worker") || "";
+	if (expected.length < 32 || !$security.equal(expected, received)) throw new UnauthorizedError();
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
+};
+const finish = (row, status, error, store) => {
+	row.set("status", status);
+	row.set("error", error);
+	row.set("finishedAt", stamp$2());
+	row.set("durationMs", Math.max(0, Date.now() - Date.parse(row.getString("startedAt") || stamp$2())));
+	row.set("leaseHash", "");
+	row.set("snapshotEncrypted", "");
+	store.save(row);
+};
+const lease = (input, store = $app) => {
+	const row = store.findRecordById(RUNS, ident(input.id));
+	if (row.getString("status") !== "running" || typeof input.proof !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.proof) || !$security.equal(row.getString("leaseHash"), $security.sha256(input.proof))) throw new UnauthorizedError("Exécution invalide.");
+	return row;
+};
+const HandleWebTaskClaim = (e) => {
+	requireWorker$1(e);
+	let result = null;
+	$app.runInTransaction((tx) => {
+		const now = Date.now(), nowText = stamp$2(now);
+		for (const row of tx.findRecordsByFilter(RUNS, "status=\"running\"", "startedAt", 100, 0)) if (Date.parse(row.getString("deadline")) + 15e3 < now) {
+			row.set("exitCode", 124);
+			finish(row, "timed_out", "La durée maximale a été dépassée ; le superviseur du conteneur a interrompu la commande.", tx);
+		} else return;
+		for (const task of tx.findRecordsByFilter(TASKS, "enabled=true && nextRunAt!=\"\" && nextRunAt<={:now}", "nextRunAt", 100, 0, { now: nowText })) {
+			const scheduledAt = task.getString("nextRunAt"), occurrence = `cron:${scheduledAt.slice(0, 16)}`;
+			task.set("lastScheduledAt", scheduledAt);
+			task.set("nextRunAt", next(task.getString("schedule"), now).due);
+			if (!actorValid(task.getString("actorId"), task.getString("appId"), tx)) {
+				task.set("enabled", false);
+				emitWebAlert(tx, "app", task.getString("appId"), "task_failed", "task-disabled:" + task.id + ":" + scheduledAt, {
+					taskName: task.getString("name").slice(0, 80),
+					status: "disabled",
+					reason: "rights"
+				});
+			} else if (!overlap(task.id, tx) && !tx.findRecordsByFilter(RUNS, "taskId={:id} && occurrence={:occurrence}", "", 1, 0, {
+				id: task.id,
+				occurrence
+			}).length) enqueue(task, task.getString("actorId"), "cron", occurrence, scheduledAt, tx);
+			tx.save(task);
+		}
+		for (const row of tx.findRecordsByFilter(RUNS, "status=\"queued\"", "created,id", 100, 0)) try {
+			if (!actorValid(row.getString("actorId"), row.getString("appId"), tx)) throw new Error("rights");
+			const current = publication(row.getString("appId"), tx), snapshot = decryptWebValue(row.getString("snapshotEncrypted")), published = decryptWebValue(current.deployment.getString("snapshotEncrypted"));
+			const values = [...Object.values(decryptWebValue(current.app.getString("envEncrypted")) || {}), ...Object.values(published.env || {})];
+			const secrets = [...new Set(values.map((entry) => entry?.value).filter((value) => typeof value === "string" && value.length > 0))];
+			const proof = $security.randomString(80), timeout = row.getInt("timeoutSeconds");
+			row.set("deploymentId", current.deployment.id);
+			row.set("status", "running");
+			row.set("startedAt", stamp$2(now));
+			row.set("deadline", stamp$2(now + (timeout + 5) * 1e3));
+			row.set("leaseHash", $security.sha256(proof));
+			row.set("snapshotEncrypted", encryptWebValue({
+				...snapshot,
+				secrets
+			}));
+			tx.save(row);
+			result = {
+				id: row.id,
+				taskId: row.getString("taskId"),
+				appId: current.app.id,
+				deploymentId: current.deployment.id,
+				containerName: current.containerName,
+				command: snapshot.command,
+				timeoutSeconds: timeout,
+				deadline: row.getString("deadline"),
+				proof,
+				secrets
+			};
+			break;
+		} catch {
+			finish(row, "failed", "Le conteneur publié ou les droits sur le projet ne permettent plus cette exécution.", tx);
+		}
+	});
+	return webJson(e, { job: result });
+};
+const HandleWebTaskValidate = (e) => {
+	requireWorker$1(e);
+	const row = lease(webInput(e));
+	let valid = false;
+	try {
+		const current = publication(row.getString("appId"));
+		valid = actorValid(row.getString("actorId"), row.getString("appId")) && current.deployment.id === row.getString("deploymentId") && Date.parse(row.getString("deadline")) > Date.now();
+	} catch {}
+	return webJson(e, { valid });
+};
+const HandleWebTaskReport = (e) => {
+	requireWorker$1(e);
+	const input = webInput(e);
+	if (![
+		"succeeded",
+		"failed",
+		"timed_out"
+	].includes(input.status) || !Number.isInteger(input.exitCode) || input.exitCode < -1 || input.exitCode > 255 || typeof input.log !== "string" || input.log.length > 2e5 || typeof input.truncated !== "boolean") throw new BadRequestError("Compte rendu de tâche invalide.");
+	if (input.status === "succeeded" && input.exitCode !== 0) throw new BadRequestError("Code de sortie incohérent.");
+	let result;
+	$app.runInTransaction((tx) => {
+		const row = lease(input, tx), snapshot = decryptWebValue(row.getString("snapshotEncrypted"));
+		let log = input.log;
+		for (const secret of (snapshot.secrets || []).sort((a, b) => b.length - a.length)) if (secret) log = log.split(secret).join("[masqué]");
+		row.set("log", log.slice(-65536));
+		row.set("truncated", input.truncated || log.length > 65536);
+		row.set("exitCode", input.exitCode);
+		const error = input.status === "timed_out" ? "La durée maximale a été dépassée." : input.reason === "container_changed" ? "Le conteneur publié ou les droits ont changé pendant l’exécution." : input.status === "failed" ? "La commande a échoué. Consultez sa sortie et son code de retour." : "";
+		finish(row, input.status, error, tx);
+		result = runMetadata(row);
+	});
+	return webJson(e, { run: result });
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/observability.ts
+const RUNTIME_LOG_READER = String.raw`
+import sys,json,pathlib,os,stat,datetime,re
+root=pathlib.Path(sys.argv[1]).absolute();app=sys.argv[2];deployment=sys.argv[3];q=json.loads(sys.argv[4]);empty={'items':[],'generation':'','deploymentId':deployment,'checkedAt':'','state':'waiting','olderCursor':'','newerCursor':'','hasOlder':False,'hasNewer':False,'reset':False,'truncated':False,'retention':{'hours':24,'maxBytes':2097152}}
+try:
+ path=root/'runtime-logs'/(app+'.json')
+ if root.resolve()!=root or path.resolve()!=path:raise ValueError()
+ fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+ try:
+  info=os.fstat(fd)
+  if not stat.S_ISREG(info.st_mode)or info.st_size>3145728:raise ValueError()
+  with os.fdopen(os.dup(fd),'rb')as f:value=json.load(f)
+ finally:os.close(fd)
+ if value.get('appId')!=app or value.get('deploymentId')!=deployment or value.get('version')!=1:raise ValueError()
+ rows=value.get('records',[])
+ if not isinstance(rows,list)or len(rows)>10000:raise ValueError()
+ rows=[r for r in rows if isinstance(r,dict)and isinstance(r.get('message'),str)and isinstance(r.get('id'),str)and isinstance(r.get('timestamp'),str)]
+ def date(v):return datetime.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+',r'\1',v).replace('Z','+00:00')).timestamp()
+ if q.get('from'):rows=[r for r in rows if date(r['timestamp'])>=date(q['from'])]
+ if q.get('to'):rows=[r for r in rows if date(r['timestamp'])<=date(q['to'])]
+ if q.get('q'):rows=[r for r in rows if q['q'].lower()in r['message'].lower()]
+ for name in ['level','stream']:
+  if q.get(name)and q[name]!='all':rows=[r for r in rows if r.get(name)==q[name]]
+ cursor=q.get('cursor','');generation=value.get('generation','');position=None;reset=False
+ if cursor:
+  gen,_,ident=cursor.partition(':')
+  if gen==generation:position=next((i for i,r in enumerate(rows)if r['id']==ident),None)
+  if position is None:reset=True
+ direction=q.get('direction','older')
+ if reset:direction='older'
+ end=position if position is not None and direction=='older'else len(rows);start=position+1 if position is not None and direction=='newer'else 0
+ candidates=rows[start:end] if direction=='older'else rows[start:]
+ selected=[];size=0
+ for row in (reversed(candidates)if direction=='older'else candidates):
+  amount=len(json.dumps(row,ensure_ascii=False).encode())
+  if len(selected)>=q['limit']or size+amount>65536:break
+  selected.append(row);size+=amount
+ if direction=='older':selected.reverse()
+ first=rows.index(selected[0])if selected else -1;last=rows.index(selected[-1])if selected else -1
+ print(json.dumps({**empty,'items':selected,'generation':generation,'checkedAt':value.get('checkedAt',''),'state':'stale'if value.get('checkedAt')and date(value['checkedAt'])<datetime.datetime.now(datetime.timezone.utc).timestamp()-30 else value.get('state','waiting'),'olderCursor':generation+':'+selected[0]['id']if selected else cursor,'newerCursor':generation+':'+selected[-1]['id']if selected else cursor,'hasOlder':first>0,'hasNewer':last>=0 and last<len(rows)-1,'reset':reset,'truncated':bool(value.get('truncated'))},ensure_ascii=False))
+except Exception:print(json.dumps(empty))
+`;
+const worker = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const expected = $os.getenv("WEB_APPS_WORKER_SECRET");
+	if (expected.length < 32 || !$security.equal(expected, e.request.header.get("X-Web-Worker") || "")) throw new UnauthorizedError();
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
+};
+const secretsFor = (app, deployment) => {
+	const values = [decryptWebValue(app.getString("envEncrypted")), decryptWebValue(deployment.getString("snapshotEncrypted"))?.env || {}];
+	return [...new Set(values.flatMap((env) => Object.values(env || {}).map((entry) => entry?.value).filter((value) => typeof value === "string" && !!value)))].sort((a, b) => b.length - a.length);
+};
+const HandleWebRuntimeLogConfig = (e) => {
+	worker(e);
+	const input = webInput(e), page = Math.max(1, Math.min(1e4, Math.floor(Number(input.page) || 1))), rows = $app.findRecordsByFilter("web_apps", "activeDeployment!=\"\"", "id", 26, (page - 1) * 25);
+	const items = [];
+	for (const app of rows.slice(0, 25)) try {
+		const deployment = $app.findRecordById("web_deployments", app.getString("activeDeployment")), result = JSON.parse(deployment.getString("result") || "{}");
+		if (deployment.getString("appId") !== app.id || deployment.getString("status") !== "ready" || result.container !== `ph-web-${app.id}-${deployment.id}`) continue;
+		items.push({
+			appId: app.id,
+			deploymentId: deployment.id,
+			containerName: result.container,
+			secrets: secretsFor(app, deployment)
+		});
+	} catch {}
+	return webJson(e, {
+		items,
+		page,
+		hasMore: rows.length > 25
+	});
+};
+const HandleWebRuntimeLogs = (e) => {
+	const app = requireWebAppPermission(e, "logs.read").app, depId = app.getString("activeDeployment"), query = e.request.url.query();
+	if (!/^[a-z0-9]{15}$/.test(depId)) return webJson(e, {
+		items: [],
+		state: "unpublished",
+		hasOlder: false,
+		hasNewer: false,
+		olderCursor: "",
+		newerCursor: "",
+		reset: false,
+		truncated: false,
+		retention: {
+			hours: 24,
+			maxBytes: 2097152
+		}
+	});
+	const deployment = $app.findRecordById("web_deployments", depId);
+	if (deployment.getString("appId") !== app.id) throw new NotFoundError();
+	const options = {
+		q: (query.get("q") || "").trim(),
+		level: query.get("level") || "all",
+		stream: query.get("stream") || "all",
+		from: query.get("from") || "",
+		to: query.get("to") || "",
+		cursor: query.get("cursor") || "",
+		direction: query.get("direction") || "older",
+		limit: Math.max(1, Math.min(200, Math.floor(Number(query.get("limit")) || 100)))
+	};
+	if (options.q.length > 100 || ![
+		"all",
+		"debug",
+		"info",
+		"warn",
+		"error",
+		"unknown"
+	].includes(options.level) || ![
+		"all",
+		"stdout",
+		"stderr"
+	].includes(options.stream) || !["older", "newer"].includes(options.direction) || options.cursor && !/^[a-f0-9]{16}:[a-f0-9]{24}$/.test(options.cursor)) throw new BadRequestError("Filtres du journal invalides.");
+	for (const value of [options.from, options.to]) if (value && (!Number.isFinite(Date.parse(value)) || value.length > 40)) throw new BadRequestError("Horodatage invalide.");
+	if (options.from && options.to && Date.parse(options.from) > Date.parse(options.to)) throw new BadRequestError("La fin doit suivre le début.");
+	let value;
+	try {
+		value = JSON.parse(toString($os.cmd("python3", "-c", RUNTIME_LOG_READER, webRoot(), app.id, depId, JSON.stringify(options)).combinedOutput()));
+	} catch {
+		throw new BadRequestError("Le journal d’exécution est momentanément indisponible.");
+	}
+	const masks = [...new Set(secretsFor(app, deployment).flatMap((secret) => [secret, ...secret.split(/\r?\n/).filter(Boolean)]))].sort((a, b) => b.length - a.length);
+	const pattern = masks.length ? new RegExp(masks.map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g") : null;
+	for (const row of value.items || []) if (pattern) row.message = String(row.message || "").replace(pattern, "[masqué]");
+	return webJson(e, value);
+};
+
+//#endregion
+//#region ../common/webProjectGroups.ts
+const WEB_PROJECT_NAME_MAX = 80;
+/** Plafonds de GET /api/web-projects/groups (au-delà : `truncated: true`). */
+const WEB_PROJECT_GROUP_LIMITS = {
+	projects: 200,
+	apps: 1e3
+};
+/** '' si valide, sinon le message d'erreur français (HTTP 400). */
+const webProjectNameError = (value) => typeof value === "string" && value.trim() && value.trim().length <= 80 ? "" : "Nom de projet requis (80 caractères maximum).";
+const ACCENTS = {
+	à: "a",
+	á: "a",
+	â: "a",
+	ã: "a",
+	ä: "a",
+	å: "a",
+	æ: "ae",
+	ç: "c",
+	è: "e",
+	é: "e",
+	ê: "e",
+	ë: "e",
+	ì: "i",
+	í: "i",
+	î: "i",
+	ï: "i",
+	ñ: "n",
+	ò: "o",
+	ó: "o",
+	ô: "o",
+	õ: "o",
+	ö: "o",
+	œ: "oe",
+	ù: "u",
+	ú: "u",
+	û: "u",
+	ü: "u",
+	ý: "y",
+	ÿ: "y"
+};
+/** Nom court d'un site déduit de son nom : « Back-office Été » -> « back-office-ete » ; jamais vide (« site »). */
+const webSiteSlug = (name) => {
+	return `${name ?? ""}`.toLowerCase().replace(/[^\x00-\x7f]/g, (c) => ACCENTS[c] ?? "-").replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 60).replace(/-+$/, "") || "site";
+};
+/** `base`, sinon `base-2` … `base-99` (tronqué à 60 caractères) ; '' si tout est pris. */
+const webUniqueSlug = (base, taken) => {
+	const used = new Set(taken);
+	if (!used.has(base)) return base;
+	for (let n = 2; n < 100; n++) {
+		const suffix = `-${n}`, candidate = `${base.slice(0, 60 - suffix.length).replace(/-+$/, "")}${suffix}`;
+		if (!used.has(candidate)) return candidate;
+	}
+	return "";
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/deletion.ts
+const JOBS = "web_deletion_jobs", stamp$1 = () => (/* @__PURE__ */ new Date()).toISOString();
+const assertStorageSettled = () => {
+	let pending = false;
+	try {
+		$os.stat(($os.getenv("WEB_APPS_ROOT") || "/home/pockethost-web/data") + "/storage-operation.json");
+		pending = true;
+	} catch {}
+	if (pending) throw new BadRequestError("Une opération de stockage doit encore être réconciliée. Réessayez après sa fin.");
+};
+const rows$1 = (store, collection, appId, filter = "") => store.findRecordsByFilter(collection, "appId={:id}" + (filter ? " && (" + filter + ")" : ""), "", 0, 0, { id: appId });
+const disableAndDeleteBackups = (app, store) => {
+	if (!app.getString("deletionId")) for (const collection of ["web_app_backup_settings", "web_scheduled_tasks"]) for (const row of rows$1(store, collection, app.id)) {
+		row.set("enabled", false);
+		store.save(row);
+	}
+	for (const row of rows$1(store, "web_app_backups", app.id, "status!=\"deleted\" && status!=\"deleting\"")) {
+		row.set("status", "deleting");
+		row.set("operation", "delete");
+		row.set("leaseHash", "");
+		row.set("leaseAt", "");
+		row.set("leaseAttempts", 0);
+		row.set("error", "");
+		store.save(row);
+	}
+	for (const row of rows$1(store, "web_storage_jobs", app.id, "(operation=\"backup\" || operation=\"delete\") && status!=\"deleted\" && status!=\"running\" && status!=\"deleting\"")) {
+		row.set("operation", "delete");
+		row.set("status", "deleting");
+		row.set("leaseHash", "");
+		row.set("leaseAt", "");
+		store.save(row);
+	}
+};
+const requestDeletion = (kind, found, actorId, confirmation) => {
+	let result;
+	$app.runInTransaction((tx) => {
+		const target = tx.findRecordById(kind === "app" ? "web_apps" : "web_projects", found.id);
+		if (confirmation !== target.getString("name")) throw new BadRequestError("Saisissez le nom exact pour confirmer la suppression.");
+		const existing = target.getString("deletionId");
+		if (existing) {
+			const job = tx.findRecordById(JOBS, existing);
+			if (job.getString("kind") !== kind || job.getString("targetId") !== target.id) throw new BadRequestError("La suppression du projet entier est déjà engagée.");
+			if (job.getString("status") === "failed") {
+				assertStorageSettled();
+				const snapshot = JSON.parse(job.getString("snapshot"));
+				for (const item of snapshot.apps) disableAndDeleteBackups(tx.findRecordById("web_apps", item.id), tx);
+				job.set("status", "queued");
+				job.set("error", "");
+				job.set("stage", "Nouvel essai de nettoyage");
+				job.set("leaseHash", "");
+				tx.save(job);
+			}
+			result = {
+				accepted: true,
+				deletion: webDeletionView(target, tx)
+			};
+			return;
+		}
+		assertStorageSettled();
+		const members = kind === "project" ? tx.findRecordsByFilter("web_app_environments", "projectId={:id} && appId!=\"\"", "", 501, 0, { id: target.id }) : [];
+		if (members.length > 500) throw new BadRequestError("Retirez des applications avant de supprimer un projet de plus de 500 sites.");
+		const apps = kind === "app" ? [target] : members.map((m) => tx.findRecordById("web_apps", m.getString("appId")));
+		const snapshot = {
+			kind,
+			targetId: target.id,
+			name: target.getString("name"),
+			apps: []
+		};
+		for (const app of apps) {
+			if (app.getString("deletionId")) throw new BadRequestError("Une application est déjà en cours de suppression. Attendez la fin du nettoyage.");
+			if (webMembership(app.id, tx)?.getString("state") === "closing") throw new BadRequestError("Une preview est déjà en cours de fermeture. Réessayez après son nettoyage.");
+			for (const collection of [
+				"web_deployments",
+				"web_storage_jobs",
+				"web_app_backups"
+			]) if (rows$1(tx, collection, app.id, collection === "web_app_backups" ? "status=\"running\"" : "status=\"queued\" || status=\"running\"").length) throw new BadRequestError("Un déploiement, une sauvegarde ou une opération de stockage est en cours. Attendez sa fin ou annulez le déploiement avant de supprimer.");
+			snapshot.apps.push({
+				id: app.id,
+				deployments: rows$1(tx, "web_deployments", app.id).map((r) => r.id),
+				taskRuns: rows$1(tx, "web_task_runs", app.id).map((r) => r.id)
+			});
+		}
+		const job = new Record(tx.findCollectionByNameOrId(JOBS));
+		job.set("kind", kind);
+		job.set("targetId", target.id);
+		job.set("actorId", actorId);
+		job.set("status", "queued");
+		job.set("snapshot", snapshot);
+		job.set("stage", "Préparation du nettoyage");
+		tx.save(job);
+		for (const app of apps) {
+			disableAndDeleteBackups(app, tx);
+			app.set("config", {
+				...JSON.parse(app.getString("config") || "{}"),
+				autoDeploy: false
+			});
+			app.set("deletionId", job.id);
+			app.set("status", "deleting");
+			app.set("lastError", "");
+			tx.save(app);
+			const membership = webMembership(app.id, tx);
+			if (membership) auditWebProject(membership.getString("projectId"), actorId, "application-deletion-requested", {
+				appId: app.id,
+				deletionId: job.id
+			}, tx);
+		}
+		if (kind === "project") {
+			target.set("previewEnabled", false);
+			target.set("deletionId", job.id);
+			tx.save(target);
+			auditWebProject(target.id, actorId, "project-deletion-requested", {
+				deletionId: job.id,
+				siteCount: apps.length
+			}, tx);
+		}
+		result = {
+			accepted: true,
+			deletion: webDeletionView(target, tx)
+		};
+	});
+	return result;
+};
+const HandleWebAppDelete = (e) => {
+	const { user, app } = requireWebAppPermission(e, "app.delete");
+	return webJson(e, requestDeletion("app", app, user.id, webInput(e).confirmation), 202);
+};
+const HandleWebProjectDeleteContents = (e) => {
+	const { user, project } = requireWebProjectPermission(e, "project.delete");
+	return webJson(e, requestDeletion("project", project, user.id, webInput(e).confirmation), 202);
+};
+const snapshotOf = (job, store) => {
+	const snapshot = JSON.parse(job.getString("snapshot"));
+	if (snapshot.kind !== job.getString("kind") || snapshot.targetId !== job.getString("targetId") || !Array.isArray(snapshot.apps)) throw new BadRequestError("Périmètre du nettoyage invalide.");
+	for (const item of snapshot.apps) if (!/^[a-z0-9]{15}$/.test(item.id) || store.findRecordById("web_apps", item.id).getString("deletionId") !== job.id) throw new BadRequestError("Périmètre du nettoyage modifié.");
+	if (snapshot.kind === "project" && store.findRecordById("web_projects", snapshot.targetId).getString("deletionId") !== job.id) throw new BadRequestError("Suppression du projet non autorisée.");
+	return snapshot;
+};
+const HandleWebDeletionClaim = (e) => {
+	requireWorker(e);
+	let claimed = null;
+	$app.runInTransaction((tx) => {
+		for (const job of tx.findRecordsByFilter(JOBS, "status=\"queued\" || (status=\"running\" && heartbeatAt<{:stale})", "created", 20, 0, { stale: (/* @__PURE__ */ new Date(Date.now() - 5 * 6e4)).toISOString().replace("T", " ") })) {
+			const snapshot = snapshotOf(job, tx);
+			const backups = snapshot.apps.flatMap((app) => [...rows$1(tx, "web_app_backups", app.id, "status!=\"deleted\""), ...rows$1(tx, "web_storage_jobs", app.id, "operation=\"delete\" && status!=\"deleted\"")]);
+			if (backups.length) {
+				job.set("stage", "Suppression des sauvegardes");
+				if (backups.some((b) => b.getString("status") === "failed")) {
+					job.set("status", "failed");
+					job.set("error", "La suppression d’une sauvegarde a échoué. Réessayez le nettoyage.");
+				}
+				tx.save(job);
+				continue;
+			}
+			const lease = $security.randomString(40);
+			job.set("status", "running");
+			job.set("leaseHash", $security.sha256(lease));
+			job.set("heartbeatAt", stamp$1());
+			job.set("stage", "Nettoyage des applications");
+			tx.save(job);
+			claimed = {
+				id: job.id,
+				lease,
+				...snapshot
+			};
+			break;
+		}
+	});
+	return webJson(e, { job: claimed });
+};
+const eraseRows = (store, collection, field, id) => {
+	for (;;) {
+		const records = store.findRecordsByFilter(collection, field + "={:id}", "", 200, 0, { id });
+		for (const record of records) store.delete(record);
+		if (records.length < 200) return;
+	}
+};
+const HandleWebDeletionReport = (e) => {
+	requireWorker(e);
+	const input = webInput(e);
+	if (!/^[a-z0-9]{15}$/.test(input.id || "") || typeof input.lease !== "string") throw new BadRequestError("Nettoyage invalide.");
+	$app.runInTransaction((tx) => {
+		const job = tx.findRecordById(JOBS, input.id);
+		if (!$security.equal(job.getString("leaseHash"), $security.sha256(input.lease))) throw new ForbiddenError("Bail de nettoyage invalide.");
+		if (job.getString("status") === "ready") return;
+		if (job.getString("status") !== "running" || ![
+			"running",
+			"ready",
+			"failed"
+		].includes(input.status)) throw new BadRequestError("Nettoyage non actif.");
+		const snapshot = snapshotOf(job, tx);
+		if (input.status === "ready") {
+			if (input.removed !== true) throw new BadRequestError("Nettoyage non confirmé.");
+			const collections = tx.findAllCollections().filter((c) => c.type === "base" && c.name.startsWith("web_") && c.name !== JOBS && c.fields.getByName("appId"));
+			for (const item of snapshot.apps) {
+				if (rows$1(tx, "web_app_backups", item.id, "status!=\"deleted\"").length) throw new BadRequestError("Les sauvegardes ne sont pas encore supprimées.");
+				if (rows$1(tx, "web_storage_jobs", item.id, "operation=\"delete\" && status!=\"deleted\"").length) throw new BadRequestError("Les snapshots de volumes ne sont pas encore supprimés.");
+				for (const project of tx.findRecordsByFilter("web_projects", "previewSourceAppId={:id}", "", 0, 0, { id: item.id })) {
+					if (project.getString("deletionId") === job.id) continue;
+					project.set("previewEnabled", false);
+					project.set("previewSourceAppId", "");
+					tx.save(project);
+				}
+				for (const collection of collections) eraseRows(tx, collection.name, "appId", item.id);
+				tx.delete(tx.findRecordById("web_apps", item.id));
+			}
+			if (snapshot.kind === "project") {
+				for (const source of tx.findRecordsByFilter("web_git_sources", "projectId={:id}", "", 0, 0, { id: snapshot.targetId })) {
+					source.set("projectId", "");
+					tx.save(source);
+				}
+				for (const name of ["web_app_environments", "web_project_variables"]) eraseRows(tx, name, "projectId", snapshot.targetId);
+				auditWebProject(snapshot.targetId, job.getString("actorId"), "project-deleted", {
+					deletionId: job.id,
+					siteCount: snapshot.apps.length
+				}, tx);
+				tx.delete(tx.findRecordById("web_projects", snapshot.targetId));
+			}
+		}
+		job.set("status", input.status);
+		if (input.status === "ready") job.set("snapshot", {
+			kind: snapshot.kind,
+			targetId: snapshot.targetId,
+			name: snapshot.name,
+			apps: snapshot.apps.map((app) => ({ id: app.id }))
+		});
+		job.set("heartbeatAt", stamp$1());
+		job.set("stage", String(input.stage || (input.status === "ready" ? "Suppression terminée" : "")).slice(0, 150));
+		job.set("error", input.status === "failed" ? String(input.error || "Le nettoyage a échoué. Réessayez.").slice(0, 1e3) : "");
+		tx.save(job);
+	});
+	return webJson(e, { ok: true });
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/projectGroups.ts
+/**
+* Applications web — projets « groupes de sites » : liste groupée, création et suppression d'un projet, rangement d'un
+* site (sans projet -> P, P -> sans projet, A -> B). Le lien application -> projet reste la ligne web_app_environments
+* (appId unique), seule source des droits.
+*/
+const LIMITS = WEB_PROJECT_GROUP_LIMITS;
+const has = (value, name) => Object.prototype.hasOwnProperty.call(value, name);
+const groupProjectView = (row, role, memberRole, counts = {
+	sites: 0,
+	previews: 0
+}) => ({
+	...webProjectView(row),
+	role,
+	memberRole,
+	capabilities: webCapabilities(role),
+	siteCount: counts.sites,
+	previewCount: counts.previews
+});
+const membershipOf = (row) => row ? {
+	id: row.id,
+	environment: row.getString("environment"),
+	slug: row.getString("slug"),
+	state: row.getString("state"),
+	previewNumber: row.getInt("previewNumber"),
+	sourceAppId: row.getString("sourceAppId")
+} : null;
+const findApps = (ids) => {
+	const out = /* @__PURE__ */ new Map();
+	for (let i = 0; i < ids.length; i += 200) for (const row of $app.findRecordsByIds("web_apps", ids.slice(i, i + 200))) if (row) out.set(row.id, row);
+	return out;
+};
+const byName = (a, b) => a.name.localeCompare(b.name);
+/** GET /api/web-projects/groups — projets accessibles et leurs sites ; superAdmin : tout, plus « Sans projet ». */
+const HandleWebProjectGroups = (e) => {
+	const user = requireWebUser(e), platform = isWebPlatformAdmin(user), q = webProjectAccessQuery(user, "id"), rows = $app.findRecordsByFilter("web_projects", q.filter, "name", LIMITS.projects + 1, 0, q.params);
+	let truncated = rows.length > LIMITS.projects;
+	const memberships = /* @__PURE__ */ new Map();
+	for (const m of listWebMemberships(user)) if (isWebRole(m.role)) memberships.set(m.projectId, m.role);
+	const projects = /* @__PURE__ */ new Map();
+	for (const row of rows.slice(0, LIMITS.projects)) {
+		const memberRole = memberships.get(row.id) || null, role = platform ? "platform" : memberRole;
+		projects.set(row.id, {
+			row,
+			role,
+			memberRole,
+			capabilities: webCapabilities(role)
+		});
+	}
+	const access = platform ? {
+		filter: "",
+		params: {}
+	} : webProjectAccessQuery(user, "projectId"), environments = $app.findRecordsByFilter("web_app_environments", "appId != ''" + (access.filter ? ` && ${access.filter}` : ""), "slug", LIMITS.apps + 1, 0, access.params);
+	if (environments.length > LIMITS.apps) truncated = true;
+	const kept = environments.slice(0, LIMITS.apps).filter((row) => projects.has(row.getString("projectId"))), apps = findApps(kept.map((row) => row.getString("appId")));
+	const items = /* @__PURE__ */ new Map();
+	for (const env of kept) {
+		const app = apps.get(env.getString("appId"));
+		if (!app) continue;
+		const project = projects.get(env.getString("projectId")), list = items.get(project.row.id) || [];
+		list.push({
+			...serializeWebApp(app),
+			access: {
+				projectId: project.row.id,
+				role: project.role,
+				memberRole: project.memberRole,
+				capabilities: project.capabilities
+			},
+			membership: membershipOf(env)
+		});
+		items.set(project.row.id, list);
+	}
+	const groups = [...projects.values()].map(({ row, role, memberRole }) => {
+		const list = items.get(row.id) || [], sites = list.filter((app) => app.membership.environment !== "preview").sort(byName), previews = list.filter((app) => app.membership.environment === "preview").sort((a, b) => a.membership.previewNumber - b.membership.previewNumber);
+		return {
+			project: groupProjectView(row, role, memberRole, {
+				sites: sites.length,
+				previews: previews.length
+			}),
+			apps: [...sites, ...previews]
+		};
+	}).sort((a, b) => a.project.name.localeCompare(b.project.name));
+	let unassigned = null;
+	if (platform) {
+		const ids = arrayOf(new DynamicModel({ id: "" }));
+		$app.db().newQuery(`SELECT id FROM web_apps WHERE id NOT IN (SELECT appId FROM web_app_environments WHERE appId != '') ORDER BY created DESC LIMIT ${LIMITS.apps + 1}`).all(ids);
+		if (ids.length > LIMITS.apps) truncated = true;
+		const found = findApps(ids.slice(0, LIMITS.apps).map((row) => `${row.id}`)), capabilities = webCapabilities("platform");
+		unassigned = { apps: [...found.values()].map((app) => ({
+			...serializeWebApp(app),
+			access: {
+				projectId: "",
+				role: "platform",
+				memberRole: null,
+				capabilities
+			},
+			membership: null
+		})).sort(byName) };
+	}
+	return webJson(e, {
+		enabled: true,
+		isPlatformAdmin: platform,
+		capabilities: webAppsCapability(),
+		groups,
+		unassigned,
+		truncated
+	});
+};
+/** POST /api/web-projects — projet vide (groupe de sites) créé par un superAdmin, qui en devient propriétaire. */
+const HandleWebProjectCreate = (e) => {
+	const user = requirePlatformAdmin(e), input = webInput(e), invalid = webProjectNameError(input.name);
+	if (invalid) throw new BadRequestError(invalid);
+	const name = `${input.name}`.trim();
+	let project;
+	$app.runInTransaction((tx) => {
+		const key = (value) => value.trim().normalize("NFC").toLowerCase(), names = arrayOf(new DynamicModel({ name: "" }));
+		tx.db().newQuery("SELECT name FROM web_projects").all(names);
+		if (names.some((row) => key(`${row.name}`) === key(name))) throw new BadRequestError("Un projet porte déjà ce nom.");
+		const row = new Record(tx.findCollectionByNameOrId("web_projects"));
+		row.set("name", name);
+		row.set("repository", "");
+		row.set("multiRepository", true);
+		row.set("actorId", user.id);
+		row.set("previewEnabled", false);
+		row.set("previewSourceAppId", "");
+		row.set("previewMax", 3);
+		row.set("previewTtlHours", 24);
+		row.set("allowedRepositories", []);
+		tx.save(row);
+		const member = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS));
+		member.set("project", row.id);
+		member.set("user", user.id);
+		member.set("role", "owner");
+		member.set("invitedBy", user.id);
+		tx.save(member);
+		auditWebProject(row.id, user.id, "project-created", {
+			name,
+			standalone: true,
+			ownerId: user.id
+		}, tx);
+		project = groupProjectView(row, "platform", "owner");
+	});
+	return webJson(e, { project }, 201);
+};
+/**
+* DELETE /api/web-projects/{projectId} — refusé tant qu'il reste un site (previews comprises) : un détachement en masse
+* ferait perdre l'accès aux membres sans bruit. L'audit est conservé (webAppDetachment, webHistoryInScope).
+*/
+const HandleWebProjectDelete = (e) => {
+	const { user, project: found } = requireWebProjectPermission(e, "project.delete"), projectId = found.id;
+	if (webInput(e).deleteContents === true || found.getString("deletionId")) return HandleWebProjectDeleteContents(e);
+	$app.runInTransaction((tx) => {
+		const project = tx.findRecordById("web_projects", projectId), sites = tx.findRecordsByFilter("web_app_environments", "projectId={:id} && appId != ''", "", 1e3, 0, { id: projectId }).length;
+		if (sites) throw new BadRequestError(`Ce projet contient encore ${sites} site(s). Retirez-les ou déplacez-les avant de le supprimer.`);
+		if (tx.findRecordsByFilter("web_app_environments", "projectId={:id} && appId = '' && state != 'closed'", "", 1, 0, { id: projectId }).length) throw new BadRequestError("Le nettoyage de previews est en cours. Réessayez dans quelques minutes.");
+		for (const row of tx.findRecordsByFilter("web_app_environments", "projectId={:id}", "", 0, 0, { id: projectId })) tx.delete(row);
+		for (const row of tx.findRecordsByFilter("web_project_variables", "projectId={:id}", "", 0, 0, { id: projectId })) tx.delete(row);
+		for (const row of tx.findRecordsByFilter("web_git_sources", "projectId={:id}", "", 0, 0, { id: projectId })) {
+			row.set("projectId", "");
+			tx.save(row);
+		}
+		auditWebProject(projectId, user.id, "project-deleted", {
+			name: project.getString("name"),
+			actorId: user.id
+		}, tx);
+		tx.delete(project);
+	});
+	return webJson(e, {
+		deleted: true,
+		projectId
+	});
+};
+const targetProject = (projectId, store) => {
+	try {
+		return store.findRecordById("web_projects", projectId);
+	} catch {
+		throw new NotFoundError("Projet introuvable.");
+	}
+};
+const busy = (appId, store) => store.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: appId }).length > 0;
+/**
+* Previews ouvertes à partir du site : refus. Site modèle des previews de son projet : previews désactivées (le modèle
+* quitte le projet). Renvoie true si elles l'ont été.
+*/
+const releasePreviewSource = (app, projectId, user, tx) => {
+	if (tx.findRecordsByFilter("web_app_environments", "projectId={:project} && environment='preview' && sourceAppId={:app} && appId != ''", "", 1, 0, {
+		project: projectId,
+		app: app.id
+	}).length) throw new BadRequestError("Fermez d’abord les previews ouvertes à partir de ce site.");
+	const project = tx.findRecordById("web_projects", projectId);
+	if (project.getString("previewSourceAppId") !== app.id) return false;
+	project.set("previewEnabled", false);
+	project.set("previewSourceAppId", "");
+	tx.save(project);
+	auditWebProject(projectId, user.id, "settings-updated", {
+		previewEnabled: false,
+		reason: "preview-source-moved"
+	}, tx);
+	return true;
+};
+/**
+* Variables locales du site + variables partagées de l'environnement cible : même limite qu'au déploiement, vérifiée
+* avant d'enregistrer le rangement (sinon chaque résolution échouerait ensuite).
+*/
+const assertMergedVariables = (appId, project, environment, tx) => {
+	const combined = {
+		...decryptWebValue(webProjectVariable(project.id, environment, tx)?.getString("valueEncrypted") || ""),
+		...decryptWebValue(tx.findRecordById("web_apps", appId).getString("envEncrypted"))
+	};
+	try {
+		planWebEnvironment(combined, [], "merge");
+	} catch (error) {
+		throw new BadRequestError(`Variables de ce site et variables partagées de « ${project.getString("name")} » : ${error instanceof Error ? error.message : "limite dépassée"}`);
+	}
+};
+/**
+* PUT /api/web-apps/{id}/project — ranger (sans projet -> P : app.attach), retirer (P -> sans projet : app.detach) ou
+* déplacer (A -> B : app.move sur A ET sur B). Gardes dans cet ordre : application visible, corps valide, droits.
+*/
+const HandleWebAppProjectMove = (e) => {
+	const access = requireWebAppPermission(e, "app.read"), user = access.user, app = access.app, input = webInput(e);
+	if (input.projectId !== null && typeof input.projectId !== "string") throw new BadRequestError("Projet invalide.");
+	const targetId = input.projectId === null ? null : webProjectId(input.projectId), environment = input.environment === void 0 ? "" : permanent(input.environment), slug = input.slug === void 0 ? "" : slugOf(input.slug);
+	if (input.copySharedVariables !== void 0 && typeof input.copySharedVariables !== "boolean") throw new BadRequestError("Le choix de copie des variables doit être explicite.");
+	const fromId = access.environment?.getString("projectId") || "";
+	if (!fromId && targetId === null) throw new BadRequestError("Cette application n’appartient pas à un projet.");
+	if (!fromId) requireWebPermission(e, { appId: app.id }, "app.attach");
+	else if (targetId === null) requireWebPermission(e, { appId: app.id }, "app.detach");
+	else {
+		requireWebPermission(e, { appId: app.id }, "app.move");
+		requireWebPermission(e, { projectId: targetId }, "app.move");
+		if (targetId === fromId) throw new BadRequestError("Ce site est déjà dans ce projet.");
+	}
+	const result = {
+		fromProjectId: fromId,
+		droppedVariables: [],
+		copiedVariables: [],
+		previewsDisabled: false,
+		notificationsReset: false
+	};
+	$app.runInTransaction((tx) => {
+		const current = tx.findRecordById("web_apps", app.id), member = webMembership(app.id, tx);
+		if ((member?.getString("projectId") || "") !== fromId) throw new BadRequestError("Ce site a changé de projet entre-temps. Rechargez la page.");
+		if (member?.getString("environment") === "preview") throw new BadRequestError("Une preview temporaire ne peut pas changer de projet.");
+		if (busy(app.id, tx)) throw new BadRequestError("Attendez la fin du déploiement en cours avant de déplacer ce site.");
+		if (targetId === null) {
+			result.previewsDisabled = releasePreviewSource(current, fromId, user, tx);
+			result.copiedVariables = detachWebAppFromProject(current, user, tx);
+			return;
+		}
+		const project = targetProject(targetId, tx);
+		if (!webProjectRepositoryMatches(current, project, tx)) throw new BadRequestError("Le projet et l’application doivent utiliser le même dépôt.");
+		const taken = tx.findRecordsByFilter("web_app_environments", "projectId={:id}", "", 0, 0, { id: project.id }).map((row) => row.getString("slug"));
+		let nextSlug = slug;
+		if (nextSlug) assertSlug(project.id, nextSlug, tx);
+		else if (member && !taken.includes(member.getString("slug"))) nextSlug = member.getString("slug");
+		else nextSlug = webUniqueSlug(webSiteSlug(current.getString("name")), taken);
+		if (!nextSlug) throw new BadRequestError("Aucun nom court disponible : précisez-en un.");
+		const nextEnvironment = environment || member?.getString("environment") || "prod";
+		if (!member) {
+			const attached = attachWebAppToProject(current, project, {
+				environment: nextEnvironment,
+				slug: nextSlug,
+				keepVariables: input.copySharedVariables === true
+			}, user, tx);
+			result.droppedVariables = attached.stripped;
+			result.notificationsReset = attached.notificationsReset;
+			assertMergedVariables(app.id, project, nextEnvironment, tx);
+			return;
+		}
+		assertPermanentCapacity(project.id, tx);
+		bindWebGitSourceProject(webConfig(current), project.id, tx, app.id);
+		let active = null;
+		try {
+			active = tx.findRecordById("web_deployments", current.getString("activeDeployment"));
+		} catch {}
+		if (active && !webHistoryInScope(current, webDeploymentOrigin(active), tx, project.id) && current.getString("status") !== "stopped") throw new BadRequestError("Arrêtez le site avant de le déplacer : sa version publiée vient d’un autre projet. Redéployez-le ensuite depuis le projet cible.");
+		result.previewsDisabled = releasePreviewSource(current, fromId, user, tx);
+		const local = decryptWebValue(current.getString("envEncrypted")), shared = Object.keys(decryptWebValue(webProjectVariable(fromId, member.getString("environment"), tx)?.getString("valueEncrypted") || "")).filter((name) => !has(local, name)).sort();
+		if (input.copySharedVariables === true) {
+			if (shared.length) {
+				current.set("envEncrypted", encryptWebValue(resolveWebEnvironment(current, tx).env));
+				tx.save(current);
+			}
+			result.copiedVariables = shared;
+		} else result.droppedVariables = shared;
+		if (!webProjectLineage(project.id, tx).includes(fromId)) result.notificationsReset = resetWebNotificationChannels(app.id, user.id, tx);
+		member.set("projectId", project.id);
+		member.set("environment", nextEnvironment);
+		member.set("slug", nextSlug);
+		member.set("state", "active");
+		member.set("sourceAppId", "");
+		tx.save(member);
+		reconcileWebGitSourceProject(current, tx);
+		assertMergedVariables(app.id, project, nextEnvironment, tx);
+		auditWebProject(fromId, user.id, "application-detached", {
+			appId: app.id,
+			sharedVariables: result.copiedVariables,
+			movedTo: project.id
+		}, tx);
+		auditWebProject(project.id, user.id, "application-attached", {
+			appId: app.id,
+			environment: nextEnvironment,
+			slug: nextSlug,
+			movedFrom: fromId,
+			droppedVariables: result.droppedVariables,
+			copiedVariables: result.copiedVariables,
+			...result.previewsDisabled ? { previewsDisabled: true } : {},
+			...result.notificationsReset ? { notificationsReset: true } : {}
+		}, tx);
+	});
+	const fresh = $app.findRecordById("web_apps", app.id);
+	return webJson(e, {
+		app: {
+			...serializeWebApp(fresh),
+			access: webAppAccessView(user, fresh),
+			membership: membershipOf(webMembership(fresh.id))
+		},
+		...result
+	});
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/members.ts
+const ID$1 = /^[a-z0-9]{15}$/;
+const fail = (error) => {
+	if (!error) return;
+	if (error.code === "forbidden") throw new ForbiddenError(error.message);
+	throw new BadRequestError(error.message);
+};
+const userSummary = (id, store = $app) => {
+	if (!id) return null;
+	try {
+		const user = store.findRecordById("users", id);
+		return {
+			id: user.id,
+			email: user.getString("email")
+		};
+	} catch {
+		return null;
+	}
+};
+const memberView = (row, selfId, store = $app) => ({
+	id: row.id,
+	projectId: row.getString("project"),
+	userId: row.getString("user"),
+	email: userSummary(row.getString("user"), store)?.email || "",
+	role: row.getString("role"),
+	invitedBy: userSummary(row.getString("invitedBy"), store),
+	self: row.getString("user") === selfId,
+	created: row.getString("created"),
+	updated: row.getString("updated")
+});
+const ownerCount = (projectId, store) => store.findRecordsByFilter(WEB_MEMBERS, "project={:id} && role=\"owner\"", "", 1e3, 0, { id: projectId }).length;
+const memberOf = (e, projectId, store) => {
+	const id = e.request.pathValue("memberId");
+	if (!ID$1.test(id || "")) throw new BadRequestError("Membre invalide.");
+	let row;
+	try {
+		row = store.findRecordById(WEB_MEMBERS, id);
+	} catch {
+		throw new NotFoundError("Membre introuvable.");
+	}
+	if (row.getString("project") !== projectId) throw new NotFoundError("Membre introuvable.");
+	return row;
+};
+const projectView = (row, role, platform) => ({
+	id: row.id,
+	name: row.getString("name"),
+	repository: row.getString("repository"),
+	multiRepository: row.getBool("multiRepository"),
+	role: platform ? "platform" : role,
+	memberRole: role || null,
+	capabilities: webCapabilities(platform ? "platform" : role)
+});
+/** GET /api/web-access/me — droits de l'utilisateur courant, consommé par le dashboard. */
+const HandleWebAccessMe = (e) => {
+	const user = e.auth;
+	if (!user) throw new UnauthorizedError("Authentification requise.");
+	const usable = webEnabled() && user.collection().name === "users" && !user.getString("suspension"), platform = usable && isWebPlatformAdmin(user);
+	const projects = [];
+	if (usable) {
+		for (const m of listWebMemberships(user)) if (isWebRole(m.role)) try {
+			projects.push(projectView($app.findRecordById("web_projects", m.projectId), m.role, platform));
+		} catch {}
+	}
+	projects.sort((a, b) => a.name.localeCompare(b.name));
+	return webJson(e, {
+		enabled: webEnabled(),
+		isPlatformAdmin: platform,
+		allProjects: platform,
+		hasAccess: platform || projects.length > 0,
+		roles: WEB_ROLES,
+		permissions: WEB_PERMISSIONS,
+		globalCapabilities: webCapabilities(platform ? "platform" : ""),
+		projects
+	});
+};
+const HandleWebProjectMembersList = (e) => {
+	const { user, project, role } = requireWebProjectPermission(e, "members.read"), rows = $app.findRecordsByFilter(WEB_MEMBERS, "project={:id}", "created", 500, 0, { id: project.id });
+	const order = (r) => -WEB_ROLES.indexOf(r.getString("role"));
+	return webJson(e, {
+		projectId: project.id,
+		role,
+		capabilities: webCapabilities(role),
+		items: rows.sort((a, b) => order(a) - order(b)).map((r) => memberView(r, user.id))
+	});
+};
+/**
+* Chaque tentative d'ajout (réussie ou non) est comptée par auteur : un admin de projet ne peut pas sonder en masse
+* quels e-mails ont un compte sur ce serveur. Les superAdmins (attribution par utilisateur) ne sont pas limités.
+*/
+const ADD_RATE = "web_member_add_rate", ADD_RATE_MAX = 20, ADD_RATE_WINDOW = 36e5;
+const limitMemberAdds = (actorId) => {
+	let limited = false;
+	$app.store().setFunc(ADD_RATE, (raw) => {
+		const at = Date.now(), all = raw ? JSON.parse(`${raw}`) : {};
+		for (const id of Object.keys(all)) {
+			all[id] = (all[id] || []).filter((t) => t > at - ADD_RATE_WINDOW);
+			if (!all[id].length) delete all[id];
+		}
+		const hits = all[actorId] || [];
+		limited = hits.length >= ADD_RATE_MAX;
+		if (!limited) all[actorId] = [...hits, at];
+		return JSON.stringify(all);
+	});
+	if (limited) throw new TooManyRequestsError("Trop d’ajouts de membres. Réessayez dans une heure.");
+};
+const HandleWebProjectMemberAdd = (e) => {
+	const access = requireWebProjectPermission(e, "members.manage"), input = webInput(e), projectId = access.project.id;
+	if (!access.platform) limitMemberAdds(access.user.id);
+	if (Object.keys(input).some((key) => !["email", "role"].includes(key))) throw new BadRequestError("Champs invalides.");
+	const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+	if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestError("Adresse e-mail invalide.");
+	fail(webMemberChangeError(access.role, {
+		kind: "add",
+		role: input.role
+	}));
+	let target = null;
+	try {
+		target = $app.findFirstRecordByData("users", "email", email);
+	} catch {}
+	if (!target || !target.getBool("verified") || target.getString("suspension")) throw new BadRequestError("Impossible d’ajouter cette personne. Elle doit déjà avoir un compte actif et vérifié sur ce serveur.");
+	const invitee = target;
+	let member;
+	$app.runInTransaction((tx) => {
+		if (webProjectMemberRecord(projectId, invitee.id, tx)) throw new BadRequestError("Cette personne est déjà membre du projet.");
+		const row = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS));
+		row.set("project", projectId);
+		row.set("user", invitee.id);
+		row.set("role", input.role);
+		row.set("invitedBy", access.user.id);
+		tx.save(row);
+		auditWebProject(projectId, access.user.id, "member-added", {
+			userId: invitee.id,
+			email,
+			role: input.role
+		}, tx);
+		member = memberView(row, access.user.id, tx);
+	});
+	return webJson(e, { member }, 201);
+};
+const HandleWebProjectMemberUpdate = (e) => {
+	const access = requireWebProjectPermission(e, "members.manage"), input = webInput(e), projectId = access.project.id;
+	if (Object.keys(input).some((key) => key !== "role")) throw new BadRequestError("Champs invalides.");
+	let member;
+	$app.runInTransaction((tx) => {
+		const row = memberOf(e, projectId, tx), from = row.getString("role");
+		fail(webMemberChangeError(access.role, {
+			kind: "change",
+			from,
+			role: input.role,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		if (from !== input.role) {
+			row.set("role", input.role);
+			tx.save(row);
+			auditWebProject(projectId, access.user.id, "member-role-changed", {
+				userId: row.getString("user"),
+				email: userSummary(row.getString("user"), tx)?.email || "",
+				from,
+				role: input.role
+			}, tx);
+		}
+		member = memberView(row, access.user.id, tx);
+	});
+	return webJson(e, { member });
+};
+const HandleWebProjectMemberRemove = (e) => {
+	const access = requireWebProjectPermission(e, "members.manage"), projectId = access.project.id;
+	$app.runInTransaction((tx) => {
+		const row = memberOf(e, projectId, tx), from = row.getString("role");
+		fail(webMemberChangeError(access.role, {
+			kind: "remove",
+			from,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		auditWebProject(projectId, access.user.id, "member-removed", {
+			userId: row.getString("user"),
+			email: userSummary(row.getString("user"), tx)?.email || "",
+			role: from
+		}, tx);
+		tx.delete(row);
+	});
+	return webJson(e, { removed: true });
+};
+const HandleWebProjectMemberLeave = (e) => {
+	const access = requireWebProjectPermission(e, "project.read"), projectId = access.project.id;
+	$app.runInTransaction((tx) => {
+		const row = webProjectMemberRecord(projectId, access.user.id, tx);
+		if (!row) throw new BadRequestError("Vous n’êtes pas membre de ce projet.");
+		const from = row.getString("role");
+		fail(webMemberChangeError(from, {
+			kind: "leave",
+			from,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		auditWebProject(projectId, access.user.id, "member-left", {
+			userId: access.user.id,
+			role: from
+		}, tx);
+		tx.delete(row);
+	});
+	return webJson(e, { left: true });
+};
+/** Historique des changements d'accès du projet (ajouts, rôles, retraits, départs). */
+const HandleWebProjectMembersAudit = (e) => {
+	const { project } = requireWebProjectPermission(e, "members.manage"), page = Math.max(1, Math.min(1e4, Math.floor(Number(e.request.url.query().get("page")) || 1))), rows = $app.findRecordsByFilter("web_project_audit", "projectId={:id} && action ~ \"member-\"", "-created", 26, (page - 1) * 25, { id: project.id });
+	return webJson(e, {
+		page,
+		hasMore: rows.length > 25,
+		items: rows.slice(0, 25).map((r) => ({
+			id: r.id,
+			action: r.getString("action"),
+			actor: userSummary(r.getString("actorId")),
+			details: JSON.parse(r.getString("details") || "{}"),
+			created: r.getString("created")
+		}))
+	});
+};
+/**
+* Attribution des projets à un utilisateur par un superAdmin (même parcours que UserInstanceAccess pour les bases). GET
+* : tous les projets avec le rôle actuel de l'utilisateur. PUT { projects: [{ projectId, role }] } remplace l'ensemble
+* ; un projet absent de la liste est retiré, sauf s'il s'agit de son dernier propriétaire.
+*/
+const assignedUser = (e) => {
+	const id = e.request.pathValue("userId");
+	if (!ID$1.test(id || "")) throw new BadRequestError("Utilisateur invalide.");
+	try {
+		return $app.findRecordById("users", id);
+	} catch {
+		throw new NotFoundError("Utilisateur introuvable.");
+	}
+};
+const assignments = (user) => {
+	const roles = {};
+	for (const m of listWebMemberships(user)) if (isWebRole(m.role)) roles[m.projectId] = m.role;
+	return {
+		userId: user.id,
+		superAdmin: user.getBool("superAdmin"),
+		items: $app.findRecordsByFilter("web_projects", "", "name", 1e3, 0).map((row) => ({
+			projectId: row.id,
+			name: row.getString("name"),
+			repository: row.getString("repository"),
+			role: roles[row.id] || null
+		}))
+	};
+};
+const HandleWebUserProjectsGet = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, assignments(assignedUser(e)));
+};
+const HandleWebUserProjectsPut = (e) => {
+	const actor = requirePlatformAdmin(e), user = assignedUser(e), input = webInput(e);
+	if (Object.keys(input).some((key) => key !== "projects") || !Array.isArray(input.projects) || input.projects.length > 1e3 || input.projects.some((p) => !p || typeof p !== "object" || Object.keys(p).some((key) => !["projectId", "role"].includes(key)) || !ID$1.test(p.projectId || "") || !isWebRole(p.role))) throw new BadRequestError("Liste attendue : [{ projectId, role }] avec un rôle viewer, developer, admin ou owner.");
+	const wanted = {};
+	for (const p of input.projects) wanted[p.projectId] = p.role;
+	$app.runInTransaction((tx) => {
+		const current = {};
+		for (const row of tx.findRecordsByFilter(WEB_MEMBERS, "user={:user}", "", 1e3, 0, { user: user.id })) current[row.getString("project")] = row;
+		for (const projectId of Object.keys(wanted)) {
+			try {
+				tx.findRecordById("web_projects", projectId);
+			} catch {
+				throw new BadRequestError("Projet introuvable.");
+			}
+			const role = wanted[projectId], row = current[projectId];
+			if (!row) {
+				const created = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS));
+				created.set("project", projectId);
+				created.set("user", user.id);
+				created.set("role", role);
+				created.set("invitedBy", actor.id);
+				tx.save(created);
+				auditWebProject(projectId, actor.id, "member-added", {
+					userId: user.id,
+					email: user.getString("email"),
+					role
+				}, tx);
+				continue;
+			}
+			const from = row.getString("role");
+			if (from === role) continue;
+			fail(webMemberChangeError("platform", {
+				kind: "change",
+				from,
+				role,
+				ownerCount: ownerCount(projectId, tx)
+			}));
+			row.set("role", role);
+			tx.save(row);
+			auditWebProject(projectId, actor.id, "member-role-changed", {
+				userId: user.id,
+				email: user.getString("email"),
+				from,
+				role
+			}, tx);
+		}
+		for (const projectId of Object.keys(current)) {
+			if (wanted[projectId]) continue;
+			const row = current[projectId], from = row.getString("role");
+			fail(webMemberChangeError("platform", {
+				kind: "remove",
+				from,
+				ownerCount: ownerCount(projectId, tx)
+			}));
+			auditWebProject(projectId, actor.id, "member-removed", {
+				userId: user.id,
+				email: user.getString("email"),
+				role: from
+			}, tx);
+			tx.delete(row);
+		}
+	});
+	return webJson(e, assignments(user));
+};
+
+//#endregion
+//#region ../common/instanceImages.ts
+/** Operator-owned image policy. This module is pure and can run in Node and PocketBase's JS VM. */
+const INSTANCE_IMAGE_ID = /^[a-z0-9]{15}$/;
+const INSTANCE_IMAGE_SHA = /^sha256:[a-f0-9]{64}$/;
+const INSTANCE_IMAGE_OVERRIDES_MAX_LENGTH = 32768;
+const INSTANCE_IMAGE_OVERRIDES_MAX_ENTRIES = 256;
+const invalid = () => /* @__PURE__ */ new Error("Invalid operator PH_INSTANCE_IMAGE_OVERRIDES configuration.");
+const parseInstanceImageOverrides = (raw) => {
+	const result = Object.create(null);
+	if (raw === void 0 || raw === "") return result;
+	if (typeof raw !== "string" || raw.length > 32768) throw invalid();
+	let value;
+	try {
+		value = JSON.parse(raw);
+	} catch {
+		throw invalid();
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+	const entries = Object.entries(value);
+	if (entries.length > 256) throw invalid();
+	if ((raw.match(/"(?:\\.|[^"\\])*"\s*:/g) || []).length !== entries.length) throw invalid();
+	for (const [id, image] of entries) {
+		if (!INSTANCE_IMAGE_ID.test(id) || typeof image !== "string" || !INSTANCE_IMAGE_SHA.test(image)) throw invalid();
+		result[id] = image;
+	}
+	return result;
+};
+/** The private DB provider receives only assignments for the already-authorized database IDs. */
+const selectedInstanceImages = (ids, rawOverrides) => {
+	const overrides = parseInstanceImageOverrides(rawOverrides);
+	const selected = Object.create(null);
+	if (ids.length > 500 || ids.some((id) => !INSTANCE_IMAGE_ID.test(id))) throw new Error("Invalid database IDs.");
+	for (const id of ids) if (overrides[id]) selected[id] = overrides[id];
+	return selected;
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/privateDatabases.ts
+const COLLECTION = "web_private_db_bindings";
+const ID = /^[a-z0-9]{15}$/;
+const TOKEN = /^[A-Za-z0-9]{64}$/;
+const STATUSES = [
+	"pending",
+	"ready",
+	"unavailable"
+];
+const ERRORS = [
+	"",
+	"application_stopped",
+	"base_stopped",
+	"authorization_revoked",
+	"broker_unavailable",
+	"proxy_unavailable",
+	"configuration"
+];
+const supported = () => $os.getenv("WEB_APPS_ENABLED") === "true" && $os.getenv("WEB_DB_BRIDGE_ENABLED") === "true";
+const stamp = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const safeId = (value) => {
+	if (typeof value !== "string" || !ID.test(value)) throw new BadRequestError("Identifiant de liaison invalide.");
+	return value;
+};
+const find = (collection, id, store) => {
+	try {
+		return store.findRecordById(collection, id);
+	} catch {
+		return null;
+	}
+};
+const rows = (filter, params, store = $app) => store.findRecordsByFilter(COLLECTION, filter, "created,id", 500, 0, params);
+const activeApps = (store) => store.findRecordsByFilter("web_apps", "deletionId=\"\"", "created,id", 1e3, 0);
+const authorization = (row, store = $app) => {
+	const app = find("web_apps", row.getString("appId"), store);
+	const instance = find("instances", row.getString("instanceId"), store);
+	const actor = find("users", row.getString("actorId"), store);
+	const owner = instance ? find("users", instance.getString("uid"), store) : null;
+	const authorized = !!(app && instance && actor && owner && !owner.getString("suspension") && !app.getString("deletionId") && !app.getString("suspension") && !instance.getString("suspension") && !actor.getString("suspension") && canManageInstance(instance, actor) && webCan(actor, { appId: app.id }, "app.configure", store));
+	return {
+		app,
+		instance,
+		actor,
+		authorized,
+		available: authorized && !!instance?.getBool("power")
+	};
+};
+const tokenOf = (row) => {
+	try {
+		const value = decryptWebValue(row.getString("tokenEncrypted"))?.token;
+		return typeof value === "string" && TOKEN.test(value) ? value : "";
+	} catch {
+		return "";
+	}
+};
+const publicBinding = (row, store = $app) => {
+	const state = authorization(row, store);
+	const port = row.getInt("port");
+	const enabled = row.getBool("enabled");
+	const age = Date.now() - Date.parse(row.getString("lastSeenAt"));
+	const fresh = age >= 0 && age < 45e3;
+	const reason = !state.authorized ? "authorization_revoked" : !state.available ? "base_stopped" : "";
+	const status = !enabled || !supported() || reason ? "unavailable" : fresh ? row.getString("status") || "pending" : "pending";
+	return {
+		id: row.id,
+		appId: row.getString("appId"),
+		appName: state.app?.getString("name") || "Application supprimée",
+		instanceId: row.getString("instanceId"),
+		instanceName: state.instance?.getString("subdomain") || "Base supprimée",
+		port,
+		enabled,
+		url: `http://127.0.0.1:${port}`,
+		envName: `KOLAB_DB_${port}_URL`,
+		authorized: state.authorized,
+		available: enabled && state.available && supported() && status === "ready",
+		status,
+		lastSeenAt: row.getString("lastSeenAt"),
+		errorCode: reason || (supported() ? row.getString("errorCode") : "broker_unavailable"),
+		serviceCount: row.getInt("serviceCount"),
+		needsRestart: row.getBool("needsRestart")
+	};
+};
+const reservedPorts = (app, store) => {
+	const profile = runtimeProfile(app, store);
+	const ports = new Set([3e3]);
+	if (profile.port) ports.add(profile.port);
+	for (const service of Object.values(profile.compose?.services || {})) if (service.port) ports.add(service.port);
+	return ports;
+};
+const instanceState = (e) => operationsAccess(e);
+const canReadApplication = (user, appId, store) => webCan(user, { appId }, "app.configure", store);
+const HandleInstancePrivateAccess = (e) => {
+	const { instance, user } = instanceState(e);
+	const applications = supported() ? activeApps($app).filter((app) => canReadApplication(user, app.id, $app)).map((app) => ({
+		id: app.id,
+		name: app.getString("name")
+	})) : [];
+	return webJson(e, {
+		supported: supported(),
+		enabled: supported(),
+		bindings: rows("instanceId={:id}", { id: instance.id }).map((row) => publicBinding(row)),
+		applications
+	});
+};
+const HandleInstancePrivateAccessPut = (e) => {
+	const { instance, user } = instanceState(e);
+	const input = webInput(e);
+	if (Object.keys(input).some((key) => ![
+		"appId",
+		"port",
+		"enabled"
+	].includes(key))) throw new BadRequestError("Options de liaison invalides.");
+	const appId = safeId(input.appId);
+	if (typeof input.enabled !== "boolean") throw new BadRequestError("Activation de liaison invalide.");
+	if (input.enabled && !supported()) throw new BadRequestError("Accès privé indisponible sur ce serveur.");
+	let saved;
+	$app.runInTransaction((tx) => {
+		const actor = tx.findRecordById("users", user.id), base = tx.findRecordById("instances", instance.id);
+		if (!canManageInstance(base, actor) || base.getString("suspension")) throw new ForbiddenError("Accès refusé.");
+		if (!canReadApplication(actor, appId, tx)) throw new ForbiddenError("Droits de configuration requis sur cette application.");
+		const app = tx.findRecordById("web_apps", appId);
+		const existing = rows("appId={:app} && instanceId={:base}", {
+			app: appId,
+			base: instance.id
+		}, tx)[0];
+		const port = input.port === void 0 ? existing?.getInt("port") || 4825 : input.port;
+		if (!Number.isInteger(port) || port < 1024 || port > 65535 || reservedPorts(app, tx).has(port)) throw new BadRequestError("Port local invalide ou déjà utilisé par un service de l’application.");
+		if (!existing && rows("appId={:app}", { app: appId }, tx).length >= 4) throw new BadRequestError("Quatre liaisons privées au maximum par application.");
+		if (rows("appId={:app} && port={:port} && id!={:id}", {
+			app: appId,
+			port,
+			id: existing?.id || ""
+		}, tx).length) throw new BadRequestError("Ce port local est déjà utilisé par une autre liaison.");
+		const row = existing || new Record(tx.findCollectionByNameOrId(COLLECTION));
+		row.set("appId", appId);
+		row.set("instanceId", instance.id);
+		row.set("actorId", actor.id);
+		row.set("port", port);
+		row.set("enabled", input.enabled);
+		row.set("revision", $security.randomString(24));
+		row.set("tokenEncrypted", input.enabled ? encryptWebValue({ token: $security.randomString(64) }) : "");
+		row.set("status", input.enabled ? "pending" : "unavailable");
+		row.set("errorCode", "");
+		row.set("lastSeenAt", "");
+		row.set("serviceCount", 0);
+		row.set("needsRestart", input.enabled);
+		tx.save(row);
+		saved = row;
+		recordInstanceAction(base, actor, input.enabled ? "private_access.enabled" : "private_access.disabled", {
+			appId,
+			bindingId: row.id,
+			port
+		}, tx);
+	});
+	return webJson(e, {
+		binding: publicBinding(saved),
+		restartRequired: input.enabled
+	}, 200);
+};
+const deleteBinding = (e, instanceSide) => {
+	const bindingId = safeId(e.request.pathValue("bindingId"));
+	let targetId = "";
+	if (instanceSide) targetId = instanceState(e).instance.id;
+	else targetId = requireWebAppPermission(e, "app.configure").app.id;
+	const row = $app.findRecordById(COLLECTION, bindingId);
+	if (row.getString(instanceSide ? "instanceId" : "appId") !== targetId) throw new NotFoundError("Liaison introuvable.");
+	$app.delete(row);
+	return webJson(e, { removed: true });
+};
+const HandleInstancePrivateAccessDelete = (e) => deleteBinding(e, true);
+const HandleWebPrivateDatabasesDelete = (e) => deleteBinding(e, false);
+const HandleWebPrivateDatabases = (e) => {
+	const app = requireWebAppPermission(e, "app.read").app;
+	return webJson(e, {
+		supported: supported(),
+		enabled: supported(),
+		bindings: rows("appId={:id}", { id: app.id }).map((row) => publicBinding(row))
+	});
+};
+const privateAuth = (e, broker = false) => {
+	const expected = $os.getenv(broker ? "WEB_DB_BRIDGE_SECRET" : "WEB_APPS_WORKER_SECRET");
+	const supplied = e.request.header.get(broker ? "X-DB-Bridge" : "X-Web-Worker");
+	if (expected.length < 32 || !$security.equal(expected, supplied || "")) throw new UnauthorizedError("Authentification du service requise.");
+	if (!webDirectLoopback(e)) throw new ForbiddenError("Connexion locale directe requise.");
+};
+const workerRows = (store = $app) => {
+	if (!supported()) return [];
+	return rows("enabled=true", {}, store).flatMap((row) => {
+		const grant = authorization(row, store), token = tokenOf(row);
+		if (!grant.authorized || !token) return [];
+		const port = row.getInt("port");
+		try {
+			if (port < 1024 || port > 65535 || reservedPorts(grant.app, store).has(port)) return [];
+		} catch {
+			return [];
+		}
+		return [{
+			row,
+			grant,
+			token,
+			id: row.id,
+			appId: row.getString("appId"),
+			instanceId: row.getString("instanceId"),
+			port,
+			revision: row.getString("revision")
+		}];
+	});
+};
+/** The static controller reconciles only trusted namespace sidecars; no published port is ever a target. */
+const targetStates = (grants) => {
+	const empty = {};
+	if (!supported()) return empty;
+	const inferred = `${$app.dataDir()}`.replace(/\/mothership\/pb_data\/?$/, "");
+	const root = $os.getenv("DATA_ROOT") || (inferred !== `${$app.dataDir()}` ? inferred : "");
+	const image = $os.getenv("WEB_DB_TARGET_IMAGE");
+	if (!root || !/^[a-zA-Z0-9][a-zA-Z0-9./_:-]*@sha256:[a-f0-9]{64}$/.test(image)) return empty;
+	const ids = [...new Set(grants.filter((g) => g.grant.available).map((g) => g.instanceId))];
+	try {
+		const output = JSON.parse(toString($os.cmd("python3", $os.getenv("WEB_DB_PROVIDER_SCRIPT") || "/opt/pockethost-web/web_private_db_provider.py", JSON.stringify({
+			dataRoot: root,
+			databaseImage: $os.getenv("DOCKER_INSTANCE_IMAGE_NAME") || "benallfree/pockethost-instance",
+			databaseImages: selectedInstanceImages(ids, $os.getenv("PH_INSTANCE_IMAGE_OVERRIDES")),
+			targetImage: image,
+			ids,
+			...$os.getenv("WEB_DB_TARGET_ROOT") ? { targetRoot: $os.getenv("WEB_DB_TARGET_ROOT") } : {},
+			...$os.getenv("WEB_DB_TARGET_SCRIPT") ? { targetScript: $os.getenv("WEB_DB_TARGET_SCRIPT") } : {}
+		})).combinedOutput()));
+		const result = {};
+		for (const id of ids) {
+			const target = output[id];
+			if (target && target.available === true && /^[a-f0-9]{64}$/.test(target.targetContainerId) && /^[a-f0-9]{64}$/.test(target.targetEpoch)) {
+				const directory = $security.sha256(`${target.targetContainerId}:${target.targetEpoch}`).slice(0, 32);
+				const expected = `${$os.getenv("WEB_DB_TARGET_ROOT") || "/run/kolab-db-targets"}/${id}/${directory}/t.sock`;
+				if (target.targetSocket === expected) result[id] = target;
+			}
+		}
+		return result;
+	} catch {
+		return empty;
+	}
+};
+const HandleWebPrivateDatabaseWorker = (e) => {
+	privateAuth(e);
+	const grants = workerRows(), targets = targetStates(grants);
+	return webJson(e, {
+		version: 1,
+		enabled: supported(),
+		applications: supported() ? activeApps($app).map((app) => app.id) : [],
+		bindings: grants.map(({ row, grant, ...item }) => ({
+			...item,
+			databaseRunning: grant.available,
+			available: grant.available && !!targets[item.instanceId]?.available,
+			url: `http://127.0.0.1:${item.port}`,
+			envName: `KOLAB_DB_${item.port}_URL`
+		}))
+	});
+};
+const HandleWebPrivateDatabaseBroker = (e) => {
+	privateAuth(e, true);
+	const grants = workerRows(), targets = targetStates(grants);
+	return webJson(e, {
+		version: 1,
+		enabled: supported(),
+		applications: supported() ? activeApps($app).map((app) => app.id) : [],
+		bindings: grants.map(({ row, grant, token, ...item }) => {
+			const target = grant.available ? targets[item.instanceId] : void 0;
+			return {
+				...item,
+				tokenHash: $security.sha256(token),
+				available: !!target?.available,
+				targetSocket: target?.targetSocket || null,
+				targetContainerId: target?.targetContainerId || null,
+				targetEpoch: target?.targetEpoch || null
+			};
+		})
+	});
+};
+const HandleWebPrivateDatabaseStatus = (e) => {
+	privateAuth(e);
+	const input = webInput(e);
+	if (Object.keys(input).some((k) => k !== "bindings") || !Array.isArray(input.bindings) || input.bindings.length > 500) throw new BadRequestError("Compte rendu de liaisons invalide.");
+	for (const item of input.bindings) if (!item || Object.keys(item).some((k) => ![
+		"id",
+		"appId",
+		"revision",
+		"status",
+		"errorCode",
+		"serviceCount",
+		"needsRestart"
+	].includes(k)) || typeof item.id !== "string" || !ID.test(item.id) || typeof item.appId !== "string" || !ID.test(item.appId) || typeof item.revision !== "string" || !/^[A-Za-z0-9]{24}$/.test(item.revision) || typeof item.status !== "string" || !STATUSES.includes(item.status) || item.errorCode !== void 0 && typeof item.errorCode !== "string" || !ERRORS.includes(item.errorCode || "") || item.serviceCount !== void 0 && (!Number.isInteger(item.serviceCount) || item.serviceCount < 0 || item.serviceCount > 8) || item.needsRestart !== void 0 && typeof item.needsRestart !== "boolean") throw new BadRequestError("État de liaison invalide.");
+	let updated = 0;
+	$app.runInTransaction((tx) => {
+		for (const item of input.bindings) {
+			const row = find(COLLECTION, item.id, tx);
+			if (!row || !row.getBool("enabled") || row.getString("appId") !== item.appId || row.getString("revision") !== item.revision || !authorization(row, tx).authorized) continue;
+			row.set("status", item.status);
+			row.set("errorCode", item.errorCode || "");
+			row.set("lastSeenAt", stamp());
+			row.set("serviceCount", item.serviceCount || 0);
+			row.set("needsRestart", !!item.needsRestart);
+			tx.save(row);
+			updated++;
+		}
+	});
+	return webJson(e, {
+		ok: true,
+		updated
+	});
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/cloudflare.ts
+const key = "cloudflare";
+const setting = (name, store = $app) => store.findRecordsByFilter("web_app_settings", "key = {:key}", "", 1, 0, { key: name })[0];
+const savedToken = () => {
+	const row = setting(key);
+	return row ? `${decryptWebValue(row.getString("valueEncrypted")).token || ""}` : "";
+};
+const credential = () => savedToken() || $os.getenv("MOTHERSHIP_CLOUDFLARE_API_TOKEN") || "";
+const status = () => ({
+	configured: !!credential(),
+	source: savedToken() ? "saved" : credential() ? "server" : "none",
+	https: webHttpsPreflight()
+});
+const HandleWebCloudflareGet = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, status());
+};
+const HandleWebCloudflarePut = (e) => {
+	requirePlatformAdmin(e);
+	const token = `${webInput(e).token || ""}`.trim();
+	if (!/^[A-Za-z0-9_-]{20,512}$/.test(token)) throw new BadRequestError("Saisissez un jeton API Cloudflare valide, avec Zone:Read et DNS:Edit.");
+	const row = setting(key) || new Record($app.findCollectionByNameOrId("web_app_settings"));
+	row.set("key", key);
+	row.set("valueEncrypted", encryptWebValue({ token }));
+	$app.save(row);
+	return webJson(e, status());
+};
+const transport = (action, values) => {
+	const token = credential();
+	if (!token) throw new BadRequestError("Connectez Cloudflare avec un jeton Zone:Read et DNS:Edit limité aux zones souhaitées.");
+	const file = `${$app.dataDir()}/.cloudflare-${$security.randomString(24)}.json`;
+	try {
+		$os.writeFile(file, JSON.stringify({
+			action,
+			token,
+			...values
+		}), 384);
+		const helper = $os.getenv("WEB_APPS_CLOUDFLARE_HELPER") || ($os.getenv("WEB_APPS_DOMAIN_HELPER") || "packages/pockethost/scripts/web_app_domains.py").replace(/[^/]+$/, "web_cloudflare.py");
+		const result = JSON.parse(toString($os.cmd("python3", helper, file).combinedOutput()));
+		if (result.error) throw new BadRequestError(result.error);
+		if (!result.result) throw new Error("Missing result");
+		return result.result;
+	} catch (error) {
+		if (error instanceof BadRequestError) throw error;
+		throw new BadRequestError("Cloudflare est indisponible. Relisez les DNS avant de réessayer.");
+	} finally {
+		try {
+			$os.remove(file);
+		} catch {}
+	}
+};
+const target = (e) => {
+	requirePlatformAdmin(e);
+	const { row, app } = assertWebDomainDnsAccess(e);
+	return {
+		row,
+		app,
+		values: {
+			hostname: row.getString("host"),
+			publicIp: $os.getenv("WEB_APPS_PUBLIC_IP") || "",
+			ownershipValue: `pockethost-verification=${row.getString("ownershipToken")}`
+		}
+	};
+};
+const contextHash = (values) => $security.sha256(JSON.stringify(values) + credential());
+const HandleWebCloudflarePreview = (e) => {
+	const { row, app, values } = target(e);
+	webRateLimit(app.id, "cloudflare_preview", 6, "Trop de lectures Cloudflare. Réessayez dans une minute.");
+	const plan = transport("preview", values);
+	const preview = new Record($app.findCollectionByNameOrId("web_app_settings"));
+	const id = $security.randomString(32), expiresAt = Date.now() + 600 * 1e3;
+	preview.set("key", `cloudflare-plan:${id}`);
+	preview.set("valueEncrypted", encryptWebValue({
+		actor: e.auth.id,
+		app: app.id,
+		domain: row.id,
+		expiresAt,
+		context: contextHash(values),
+		revision: plan.revision,
+		state: "pending"
+	}));
+	$app.save(preview);
+	for (const old of $app.findRecordsByFilter("web_app_settings", "key ~ \"cloudflare-plan:\" && created < {:before}", "", 50, 0, { before: (/* @__PURE__ */ new Date(Date.now() - 864e5 * 7)).toISOString().replace("T", " ") })) $app.delete(old);
+	return webJson(e, {
+		previewId: id,
+		expiresAt,
+		hostname: plan.hostname,
+		zone: plan.zone,
+		current: plan.current,
+		changes: plan.changes
+	});
+};
+const HandleWebCloudflareApply = (e) => {
+	const { row, app, values } = target(e), input = webInput(e);
+	if (input.confirmHostname !== values.hostname || !/^[A-Za-z0-9]{32}$/.test(`${input.previewId || ""}`)) throw new BadRequestError("Confirmez le nom exact du domaine affiché dans l’aperçu.");
+	webRateLimit(app.id, "cloudflare_apply", 3, "Trop de modifications Cloudflare. Réessayez dans une minute.");
+	const context = contextHash(values);
+	let revision = "", planRowId = "";
+	$app.runInTransaction((tx) => {
+		const pending = setting(`cloudflare-plan:${input.previewId}`, tx);
+		if (!pending) throw new BadRequestError("Aperçu introuvable. Préparez un nouvel aperçu.");
+		const plan = decryptWebValue(pending.getString("valueEncrypted"));
+		if (plan.state !== "pending" || plan.actor !== e.auth.id || plan.app !== app.id || plan.domain !== row.id || plan.expiresAt < Date.now() || plan.context !== context) throw new BadRequestError("Aperçu expiré, déjà utilisé ou configuration modifiée. Préparez un nouvel aperçu.");
+		revision = plan.revision;
+		planRowId = pending.id;
+		pending.set("valueEncrypted", encryptWebValue({
+			...plan,
+			state: "applying"
+		}));
+		tx.save(pending);
+	});
+	let result, failure;
+	try {
+		result = transport("apply", {
+			...values,
+			revision
+		});
+	} catch (error) {
+		failure = error;
+	}
+	const audit = $app.findRecordById("web_app_settings", planRowId), plan = decryptWebValue(audit.getString("valueEncrypted"));
+	audit.set("valueEncrypted", encryptWebValue({
+		...plan,
+		state: failure ? "failed" : "applied",
+		hostname: values.hostname,
+		finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
+		changes: result?.changes || 0
+	}));
+	$app.save(audit);
+	if (failure) throw failure;
+	return webJson(e, {
+		...result,
+		message: "DNS enregistrés en mode DNS uniquement. La propagation peut prendre quelques minutes ; lancez ensuite Vérifier DNS et HTTPS."
+	});
+};
+
+//#endregion
 exports.AfterCreate_notify_discord = AfterCreate_notify_discord;
+exports.AfterDelete_instanceTransfer = AfterDelete_instanceTransfer;
+exports.AuditInstanceRequest = AuditInstanceRequest;
+exports.BackupCheckBootstrap = BackupCheckBootstrap;
+exports.BackupCheckDispatcher = BackupCheckDispatcher;
 exports.BeforeCreate_autoVacuum = BeforeCreate_autoVacuum;
 exports.BeforeCreate_ssh_keys = BeforeCreate_ssh_keys;
+exports.BeforeDelete_instanceTransfer = BeforeDelete_instanceTransfer;
 exports.BeforeUpdate_cname = BeforeUpdate_cname;
+exports.BeforeUpdate_instanceTransferPower = BeforeUpdate_instanceTransferPower;
 exports.BeforeUpdate_ssh_keys = BeforeUpdate_ssh_keys;
 exports.BeforeUpdate_version = BeforeUpdate_version;
 exports.CollectInstanceMetricsAndMonitoring = CollectInstanceMetricsAndMonitoring;
@@ -8306,7 +25387,31 @@ exports.CollectInstanceResourceMetrics = CollectInstanceResourceMetrics;
 exports.DEFAULT_BACKUP_S3_PREFIX = DEFAULT_BACKUP_S3_PREFIX;
 exports.DEFAULT_BACKUP_S3_REGION = DEFAULT_BACKUP_S3_REGION;
 exports.DEFAULT_SERVER_TIMEZONE = DEFAULT_SERVER_TIMEZONE;
+exports.DIAGNOSTIC_READER = DIAGNOSTIC_READER;
+exports.GITHUB_CONNECTION_ID = GITHUB_CONNECTION_ID;
+exports.GITHUB_CONNECTION_MAX = GITHUB_CONNECTION_MAX;
+exports.GITHUB_CONNECT_READER = GITHUB_CONNECT_READER;
+exports.GITHUB_EXTRA_CONNECTION_ID = GITHUB_EXTRA_CONNECTION_ID;
+exports.GITHUB_PRINCIPAL = GITHUB_PRINCIPAL;
+exports.GITHUB_PRINCIPAL_LABEL = GITHUB_PRINCIPAL_LABEL;
+exports.GIT_SOURCE_READER = GIT_SOURCE_READER;
+exports.GuardDashboardTotp = GuardDashboardTotp;
+exports.GuardInstanceHostnamesRequest = GuardInstanceHostnamesRequest;
+exports.GuardWebDeletingRecord = GuardWebDeletingRecord;
+exports.GuardWebInstanceDomainCreate = GuardWebInstanceDomainCreate;
+exports.GuardWebInstanceDomainUpdate = GuardWebInstanceDomainUpdate;
+exports.HandleAccountActionLog = HandleAccountActionLog;
+exports.HandleDashboardTotpAuth = HandleDashboardTotpAuth;
+exports.HandleDashboardTotpConfirm = HandleDashboardTotpConfirm;
+exports.HandleDashboardTotpDisable = HandleDashboardTotpDisable;
+exports.HandleDashboardTotpRegenerate = HandleDashboardTotpRegenerate;
+exports.HandleDashboardTotpSetup = HandleDashboardTotpSetup;
+exports.HandleDashboardTotpStatus = HandleDashboardTotpStatus;
 exports.HandleEdgeHeartbeat = HandleEdgeHeartbeat;
+exports.HandleInstanceActionLog = HandleInstanceActionLog;
+exports.HandleInstanceBackupCheckCreate = HandleInstanceBackupCheckCreate;
+exports.HandleInstanceBackupCheckPolicy = HandleInstanceBackupCheckPolicy;
+exports.HandleInstanceBackupChecksGet = HandleInstanceBackupChecksGet;
 exports.HandleInstanceBackupChunkedCancel = HandleInstanceBackupChunkedCancel;
 exports.HandleInstanceBackupChunkedComplete = HandleInstanceBackupChunkedComplete;
 exports.HandleInstanceBackupChunkedStart = HandleInstanceBackupChunkedStart;
@@ -8324,12 +25429,18 @@ exports.HandleInstanceBackupPolicyUpdate = HandleInstanceBackupPolicyUpdate;
 exports.HandleInstanceBackupRestore = HandleInstanceBackupRestore;
 exports.HandleInstanceBackupRestoreNew = HandleInstanceBackupRestoreNew;
 exports.HandleInstanceBackupsList = HandleInstanceBackupsList;
+exports.HandleInstanceConsoleConsume = HandleInstanceConsoleConsume;
+exports.HandleInstanceConsoleInfo = HandleInstanceConsoleInfo;
+exports.HandleInstanceConsoleTicket = HandleInstanceConsoleTicket;
 exports.HandleInstanceCreate = HandleInstanceCreate;
 exports.HandleInstanceDelete = HandleInstanceDelete;
+exports.HandleInstanceDiagnostics = HandleInstanceDiagnostics;
 exports.HandleInstanceDuplicate = HandleInstanceDuplicate;
 exports.HandleInstanceLitestreamBootstrap = HandleInstanceLitestreamBootstrap;
 exports.HandleInstanceLitestreamPolicyGet = HandleInstanceLitestreamPolicyGet;
 exports.HandleInstanceLitestreamPolicyUpdate = HandleInstanceLitestreamPolicyUpdate;
+exports.HandleInstanceLitestreamTelemetry = HandleInstanceLitestreamTelemetry;
+exports.HandleInstanceLitestreamVerify = HandleInstanceLitestreamVerify;
 exports.HandleInstanceMetrics = HandleInstanceMetrics;
 exports.HandleInstanceMetricsHistory = HandleInstanceMetricsHistory;
 exports.HandleInstanceMonitoringGet = HandleInstanceMonitoringGet;
@@ -8337,7 +25448,27 @@ exports.HandleInstanceMonitoringHistory = HandleInstanceMonitoringHistory;
 exports.HandleInstanceMonitoringIncidents = HandleInstanceMonitoringIncidents;
 exports.HandleInstanceMonitoringTest = HandleInstanceMonitoringTest;
 exports.HandleInstanceMonitoringUpdate = HandleInstanceMonitoringUpdate;
+exports.HandleInstanceOperationConsume = HandleInstanceOperationConsume;
 exports.HandleInstanceOverview = HandleInstanceOverview;
+exports.HandleInstancePerformance = HandleInstancePerformance;
+exports.HandleInstancePrivateAccess = HandleInstancePrivateAccess;
+exports.HandleInstancePrivateAccessDelete = HandleInstancePrivateAccessDelete;
+exports.HandleInstancePrivateAccessPut = HandleInstancePrivateAccessPut;
+exports.HandleInstanceServiceAccounts = HandleInstanceServiceAccounts;
+exports.HandleInstanceTransferArchive = HandleInstanceTransferArchive;
+exports.HandleInstanceTransferBootstrap = HandleInstanceTransferBootstrap;
+exports.HandleInstanceTransferCancel = HandleInstanceTransferCancel;
+exports.HandleInstanceTransferClaim = HandleInstanceTransferClaim;
+exports.HandleInstanceTransferComplete = HandleInstanceTransferComplete;
+exports.HandleInstanceTransferCreate = HandleInstanceTransferCreate;
+exports.HandleInstanceTransferDispatcher = HandleInstanceTransferDispatcher;
+exports.HandleInstanceTransferImport = HandleInstanceTransferImport;
+exports.HandleInstanceTransferInspect = HandleInstanceTransferInspect;
+exports.HandleInstanceTransferMetadata = HandleInstanceTransferMetadata;
+exports.HandleInstanceTransferProgress = HandleInstanceTransferProgress;
+exports.HandleInstanceTransferRenewLink = HandleInstanceTransferRenewLink;
+exports.HandleInstanceTransferRetry = HandleInstanceTransferRetry;
+exports.HandleInstanceTransfersList = HandleInstanceTransfersList;
 exports.HandleInstanceUpdate = HandleInstanceUpdate;
 exports.HandleInstancesMetrics = HandleInstancesMetrics;
 exports.HandleInstancesResetIdle = HandleInstancesResetIdle;
@@ -8358,6 +25489,10 @@ exports.HandleOperatorAdminTestBackupS3 = HandleOperatorAdminTestBackupS3;
 exports.HandleOperatorAdminTestSMTP = HandleOperatorAdminTestSMTP;
 exports.HandleOperatorAdminUpdateSettings = HandleOperatorAdminUpdateSettings;
 exports.HandleOperatorAdminUpdateUser = HandleOperatorAdminUpdateUser;
+exports.HandleOperatorMonitoring = HandleOperatorMonitoring;
+exports.HandleOperatorMonitoringDeliveryConfig = HandleOperatorMonitoringDeliveryConfig;
+exports.HandleOperatorMonitoringUpdate = HandleOperatorMonitoringUpdate;
+exports.HandleOperatorResourceMetrics = HandleOperatorResourceMetrics;
 exports.HandleOutpostUnsubscribe = HandleOutpostUnsubscribe;
 exports.HandleProcessNotification = HandleProcessNotification;
 exports.HandleProcessSingleNotification = HandleProcessSingleNotification;
@@ -8369,20 +25504,247 @@ exports.HandleStatsRequest = HandleStatsRequest;
 exports.HandleUserTokenRequest = HandleUserTokenRequest;
 exports.HandleUserWelcomeMessage = HandleUserWelcomeMessage;
 exports.HandleVersionsRequest = HandleVersionsRequest;
+exports.HandleWebAccessMe = HandleWebAccessMe;
+exports.HandleWebAlertWatchdog = HandleWebAlertWatchdog;
+exports.HandleWebAppAction = HandleWebAppAction;
+exports.HandleWebAppCreate = HandleWebAppCreate;
+exports.HandleWebAppDelete = HandleWebAppDelete;
+exports.HandleWebAppEnvironments = HandleWebAppEnvironments;
+exports.HandleWebAppGet = HandleWebAppGet;
+exports.HandleWebAppProjectAttach = HandleWebAppProjectAttach;
+exports.HandleWebAppProjectCreate = HandleWebAppProjectCreate;
+exports.HandleWebAppProjectDetach = HandleWebAppProjectDetach;
+exports.HandleWebAppProjectMove = HandleWebAppProjectMove;
+exports.HandleWebAppUpdate = HandleWebAppUpdate;
+exports.HandleWebApplyRuntime = HandleWebApplyRuntime;
+exports.HandleWebAppsList = HandleWebAppsList;
+exports.HandleWebBackupClaim = HandleWebBackupClaim;
+exports.HandleWebBackupCreate = HandleWebBackupCreate;
+exports.HandleWebBackupDelete = HandleWebBackupDelete;
+exports.HandleWebBackupDownload = HandleWebBackupDownload;
+exports.HandleWebBackupPins = HandleWebBackupPins;
+exports.HandleWebBackupRecover = HandleWebBackupRecover;
+exports.HandleWebBackupReport = HandleWebBackupReport;
+exports.HandleWebBackupRestore = HandleWebBackupRestore;
+exports.HandleWebBackupRestorePreview = HandleWebBackupRestorePreview;
+exports.HandleWebBackupSettings = HandleWebBackupSettings;
+exports.HandleWebBackupsList = HandleWebBackupsList;
+exports.HandleWebBranches = HandleWebBranches;
+exports.HandleWebCiDeploy = HandleWebCiDeploy;
+exports.HandleWebCiMaintenance = HandleWebCiMaintenance;
+exports.HandleWebCiTokenRevoke = HandleWebCiTokenRevoke;
+exports.HandleWebCiTokensCreate = HandleWebCiTokensCreate;
+exports.HandleWebCiTokensList = HandleWebCiTokensList;
+exports.HandleWebCloudflareApply = HandleWebCloudflareApply;
+exports.HandleWebCloudflareGet = HandleWebCloudflareGet;
+exports.HandleWebCloudflarePreview = HandleWebCloudflarePreview;
+exports.HandleWebCloudflarePut = HandleWebCloudflarePut;
+exports.HandleWebDeletionClaim = HandleWebDeletionClaim;
+exports.HandleWebDeletionReport = HandleWebDeletionReport;
+exports.HandleWebDeploymentCancel = HandleWebDeploymentCancel;
+exports.HandleWebDeploymentLogs = HandleWebDeploymentLogs;
+exports.HandleWebDeploymentRetry = HandleWebDeploymentRetry;
+exports.HandleWebDeployments = HandleWebDeployments;
+exports.HandleWebDomainCreate = HandleWebDomainCreate;
+exports.HandleWebDomainDelete = HandleWebDomainDelete;
+exports.HandleWebDomainVerify = HandleWebDomainVerify;
+exports.HandleWebDomainsList = HandleWebDomainsList;
+exports.HandleWebEnvironmentClone = HandleWebEnvironmentClone;
+exports.HandleWebEnvironmentGet = HandleWebEnvironmentGet;
+exports.HandleWebEnvironmentPreview = HandleWebEnvironmentPreview;
+exports.HandleWebEnvironmentPromote = HandleWebEnvironmentPromote;
+exports.HandleWebEnvironmentPromotionPreview = HandleWebEnvironmentPromotionPreview;
+exports.HandleWebEnvironmentPut = HandleWebEnvironmentPut;
+exports.HandleWebEnvironmentReveal = HandleWebEnvironmentReveal;
+exports.HandleWebGitSourceAction = HandleWebGitSourceAction;
+exports.HandleWebGitSourceBranches = HandleWebGitSourceBranches;
+exports.HandleWebGitSourceConfirmHostKeys = HandleWebGitSourceConfirmHostKeys;
+exports.HandleWebGitSourceCreate = HandleWebGitSourceCreate;
+exports.HandleWebGitSourceDelete = HandleWebGitSourceDelete;
+exports.HandleWebGitSourceGet = HandleWebGitSourceGet;
+exports.HandleWebGitSourceRotateKey = HandleWebGitSourceRotateKey;
+exports.HandleWebGitSourceRotateWebhookSecret = HandleWebGitSourceRotateWebhookSecret;
+exports.HandleWebGitSourceScan = HandleWebGitSourceScan;
+exports.HandleWebGitSourceTest = HandleWebGitSourceTest;
+exports.HandleWebGitSourceWebhook = HandleWebGitSourceWebhook;
+exports.HandleWebGithubConnectInstall = HandleWebGithubConnectInstall;
+exports.HandleWebGithubConnectInstallCheck = HandleWebGithubConnectInstallCheck;
+exports.HandleWebGithubConnectInstallStart = HandleWebGithubConnectInstallStart;
+exports.HandleWebGithubConnectMaintenance = HandleWebGithubConnectMaintenance;
+exports.HandleWebGithubConnectManifest = HandleWebGithubConnectManifest;
+exports.HandleWebGithubConnectStart = HandleWebGithubConnectStart;
+exports.HandleWebGithubConnectStatus = HandleWebGithubConnectStatus;
+exports.HandleWebGithubConnectionCreate = HandleWebGithubConnectionCreate;
+exports.HandleWebGithubConnectionDelete = HandleWebGithubConnectionDelete;
+exports.HandleWebGithubConnectionUpdate = HandleWebGithubConnectionUpdate;
+exports.HandleWebGithubConnectionWebhook = HandleWebGithubConnectionWebhook;
+exports.HandleWebGithubConnectionsList = HandleWebGithubConnectionsList;
+exports.HandleWebGithubHealth = HandleWebGithubHealth;
+exports.HandleWebGithubWebhook = HandleWebGithubWebhook;
+exports.HandleWebHealthConfig = HandleWebHealthConfig;
+exports.HandleWebHealthGet = HandleWebHealthGet;
+exports.HandleWebHealthHistory = HandleWebHealthHistory;
+exports.HandleWebHealthMaintenance = HandleWebHealthMaintenance;
+exports.HandleWebHealthReport = HandleWebHealthReport;
+exports.HandleWebHealthUpdate = HandleWebHealthUpdate;
+exports.HandleWebMaintenance = HandleWebMaintenance;
+exports.HandleWebNotificationClaim = HandleWebNotificationClaim;
+exports.HandleWebNotificationEmail = HandleWebNotificationEmail;
+exports.HandleWebNotificationHistory = HandleWebNotificationHistory;
+exports.HandleWebNotificationReport = HandleWebNotificationReport;
+exports.HandleWebNotificationTest = HandleWebNotificationTest;
+exports.HandleWebNotificationsGet = HandleWebNotificationsGet;
+exports.HandleWebNotificationsPut = HandleWebNotificationsPut;
+exports.HandleWebPlatformNotificationHistory = HandleWebPlatformNotificationHistory;
+exports.HandleWebPlatformNotificationTest = HandleWebPlatformNotificationTest;
+exports.HandleWebPlatformNotificationsGet = HandleWebPlatformNotificationsGet;
+exports.HandleWebPlatformNotificationsPut = HandleWebPlatformNotificationsPut;
+exports.HandleWebPlatformRecoveryCapture = HandleWebPlatformRecoveryCapture;
+exports.HandleWebPlatformRecoveryDrill = HandleWebPlatformRecoveryDrill;
+exports.HandleWebPlatformRecoveryEvent = HandleWebPlatformRecoveryEvent;
+exports.HandleWebPlatformRecoveryRuns = HandleWebPlatformRecoveryRuns;
+exports.HandleWebPlatformRecoverySettings = HandleWebPlatformRecoverySettings;
+exports.HandleWebPlatformRecoveryStatus = HandleWebPlatformRecoveryStatus;
+exports.HandleWebPreviewClose = HandleWebPreviewClose;
+exports.HandleWebPreviewMaintenance = HandleWebPreviewMaintenance;
+exports.HandleWebPreviewRefresh = HandleWebPreviewRefresh;
+exports.HandleWebPrivateDatabaseBroker = HandleWebPrivateDatabaseBroker;
+exports.HandleWebPrivateDatabaseStatus = HandleWebPrivateDatabaseStatus;
+exports.HandleWebPrivateDatabaseWorker = HandleWebPrivateDatabaseWorker;
+exports.HandleWebPrivateDatabases = HandleWebPrivateDatabases;
+exports.HandleWebPrivateDatabasesDelete = HandleWebPrivateDatabasesDelete;
+exports.HandleWebProjectCreate = HandleWebProjectCreate;
+exports.HandleWebProjectDelete = HandleWebProjectDelete;
+exports.HandleWebProjectDeleteContents = HandleWebProjectDeleteContents;
+exports.HandleWebProjectGroups = HandleWebProjectGroups;
+exports.HandleWebProjectMemberAdd = HandleWebProjectMemberAdd;
+exports.HandleWebProjectMemberLeave = HandleWebProjectMemberLeave;
+exports.HandleWebProjectMemberRemove = HandleWebProjectMemberRemove;
+exports.HandleWebProjectMemberUpdate = HandleWebProjectMemberUpdate;
+exports.HandleWebProjectMembersAudit = HandleWebProjectMembersAudit;
+exports.HandleWebProjectMembersList = HandleWebProjectMembersList;
+exports.HandleWebProjectUpdate = HandleWebProjectUpdate;
+exports.HandleWebProjectVariablesGet = HandleWebProjectVariablesGet;
+exports.HandleWebProjectVariablesPreview = HandleWebProjectVariablesPreview;
+exports.HandleWebProjectVariablesPut = HandleWebProjectVariablesPut;
+exports.HandleWebProjectVariablesReveal = HandleWebProjectVariablesReveal;
+exports.HandleWebProjectsList = HandleWebProjectsList;
+exports.HandleWebRepositories = HandleWebRepositories;
+exports.HandleWebRuntime = HandleWebRuntime;
+exports.HandleWebRuntimeGet = HandleWebRuntimeGet;
+exports.HandleWebRuntimeLogConfig = HandleWebRuntimeLogConfig;
+exports.HandleWebRuntimeLogs = HandleWebRuntimeLogs;
+exports.HandleWebRuntimePreview = HandleWebRuntimePreview;
+exports.HandleWebRuntimeUpdate = HandleWebRuntimeUpdate;
+exports.HandleWebSettingsGet = HandleWebSettingsGet;
+exports.HandleWebSettingsPut = HandleWebSettingsPut;
+exports.HandleWebStorageAction = HandleWebStorageAction;
+exports.HandleWebStorageClaim = HandleWebStorageClaim;
+exports.HandleWebStorageGet = HandleWebStorageGet;
+exports.HandleWebStorageHistory = HandleWebStorageHistory;
+exports.HandleWebStorageMaintenance = HandleWebStorageMaintenance;
+exports.HandleWebStorageReport = HandleWebStorageReport;
+exports.HandleWebStorageRestorePreview = HandleWebStorageRestorePreview;
+exports.HandleWebStorageUpdate = HandleWebStorageUpdate;
+exports.HandleWebTaskClaim = HandleWebTaskClaim;
+exports.HandleWebTaskDelete = HandleWebTaskDelete;
+exports.HandleWebTaskReport = HandleWebTaskReport;
+exports.HandleWebTaskRun = HandleWebTaskRun;
+exports.HandleWebTaskRuns = HandleWebTaskRuns;
+exports.HandleWebTaskUpdate = HandleWebTaskUpdate;
+exports.HandleWebTaskValidate = HandleWebTaskValidate;
+exports.HandleWebTasksCreate = HandleWebTasksCreate;
+exports.HandleWebTasksList = HandleWebTasksList;
+exports.HandleWebTerminalClaim = HandleWebTerminalClaim;
+exports.HandleWebTerminalClose = HandleWebTerminalClose;
+exports.HandleWebTerminalHistory = HandleWebTerminalHistory;
+exports.HandleWebTerminalMaintenance = HandleWebTerminalMaintenance;
+exports.HandleWebTerminalRevoke = HandleWebTerminalRevoke;
+exports.HandleWebTerminalSession = HandleWebTerminalSession;
+exports.HandleWebTerminalValidate = HandleWebTerminalValidate;
+exports.HandleWebUserProjectsGet = HandleWebUserProjectsGet;
+exports.HandleWebUserProjectsPut = HandleWebUserProjectsPut;
+exports.HandleWebWebhookDeliveries = HandleWebWebhookDeliveries;
+exports.HandleWebWorkerClaim = HandleWebWorkerClaim;
+exports.HandleWebWorkerProjectLimits = HandleWebWorkerProjectLimits;
+exports.HandleWebWorkerReport = HandleWebWorkerReport;
+exports.InitializeDashboardTotp = InitializeDashboardTotp;
 exports.LIVE_PLATFORM_TOPIC = LIVE_PLATFORM_TOPIC;
 exports.LIVE_VIEW_STATS_TOPIC = LIVE_VIEW_STATS_TOPIC;
 exports.OPERATOR_SETTINGS_NAME = OPERATOR_SETTINGS_NAME;
+exports.PERFORMANCE_READER = PERFORMANCE_READER;
 exports.ProcessInstanceMonitoringDeliveries = ProcessInstanceMonitoringDeliveries;
+exports.PruneInstanceConsoleTickets = PruneInstanceConsoleTickets;
 exports.PurgeExpiredInstanceHealthChecks = PurgeExpiredInstanceHealthChecks;
 exports.PurgeExpiredInstanceResourceMetrics = PurgeExpiredInstanceResourceMetrics;
+exports.RUNTIME_LOG_READER = RUNTIME_LOG_READER;
 exports.ReconcileBackupPolicyCrons = ReconcileBackupPolicyCrons;
+exports.ReportBackupCheckIncident = ReportBackupCheckIncident;
 exports.TestBackupS3Config = TestBackupS3Config;
+exports.ValidateInstanceHostnames = ValidateInstanceHostnames;
+exports.WEB_ENVIRONMENTS = WEB_ENVIRONMENTS;
+exports.WEB_MEMBERS = WEB_MEMBERS;
+exports.WEB_NOTIFICATION_EVENTS = WEB_NOTIFICATION_EVENTS;
 exports.applyOperatorMailSettings = applyOperatorMailSettings;
+exports.applyWebGithubConnectionConfig = applyWebGithubConnectionConfig;
+exports.applyWebRuntimePublishedImage = applyWebRuntimePublishedImage;
+exports.assertBackupAppRevision = assertBackupAppRevision;
+exports.assertGithubConnectionUnique = assertGithubConnectionUnique;
+exports.assertInstanceHostnameOperator = assertInstanceHostnameOperator;
+exports.assertNoWebDomainConflict = assertNoWebDomainConflict;
+exports.assertWebDeploymentInScope = assertWebDeploymentInScope;
+exports.assertWebDomainDnsAccess = assertWebDomainDnsAccess;
+exports.assertWebEnvironmentBackupAllowed = assertWebEnvironmentBackupAllowed;
+exports.assertWebEnvironmentDeployAllowed = assertWebEnvironmentDeployAllowed;
+exports.assertWebEnvironmentRevision = assertWebEnvironmentRevision;
+exports.assertWebEnvironmentSlug = assertSlug;
+exports.assertWebGitSourceReady = assertWebGitSourceReady;
+exports.assertWebGithubRate = assertWebGithubRate;
+exports.assertWebNotDeleting = assertWebNotDeleting;
+exports.assertWebPermanentCapacity = assertPermanentCapacity;
+exports.assertWebPreviewRemovalJob = assertWebPreviewRemovalJob;
+exports.assertWebQueueCapacity = assertWebQueueCapacity;
+exports.assertWebSiteCapacity = assertWebSiteCapacity;
+exports.attachWebAppToProject = attachWebAppToProject;
+exports.auditWebAppEnv = auditWebAppEnv;
+exports.auditWebProject = auditWebProject;
+exports.bindWebGitSourceProject = bindWebGitSourceProject;
 exports.broadcastLivePlatformStats = broadcastLivePlatformStats;
 exports.broadcastLiveViewStats = broadcastLiveViewStats;
+exports.canAccessWebProject = canAccessWebProject;
+exports.canAssignInstanceHostnames = canAssignInstanceHostnames;
+exports.canSetWebRepository = canSetWebRepository;
+exports.createWebEnvironment = createWebEnvironment;
+exports.currentBackupAppRevision = currentBackupAppRevision;
+exports.currentWebEnvironmentRevision = currentWebEnvironmentRevision;
+exports.currentWebRuntimeRevision = currentWebRuntimeRevision;
+exports.decryptWebValue = decryptWebValue;
 exports.defaultOperatorSettings = defaultOperatorSettings;
+exports.detachWebAppFromProject = detachWebAppFromProject;
+exports.eachWebRecord = eachWebRecord;
+exports.emitWebAlert = emitWebAlert;
+exports.encryptWebValue = encryptWebValue;
+exports.environmentDeploymentState = environmentDeploymentState;
+exports.exportWebEnvironmentBackup = exportWebEnvironmentBackup;
+exports.findWebApp = findWebApp;
+exports.getAllWebDomainRoutesSnapshot = getAllWebDomainRoutesSnapshot;
 exports.getLivePlatformStats = getLivePlatformStats;
 exports.getLiveViewStats = getLiveViewStats;
+exports.getVerifiedWebDomains = getVerifiedWebDomains;
+exports.getWebDomainRouteSnapshot = getWebDomainRouteSnapshot;
+exports.githubConnectionConfigured = githubConnectionConfigured;
+exports.githubConnectionIdOfKey = githubConnectionIdOfKey;
+exports.githubConnectionLabel = githubConnectionLabel;
+exports.githubConnectionLastDelivery = githubConnectionLastDelivery;
+exports.githubConnectionMeta = githubConnectionMeta;
+exports.githubConnectionRow = githubConnectionRow;
+exports.githubConnectionUsage = githubConnectionUsage;
+exports.githubConnectionUses = githubConnectionUses;
+exports.githubReaderConfig = githubReaderConfig;
+exports.githubSessionTarget = githubSessionTarget;
+exports.githubSettingsKey = githubSettingsKey;
+exports.githubWebhookUrl = githubWebhookUrl;
+exports.githubWebhookUrlMismatch = githubWebhookUrlMismatch;
 exports.handleLivePlatformInstanceCreate = handleLivePlatformInstanceCreate;
 exports.handleLivePlatformInstanceDelete = handleLivePlatformInstanceDelete;
 exports.handleLivePlatformInstanceUpdate = handleLivePlatformInstanceUpdate;
@@ -8391,26 +25753,124 @@ exports.handleLivePlatformUserCreate = handleLivePlatformUserCreate;
 exports.handleLivePlatformUserDelete = handleLivePlatformUserDelete;
 exports.handleLivePlatformUserUpdate = handleLivePlatformUserUpdate;
 exports.handleLiveViewStatsCron = handleLiveViewStatsCron;
+exports.handleWebPreviewWebhook = handleWebPreviewWebhook;
 exports.initLivePlatformStatsAtBoot = initLivePlatformStatsAtBoot;
 exports.initLiveViewStatsAtBoot = initLiveViewStatsAtBoot;
+exports.instanceHostnameView = instanceHostnameView;
+exports.instanceOwnsHostname = instanceOwnsHostname;
+exports.instanceTransferBackupTools = instanceTransferBackupTools;
+exports.isWebPlatformAdmin = isWebPlatformAdmin;
+exports.listAccessibleProjectIds = listAccessibleProjectIds;
+exports.listAccessibleWebAppIds = listAccessibleWebAppIds;
+exports.listWebGithubConnections = listWebGithubConnections;
+exports.listWebMemberships = listWebMemberships;
 exports.markStaleEdges = markStaleEdges;
 exports.mkPublicStatsPath = mkPublicStatsPath;
+exports.newGithubConnectionId = newGithubConnectionId;
 exports.normalizeBackupS3Settings = normalizeBackupS3Settings;
 exports.normalizeInstanceStatus = normalizeInstanceStatus;
 exports.normalizeOperatorSettings = normalizeOperatorSettings;
 exports.normalizeSMTPSettings = normalizeSMTPSettings;
 exports.normalizeServerTimezone = normalizeServerTimezone;
+exports.normalizeWebDeliveryConnections = normalizeWebDeliveryConnections;
+exports.normalizeWebhookUrl = normalizeWebhookUrl;
+exports.operationJson = operationJson;
+exports.operationsAccess = operationsAccess;
+exports.planWebAppEnv = planWebAppEnv;
+exports.queueWebDeployment = queueWebDeployment;
+exports.queueWebGitPush = queueWebGitPush;
 exports.readDockerMetricsSnapshot = readDockerMetricsSnapshot;
 exports.readOperatorSettings = readOperatorSettings;
+exports.readWebGithubSettings = readWebGithubSettings;
+exports.reconcileWebGitSourceProject = reconcileWebGitSourceProject;
+exports.recordInstanceAction = recordInstanceAction;
 exports.recountLivePlatformStats = recountLivePlatformStats;
 exports.refreshAndBroadcastLivePlatformStats = refreshAndBroadcastLivePlatformStats;
 exports.refreshAndBroadcastLiveViewStats = refreshAndBroadcastLiveViewStats;
 exports.refreshImportedBackupSizeMetadata = refreshImportedBackupSizeMetadata;
 exports.refreshLiveViewStats = refreshLiveViewStats;
 exports.refreshPublicStats = refreshPublicStats;
+exports.requirePlatformAdmin = requirePlatformAdmin;
+exports.requireWebAppPermission = requireWebAppPermission;
+exports.requireWebPermission = requireWebPermission;
+exports.requireWebProjectPermission = requireWebProjectPermission;
+exports.requireWebUser = requireWebUser;
+exports.requireWorker = requireWorker;
+exports.resetWebNotificationChannels = resetWebNotificationChannels;
+exports.resolveWebAccessTarget = resolveWebAccessTarget;
+exports.resolveWebEnvironment = resolveWebEnvironment;
+exports.resolveWebGitCommit = resolveWebGitCommit;
+exports.resolvedConnectionId = resolvedConnectionId;
+exports.restoreWebEnvironmentBackup = restoreWebEnvironmentBackup;
+exports.restoreWebRuntimeBackup = restoreWebRuntimeBackup;
+exports.restoreWebStorageBackup = restoreWebStorageBackup;
+exports.runtimeNeedsSource = runtimeNeedsSource;
+exports.runtimeProfile = runtimeProfile;
+exports.runtimeWorkerSnapshot = runtimeWorkerSnapshot;
+exports.scrubWebCiCredentials = scrubWebCiCredentials;
 exports.sendLivePlatformStatsToClient = sendLivePlatformStatsToClient;
 exports.sendLiveViewStatsToClient = sendLiveViewStatsToClient;
 exports.serializeInstanceBackup = serializeInstanceBackup;
 exports.serializeInstanceRuntimeMetrics = serializeInstanceRuntimeMetrics;
 exports.serializeOperatorSettings = serializeOperatorSettings;
+exports.serializeWebApp = serializeWebApp;
+exports.serializeWebDeployment = serializeWebDeployment;
+exports.serializeWebGitSource = serializeWebGitSource;
+exports.serializeWebGithubConnection = serializeWebGithubConnection;
+exports.storageWorkerSnapshot = storageWorkerSnapshot;
+exports.validateRuntimeProfile = validateRuntimeProfile;
+exports.webActorCan = webActorCan;
+exports.webAlertSummary = webAlertSummary;
+exports.webAppAccessQuery = webAppAccessQuery;
+exports.webAppAccessView = webAppAccessView;
+exports.webAppDetachment = webAppDetachment;
+exports.webAppSettingActive = webAppSettingActive;
+exports.webAppsCapability = webAppsCapability;
+exports.webCan = webCan;
+exports.webConfig = webConfig;
+exports.webDeletionView = webDeletionView;
+exports.webDeploymentOrigin = webDeploymentOrigin;
+exports.webDirectLoopback = webDirectLoopback;
+exports.webEffectiveRole = webEffectiveRole;
+exports.webEnabled = webEnabled;
+exports.webEnvironmentName = webEnvironmentName;
+exports.webEnvironmentResources = webEnvironmentResources;
+exports.webEnvironmentSlug = slugOf;
+exports.webGitAppConfig = webGitAppConfig;
+exports.webGitJobCredentials = webGitJobCredentials;
+exports.webGitSource = webGitSource;
+exports.webGitSourceAppProjects = webGitSourceAppProjects;
+exports.webGitSourceApps = webGitSourceApps;
+exports.webGitSourceTarget = webGitSourceTarget;
+exports.webGitWebhookDeliver = webGitWebhookDeliver;
+exports.webGithub = webGithub;
+exports.webGithubCapability = webGithubCapability;
+exports.webGithubConnection = webGithubConnection;
+exports.webGithubWebhookFor = webGithubWebhookFor;
+exports.webHistoryInScope = webHistoryInScope;
+exports.webHttpsPreflight = webHttpsPreflight;
+exports.webInput = webInput;
+exports.webJson = webJson;
+exports.webMembership = webMembership;
+exports.webPermanentEnvironment = permanent;
+exports.webPlatformRecoveryApi = webPlatformRecoveryApi;
+exports.webProject = webProject;
+exports.webProjectAccessQuery = webProjectAccessQuery;
+exports.webProjectAllowedRepositories = webProjectAllowedRepositories;
+exports.webProjectId = webProjectId;
+exports.webProjectLimits = webProjectLimits;
+exports.webProjectLineage = webProjectLineage;
+exports.webProjectMemberRecord = webProjectMemberRecord;
+exports.webProjectRepositoryMatches = webProjectRepositoryMatches;
+exports.webProjectVariable = webProjectVariable;
+exports.webProjectView = webProjectView;
+exports.webRateLimit = webRateLimit;
+exports.webRoleFor = webRoleFor;
+exports.webRoot = webRoot;
+exports.webSameRepository = webSameRepository;
+exports.webSameSiteFamily = webSameSiteFamily;
+exports.webSitesFull = webSitesFull;
+exports.webSourceBuildSupported = webSourceBuildSupported;
 exports.writeOperatorSettings = writeOperatorSettings;
+exports.writeWebGithubConnection = writeWebGithubConnection;
+exports.writeWebGithubSettings = writeWebGithubSettings;

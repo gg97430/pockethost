@@ -2,20 +2,21 @@ import { logger } from '@'
 import { Command } from 'commander'
 
 type Options = {
-  debug: boolean
+  notify: boolean
 }
 
 export const HealthCommand = () => {
   const cmd = new Command(`health`)
     .addCommand(
       new Command(`check`)
-        .description(`Run edge health checks and post status to Discord`)
+        .description(`Check infrastructure, databases and web hosting; publish operator monitoring and alerts`)
+        .option('--no-notify', 'Update monitoring without sending external notifications')
         .action(async (options: Options) => {
           logger().context({ cli: 'health:check' })
           const { info } = logger()
           info(`Starting`)
           const { checkHealth } = await import(`./checkHealth`)
-          await checkHealth()
+          await checkHealth(options)
         })
     )
     .action(() => {

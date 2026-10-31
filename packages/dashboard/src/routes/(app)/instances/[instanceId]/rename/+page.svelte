@@ -59,8 +59,8 @@
 >
   <svelte:fragment slot="summary">
     <p>
-      Renommer votre instance la rendra <strong>inaccessible</strong> avec son ancien nom. Vous pourriez aussi ne pas
-      pouvoir revenir en arrière si quelqu'un d'autre choisit ce nom.
+      Renommer votre instance la rendra <strong>inaccessible</strong> avec son ancien nom. Vous pourriez aussi ne pas pouvoir
+      revenir en arrière si quelqu'un d'autre choisit ce nom.
     </p>
   </svelte:fragment>
 

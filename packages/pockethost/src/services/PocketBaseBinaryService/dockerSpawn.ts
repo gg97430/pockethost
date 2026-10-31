@@ -4,6 +4,7 @@ import {
   isDockerContainerNotFound,
   isDockerContainerStopBenign,
   mkContainerHomePath,
+  MOTHERSHIP_CONTAINER_NAME,
   PH_CONTAINER_STOP_TIMEOUT_SEC,
   removeNamedContainer,
   withDockerContainerConflictRetry,
@@ -11,6 +12,8 @@ import {
 import Docker, { Container, ContainerCreateOptions } from 'dockerode'
 import { execFileSync, spawn } from 'node:child_process'
 import { PassThrough } from 'node:stream'
+import { INSTANCE_IMAGE_ID } from '../../common/instanceImages'
+import { containerMatchesInstanceImage, inspectHostInstanceImage } from '../../core/instanceImages'
 
 export type PocketBaseContainerSpawnConfig = {
   binPath: string
@@ -80,12 +83,16 @@ export const spawnPocketBaseContainer = async (cfg: PocketBaseContainerSpawnConf
     }
   }
 
+  const customerId = name && name !== MOTHERSHIP_CONTAINER_NAME && INSTANCE_IMAGE_ID.test(name) ? name : undefined
+  const expectedImage = customerId ? await inspectHostInstanceImage(docker, customerId) : undefined
+  const imageReference = expectedImage?.reference || DOCKER_INSTANCE_IMAGE_NAME()
+
   if (name) {
     await withDockerContainerConflictRetry(() => removeNamedContainer(docker, name, stopTimeoutSec), { docker, name })
   }
 
   const createOptions: ContainerCreateOptions = {
-    Image: DOCKER_INSTANCE_IMAGE_NAME(),
+    Image: imageReference,
     Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
     name,
     HostConfig: {
@@ -120,7 +127,7 @@ export const spawnPocketBaseContainer = async (cfg: PocketBaseContainerSpawnConf
   }
 
   const runContainer = () => {
-    const emitter = docker.run(DOCKER_INSTANCE_IMAGE_NAME(), [''], [stdout, stderr], createOptions, (err, data) => {
+    const emitter = docker.run(imageReference, [''], [stdout, stderr], createOptions, (err, data) => {
       if (err) {
         onStderr?.(String(err))
       }
@@ -129,7 +136,18 @@ export const spawnPocketBaseContainer = async (cfg: PocketBaseContainerSpawnConf
     })
 
     return new Promise<Container>((resolve, reject) => {
-      emitter.once('start', resolve)
+      emitter.once('start', async (container: Container) => {
+        try {
+          if (expectedImage && !containerMatchesInstanceImage(await container.inspect(), expectedImage)) {
+            await stopContainer(container)
+            reject(new Error('Started PocketBase helper image does not match operator policy.'))
+            return
+          }
+          resolve(container)
+        } catch (error) {
+          reject(error)
+        }
+      })
       emitter.once('error', reject)
     })
   }

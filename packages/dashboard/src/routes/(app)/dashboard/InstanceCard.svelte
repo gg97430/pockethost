@@ -98,9 +98,9 @@
     flex: 1 1 0;
     width: 100%;
     border: 1px solid var(--app-border);
-    border-radius: 0.75rem;
+    border-radius: 0.375rem;
     background: var(--app-surface);
-    box-shadow: var(--app-shadow-sm);
+    box-shadow: none;
     color: var(--app-text);
     text-align: left;
     cursor: pointer;
@@ -115,11 +115,12 @@
   .instance-card:hover {
     border-color: var(--app-border-strong);
     background: var(--app-surface-hover);
-    box-shadow: var(--app-shadow);
+    box-shadow: none;
   }
 
   .instance-card:focus-visible {
-    box-shadow: 0 0 0 3px rgb(30 184 84 / 0.22);
+    outline: 2px solid var(--app-accent, #3b7cff);
+    outline-offset: 2px;
   }
 
   .instance-card-title {
@@ -129,7 +130,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--app-text-strong);
-    font-size: 1.25rem;
+    font-size: 1rem;
     font-weight: 700;
     text-align: start;
   }

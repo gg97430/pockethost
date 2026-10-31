@@ -31,10 +31,13 @@ migrate(
     const settings = parseSettingsValue(record.getString('value') || record.get('value'))
     if (settings.serverTimezone) return
 
-    record.set('value', JSON.stringify({
-      ...settings,
-      serverTimezone: DEFAULT_SERVER_TIMEZONE,
-    }))
+    record.set(
+      'value',
+      JSON.stringify({
+        ...settings,
+        serverTimezone: DEFAULT_SERVER_TIMEZONE,
+      })
+    )
     app.save(record)
   },
   (app) => {

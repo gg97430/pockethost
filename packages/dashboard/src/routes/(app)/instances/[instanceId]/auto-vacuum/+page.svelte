@@ -25,13 +25,18 @@
   }
 </script>
 
-<FeatureTab title="Nettoyage auto" documentation="/docs/auto-vacuum" powerOffAction="modifier le nettoyage auto" {errorMessage}>
+<FeatureTab
+  title="Nettoyage auto"
+  documentation="/docs/auto-vacuum"
+  powerOffAction="modifier le nettoyage auto"
+  {errorMessage}
+>
   <svelte:fragment slot="summary">
     <p>
-      Le nettoyage auto récupère de l'espace disque dans les bases SQLite de votre instance pendant la maintenance nocturne.
-      La compaction est lancée uniquement lorsque votre instance est inactive (hibernée), pas pendant
-      qu'elle sert du trafic. Si une requête réveille votre instance pendant le vacuum, vous pouvez constater jusqu'à
-      environ 5 secondes d'indisponibilité pendant la fin de la compaction.
+      Le nettoyage auto récupère de l'espace disque dans les bases SQLite de votre instance pendant la maintenance
+      nocturne. La compaction est lancée uniquement lorsque votre instance est inactive (hibernée), pas pendant qu'elle
+      sert du trafic. Si une requête réveille votre instance pendant le vacuum, vous pouvez constater jusqu'à environ 5
+      secondes d'indisponibilité pendant la fin de la compaction.
     </p>
   </svelte:fragment>
 

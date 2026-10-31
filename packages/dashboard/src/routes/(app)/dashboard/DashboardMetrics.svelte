@@ -2,37 +2,6 @@
   import { globalInstancesStore, userStore } from '$util/stores'
   import { getInstanceRuntimeState, runtimeStateLabel, type InstanceRuntimeState } from '$util/instancePower'
   import type { InstanceFields } from 'pockethost/common'
-  import { onDestroy, onMount } from 'svelte'
-
-  type SystemMetrics = {
-    collectedAt: string
-    hostname: string
-    uptimeSeconds: number
-    cpu: {
-      count: number
-      loadAverage: number[]
-      usedPercent: number
-    }
-    memory: {
-      totalBytes: number
-      freeBytes: number
-      usedBytes: number
-      usedPercent: number
-    }
-    disk: {
-      path: string
-      totalBytes: number
-      freeBytes: number
-      usedBytes: number
-      usedPercent: number
-    }
-    process: {
-      uptimeSeconds: number
-      rssBytes: number
-      heapUsedBytes: number
-      heapTotalBytes: number
-    }
-  }
 
   type StatusItem = {
     key: InstanceRuntimeState
@@ -51,10 +20,6 @@
     { key: 'failed', className: 'metric-bar-fill--red' },
   ]
 
-  let systemMetrics: SystemMetrics | null = null
-  let systemMetricsError = ''
-  let refreshTimer: ReturnType<typeof setInterval> | undefined
-
   const clampPercent = (value: number) => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0))
 
   const formatNumber = (value: number) => new Intl.NumberFormat('fr-FR').format(value)
@@ -62,52 +27,7 @@
   const formatPercent = (value: number) =>
     `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(clampPercent(value))} %`
 
-  const formatBytes = (bytes: number) => {
-    if (!Number.isFinite(bytes) || bytes < 0) return '0 o'
-    const units = ['o', 'Ko', 'Mo', 'Go', 'To']
-    let value = bytes
-    let unit = 0
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024
-      unit += 1
-    }
-    return `${new Intl.NumberFormat('fr-FR', {
-      maximumFractionDigits: value >= 10 || unit === 0 ? 0 : 1,
-    }).format(value)} ${units[unit]}`
-  }
-
-  const formatDuration = (seconds: number) => {
-    if (!Number.isFinite(seconds) || seconds < 0) return '0 min'
-    const days = Math.floor(seconds / 86400)
-    const hours = Math.floor((seconds % 86400) / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    if (days > 0) return `${days} j ${hours} h`
-    if (hours > 0) return `${hours} h ${minutes} min`
-    return `${minutes} min`
-  }
-
   const percentOf = (value: number, total: number) => (total > 0 ? clampPercent((value / total) * 100) : 0)
-
-  const fetchSystemMetrics = async () => {
-    try {
-      const response = await fetch('/api/internal/system-metrics', { cache: 'no-store' })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      systemMetrics = await response.json()
-      systemMetricsError = ''
-    } catch (error) {
-      systemMetrics = null
-      systemMetricsError = error instanceof Error ? error.message : String(error)
-    }
-  }
-
-  onMount(() => {
-    void fetchSystemMetrics()
-    refreshTimer = setInterval(fetchSystemMetrics, 30_000)
-  })
-
-  onDestroy(() => {
-    if (refreshTimer) clearInterval(refreshTimer)
-  })
 
   $: instances = Object.values($globalInstancesStore)
   $: totalInstances = instances.length
@@ -170,13 +90,9 @@
       <small>{formatNumber(runningCount)} en service</small>
     </div>
     <div class="kpi-card">
-      <span class="kpi-label">RAM libre</span>
-      <strong>{systemMetrics ? formatBytes(systemMetrics.memory.freeBytes) : '...'}</strong>
-      <small
-        >{systemMetrics
-          ? `${formatPercent(systemMetrics.memory.usedPercent)} utilisée`
-          : 'Métrique indisponible'}</small
-      >
+      <span class="kpi-label">Quota BDD</span>
+      <strong>{quota > 0 ? `${formatNumber(totalInstances)} / ${formatNumber(quota)}` : '—'}</strong>
+      <small>{quota > 0 ? `${formatPercent(quotaPercent)} utilisé` : 'Quota non configuré'}</small>
     </div>
     <div class="kpi-card" class:kpi-card--danger={failedCount > 0}>
       <span class="kpi-label">Incidents</span>
@@ -186,81 +102,6 @@
   </div>
 
   <div class="metric-panel-grid">
-    <div class="metric-panel metric-panel--system">
-      <div class="metric-panel-head">
-        <div>
-          <h2>Infrastructure</h2>
-          <p>
-            {systemMetrics
-              ? `${systemMetrics.hostname} · uptime ${formatDuration(systemMetrics.uptimeSeconds)}`
-              : 'Données serveur en attente'}
-          </p>
-        </div>
-        <button type="button" class="metric-refresh" onclick={fetchSystemMetrics} aria-label="Actualiser les métriques">
-          <wa-icon name="rotate"></wa-icon>
-        </button>
-      </div>
-
-      {#if systemMetrics}
-        <div class="system-grid">
-          <div class="system-tile">
-            <span>CPU utilisé</span>
-            <strong>{formatPercent(systemMetrics.cpu.usedPercent)}</strong>
-            <small
-              >{systemMetrics.cpu.count} CPU · charge {systemMetrics.cpu.loadAverage[0]?.toFixed(2) ?? '0.00'}</small
-            >
-          </div>
-          <div class="system-tile">
-            <span>Disque libre</span>
-            <strong>{formatBytes(systemMetrics.disk.freeBytes)}</strong>
-            <small>{formatPercent(systemMetrics.disk.usedPercent)} utilisé</small>
-          </div>
-          <div class="system-tile">
-            <span>Process dashboard</span>
-            <strong>{formatBytes(systemMetrics.process.rssBytes)}</strong>
-            <small>{formatDuration(systemMetrics.process.uptimeSeconds)}</small>
-          </div>
-        </div>
-        <div class="meter-block">
-          <div class="meter-row">
-            <span>CPU</span>
-            <span>{formatPercent(systemMetrics.cpu.usedPercent)}</span>
-          </div>
-          <div class="meter-track">
-            <span class="meter-fill meter-fill--cpu" style={`width: ${clampPercent(systemMetrics.cpu.usedPercent)}%`}
-            ></span>
-          </div>
-        </div>
-        <div class="meter-block">
-          <div class="meter-row">
-            <span>RAM</span>
-            <span>{formatBytes(systemMetrics.memory.usedBytes)} / {formatBytes(systemMetrics.memory.totalBytes)}</span>
-          </div>
-          <div class="meter-track">
-            <span
-              class="meter-fill meter-fill--memory"
-              style={`width: ${clampPercent(systemMetrics.memory.usedPercent)}%`}
-            ></span>
-          </div>
-        </div>
-        <div class="meter-block">
-          <div class="meter-row">
-            <span>Stockage</span>
-            <span>{formatBytes(systemMetrics.disk.usedBytes)} / {formatBytes(systemMetrics.disk.totalBytes)}</span>
-          </div>
-          <div class="meter-track">
-            <span class="meter-fill meter-fill--disk" style={`width: ${clampPercent(systemMetrics.disk.usedPercent)}%`}
-            ></span>
-          </div>
-        </div>
-      {:else}
-        <div class="metric-empty">
-          <wa-icon name="triangle-exclamation"></wa-icon>
-          <span>Métriques serveur non disponibles{systemMetricsError ? ` (${systemMetricsError})` : ''}</span>
-        </div>
-      {/if}
-    </div>
-
     <div class="metric-panel">
       <div class="metric-panel-head">
         <div>
@@ -377,22 +218,22 @@
     border: 1px solid var(--app-border);
     border-radius: 0.5rem;
     background: var(--app-surface-strong);
-    box-shadow: var(--app-shadow-sm);
+    box-shadow: none;
   }
 
   .kpi-card {
-    min-height: 7rem;
+    min-height: 6rem;
     padding: 1rem;
   }
 
   .kpi-card--primary {
-    border-color: rgb(30 184 84 / 0.38);
-    background: linear-gradient(145deg, rgb(30 184 84 / 0.18), var(--app-surface-strong));
+    border-color: var(--app-border-strong);
+    background: var(--app-surface);
   }
 
   .kpi-card--danger {
     border-color: rgb(239 68 68 / 0.45);
-    background: linear-gradient(145deg, rgb(239 68 68 / 0.16), var(--app-surface-strong));
+    background: color-mix(in srgb, var(--app-surface) 96%, #ef4444);
   }
 
   .kpi-label {
@@ -408,7 +249,7 @@
   .kpi-card strong {
     display: block;
     color: var(--app-text-strong);
-    font-size: 1.8rem;
+    font-size: 1.5rem;
     line-height: 1;
   }
 
@@ -421,23 +262,16 @@
 
   .metric-panel-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(18rem, 0.8fr) minmax(0, 1fr);
+    grid-template-columns: repeat(12, minmax(0, 1fr));
     gap: 0.75rem;
     align-items: stretch;
   }
 
   .metric-panel {
     min-width: 0;
-    min-height: 16rem;
+    grid-column: span 3;
+    min-height: 0;
     padding: 1rem;
-  }
-
-  .metric-panel--system {
-    grid-row: span 2;
-  }
-
-  .metric-panel--versions {
-    grid-column: span 2;
   }
 
   .metric-panel-head {
@@ -461,60 +295,6 @@
     font-size: 0.78rem;
   }
 
-  .metric-refresh {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 2rem;
-    height: 2rem;
-    border: 1px solid var(--app-border);
-    border-radius: 0.375rem;
-    background: var(--app-surface-soft);
-    color: var(--app-text-muted);
-    cursor: pointer;
-  }
-
-  .metric-refresh:hover {
-    color: var(--app-text-strong);
-    border-color: var(--app-border-strong);
-  }
-
-  .system-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .system-tile {
-    min-width: 0;
-    min-height: 6.25rem;
-    padding: 0.75rem;
-    border: 1px solid var(--app-border);
-    border-radius: 0.45rem;
-    background: var(--app-surface-soft);
-  }
-
-  .system-tile span,
-  .system-tile small {
-    display: block;
-    color: var(--app-text-faint);
-    font-size: 0.72rem;
-  }
-
-  .system-tile strong {
-    display: block;
-    margin: 0.45rem 0;
-    color: var(--app-text-strong);
-    font-size: 1.05rem;
-    line-height: 1.15;
-  }
-
-  .meter-block + .meter-block {
-    margin-top: 0.9rem;
-  }
-
-  .meter-row,
   .metric-bar-label,
   .version-row-head,
   .config-list div {
@@ -524,7 +304,6 @@
     gap: 1rem;
   }
 
-  .meter-row,
   .metric-bar-label,
   .version-row-head {
     margin-bottom: 0.4rem;
@@ -532,14 +311,12 @@
     color: var(--app-text-muted);
   }
 
-  .meter-row span:last-child,
   .metric-bar-label strong,
   .version-row-head strong {
     color: var(--app-text);
     font-weight: 700;
   }
 
-  .meter-track,
   .metric-bar-track {
     position: relative;
     height: 0.5rem;
@@ -548,25 +325,12 @@
     background: var(--app-surface-hover);
   }
 
-  .meter-fill,
   .metric-bar-fill {
     position: absolute;
     inset: 0 auto 0 0;
     width: 0;
     border-radius: inherit;
     transition: width 220ms ease;
-  }
-
-  .meter-fill--memory {
-    background: linear-gradient(90deg, #1eb854, #38bdf8);
-  }
-
-  .meter-fill--cpu {
-    background: linear-gradient(90deg, #22c55e, #eab308, #f97316);
-  }
-
-  .meter-fill--disk {
-    background: linear-gradient(90deg, #fbbf24, #f97316);
   }
 
   .metric-bar-fill--green {
@@ -627,7 +391,7 @@
     border-radius: 999px;
     background:
       radial-gradient(circle at center, var(--app-bg) 0 58%, transparent 59%),
-      conic-gradient(#1eb854 var(--quota), var(--app-surface-hover) 0);
+      conic-gradient(var(--app-accent, #3b7cff) var(--quota), var(--app-surface-hover) 0);
   }
 
   .quota-ring div {
@@ -665,22 +429,18 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .metric-panel--system,
-    .metric-panel--versions {
-      grid-column: span 2;
-      grid-row: auto;
+    .metric-panel {
+      grid-column: span 1;
     }
   }
 
   @media (max-width: 680px) {
     .kpi-grid,
-    .metric-panel-grid,
-    .system-grid {
+    .metric-panel-grid {
       grid-template-columns: 1fr;
     }
 
-    .metric-panel--system,
-    .metric-panel--versions {
+    .metric-panel-grid > .metric-panel {
       grid-column: auto;
     }
 

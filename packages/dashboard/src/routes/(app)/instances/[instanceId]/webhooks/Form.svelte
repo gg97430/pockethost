@@ -94,7 +94,9 @@
         {#if !isApiEndpointValid && apiEndpoint.length > 0}
           <div class="mt-1">
             <span class="text-error text-sm">
-              Les routes API doivent être des chemins valides commençant par / (ex. <code>/api/webhooks/mon-webhook</code>
+              Les routes API doivent être des chemins valides commençant par / (ex. <code
+                >/api/webhooks/mon-webhook</code
+              >
               ou <code>/api/cron?token=abc</code>). N'incluez ni protocole ni hôte.
             </span>
           </div>

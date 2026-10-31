@@ -1,4 +1,5 @@
 import { mkLog } from '$util/Logger'
+import { canManageInstance } from '../../../security/instanceAccess'
 import { removeInstanceLocalStorage } from '../../operatorAdmin/diskCleanup'
 
 export const HandleInstanceDelete = (e: core.RequestEvent) => {
@@ -35,7 +36,7 @@ export const HandleInstanceDelete = (e: core.RequestEvent) => {
   if (!record) {
     throw new BadRequestError(`Instance ${id} introuvable.`)
   }
-  if (record.get('uid') !== authRecord.id) {
+  if (!canManageInstance(record, authRecord)) {
     throw new BadRequestError(`Not authorized`)
   }
 

@@ -1,0 +1,42 @@
+# Modèle de l’unité de reprise globale (jusqu’ici présente seulement sur app1).
+# Installer : sudo install -m 0644 pockethost-platform-recovery.service /etc/systemd/system/
+#             sudo systemctl daemon-reload && sudo systemctl enable --now pockethost-platform-recovery.service
+# Remplacer les <...>. Aucun secret ici : clés, mots de passe et S3 restent dans des fichiers privés 0600.
+# Changer executionEnabled dans la configuration privée exige un redémarrage, hors traitement actif.
+
+[Unit]
+Description=PocketHost - reprise globale de la plateforme (captures chiffrées, tests isolés)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Propriétaire de stateDir (0700), du plan, de la clé de reprise et de drillRoot.
+User=<UTILISATEUR_SERVICE>
+Group=<UTILISATEUR_SERVICE>
+UMask=0077
+# Variables WEB_PLATFORM_RECOVERY_* / WEB_PLATFORM_S3_* : voir web-platform-recovery.env.example.
+EnvironmentFile=<CHEMIN_PRIVE>/web-platform-recovery.env
+ExecStart=/usr/bin/python3 -E -s /opt/pockethost-web/web_platform_recovery_service.py serve --config <CHEMIN_PRIVE>/config.json
+Restart=on-failure
+RestartSec=30
+# SIGTERM au service seul : il arrête proprement le moteur (groupe de processus) avant le délai.
+KillMode=mixed
+TimeoutStopSec=90
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Les captures ne doivent pas concurrencer les sites.
+Nice=10
+CPUWeight=50
+IOWeight=50
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

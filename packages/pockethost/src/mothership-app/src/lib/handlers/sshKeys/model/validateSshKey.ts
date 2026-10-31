@@ -1,5 +1,6 @@
 import { parseSshEd25519PublicKey } from '$common/sshPublicKey'
 import { mkLog } from '$util/Logger'
+import { canManageInstance } from '../../../security/instanceAccess'
 
 const validateSshKeyRecord = (record: models.Record, authId: string) => {
   const log = mkLog(`ssh-keys`)
@@ -25,11 +26,12 @@ const validateSshKeyRecord = (record: models.Record, authId: string) => {
   }
 
   if (!allInstances) {
+    const user = $app.findRecordById('users', authId)
     for (const instanceId of instanceIds) {
       const instance = $app.findRecordById('instances', instanceId)
-      if (instance.getString('uid') !== authId) {
+      if (!canManageInstance(instance, user)) {
         log({ instanceId, authId, uid: instance.getString('uid') })
-        throw new BadRequestError('Une ou plusieurs instances sélectionnées ne vous appartiennent pas.')
+        throw new BadRequestError('Accès refusé à une ou plusieurs bases sélectionnées.')
       }
     }
   }

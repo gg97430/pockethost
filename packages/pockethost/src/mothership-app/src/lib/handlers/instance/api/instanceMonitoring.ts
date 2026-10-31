@@ -31,7 +31,7 @@ export type MonitoringNotificationPayload = {
   message: string
   instanceId: string
   instanceName: string
-  type: 'health' | 'cpu' | 'memory' | 'backup' | 'test'
+  type: 'health' | 'cpu' | 'memory' | 'backup' | 'disk' | 'latency' | 'backup-check' | 'test'
   phase: 'opened' | 'resolved' | 'test'
   occurredAt: string
 }
@@ -58,7 +58,7 @@ export const normalizeMonitoringNotificationPayload = (value: unknown): Monitori
   const payload = parsed as Record<string, unknown>
   const type = notificationPayloadText(payload.type, 'type')
   const phase = notificationPayloadText(payload.phase, 'phase')
-  if (!['health', 'cpu', 'memory', 'backup', 'test'].includes(type)) {
+  if (!['health', 'cpu', 'memory', 'backup', 'disk', 'latency', 'backup-check', 'test'].includes(type)) {
     throw new Error('Payload de notification invalide : type inconnu.')
   }
   if (!['opened', 'resolved', 'test'].includes(phase)) {
@@ -148,7 +148,7 @@ export const evaluateThresholdSignal = (
   threshold: number,
   highSamplesRequired: number,
   normalSamplesRequired = MONITORING_DEFAULTS.resourceRecoveryCount,
-  recoveryMargin = MONITORING_DEFAULTS.resourceRecoveryMargin
+  recoveryMargin: number = MONITORING_DEFAULTS.resourceRecoveryMargin
 ) => {
   const next = { ...state }
   let transition: MonitoringTransition = null

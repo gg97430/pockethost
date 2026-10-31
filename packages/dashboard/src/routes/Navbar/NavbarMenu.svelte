@@ -5,6 +5,7 @@
   import ThemeToggle from '$components/ThemeToggle.svelte'
   import { userStore } from '$util/stores'
   import Avatar from './Avatar.svelte'
+  import { webNavStore } from '$lib/webAccessStore'
 
   const handleLogoutAndRedirect = async () => {
     const { logOut } = client()
@@ -24,6 +25,8 @@
       {#if $userStore?.superAdmin}
         <a href="/admin" class="site-nav-link site-nav-link--menu">Administration</a>
       {/if}
+      {#if $webNavStore}<a href="/applications" class="site-nav-link site-nav-link--menu">Applications web</a>{/if}
+      <a href="/activity" class="site-nav-link site-nav-link--menu">Journal d’administration</a>
       <a href="/account" class="site-nav-link site-nav-link--menu">Compte</a>
       <button type="button" class="site-nav-link site-nav-link--menu text-left" onclick={handleLogoutAndRedirect}>
         Déconnexion
@@ -42,12 +45,14 @@
       {#if $userStore?.superAdmin}
         <a href="/admin" class="site-nav-link">Administration</a>
       {/if}
+      {#if $webNavStore}<a href="/applications" class="site-nav-link">Applications web</a>{/if}
     </UserLoggedIn>
     <UserLoggedIn>
       <wa-dropdown placement="bottom-end" class="nav-user-menu ml-1">
         <button slot="trigger" type="button" class="nav-user-menu-trigger" aria-label="Menu du compte">
           <Avatar size={32} />
         </button>
+        <wa-dropdown-item><a href="/activity">Journal d’administration</a></wa-dropdown-item>
         <wa-dropdown-item>
           <a href="/account">Paramètres</a>
         </wa-dropdown-item>

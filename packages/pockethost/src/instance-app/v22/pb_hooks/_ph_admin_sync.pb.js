@@ -4,9 +4,9 @@ $app.onBeforeServe().add((e) => {
 
   const log = mkLog(`admin-sync`)
 
-  const { id, email, tokenKey, passwordHash } = (() => {
+  const { id, email, tokenKey, passwordHash, preserveExistingNativeIdentity } = (() => {
     try {
-      return /** @type{{id:string, email:string, tokenKey:string,passwordHash:string}} */ (
+      return /** @type{{id:string, email:string, tokenKey:string,passwordHash:string,preserveExistingNativeIdentity?:boolean}} */ (
         JSON.parse($os.getenv(`ADMIN_SYNC`))
       )
     } catch (e) {
@@ -16,6 +16,10 @@ $app.onBeforeServe().add((e) => {
 
   if (!email) {
     log(`Not active - skipped`)
+    return
+  }
+  if (preserveExistingNativeIdentity === true) {
+    log(`Native admin identity preserved - sync skipped`)
     return
   }
 

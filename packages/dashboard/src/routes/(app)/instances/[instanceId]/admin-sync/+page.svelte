@@ -24,7 +24,12 @@
   }
 </script>
 
-<FeatureTab title="Synchro admin" documentation="/docs/admin-sync" powerOffAction="modifier la synchro admin" {errorMessage}>
+<FeatureTab
+  title="Synchro admin"
+  documentation="/docs/admin-sync"
+  powerOffAction="modifier la synchro admin"
+  {errorMessage}
+>
   <svelte:fragment slot="summary">
     <p>
       La synchro admin garantit que votre instance dispose toujours d'un compte admin correspondant aux identifiants de

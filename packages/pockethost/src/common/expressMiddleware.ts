@@ -1,4 +1,4 @@
-import type { Handler, RequestHandler } from 'express'
+import type { Handler, Request, RequestHandler } from 'express'
 
 export const corsMiddleware: RequestHandler = (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -14,18 +14,24 @@ export const corsMiddleware: RequestHandler = (req, res, next) => {
   next()
 }
 
-export const enforceHttps: RequestHandler = (req, res, next) => {
-  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
-    next()
-    return
+/**
+ * `X-Forwarded-Proto` ne compte que venant d'un proxy de confiance : Cloudflare en mode Flexible parle HTTP à
+ * l'origine, mais un client joignant directement l'origine sur le port 80 ne doit pas pouvoir s'en réclamer.
+ */
+export const createEnforceHttps =
+  (isTrustedProxy: (req: Request) => boolean): RequestHandler =>
+  (req, res, next) => {
+    if (req.secure || (req.headers['x-forwarded-proto'] === 'https' && isTrustedProxy(req))) {
+      next()
+      return
+    }
+    const host = req.headers.host
+    if (!host) {
+      next()
+      return
+    }
+    res.redirect(301, `https://${host}${req.originalUrl}`)
   }
-  const host = req.headers.host
-  if (!host) {
-    next()
-    return
-  }
-  res.redirect(301, `https://${host}${req.originalUrl}`)
-}
 
 export function vhost(hostname: string, handler: Handler): Handler {
   return (req, res, next) => {

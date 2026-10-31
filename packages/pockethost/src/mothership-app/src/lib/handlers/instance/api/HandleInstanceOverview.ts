@@ -1,3 +1,4 @@
+import { canManageInstance, instanceAccessQuery } from '../../../security/instanceAccess'
 import { refreshImportedBackupSizeMetadata, serializeInstanceBackup } from './HandleInstanceBackups'
 
 type DockerStatsRow = {
@@ -94,7 +95,7 @@ const findInstance = (id: string) => {
 }
 
 const assertInstanceAccess = (instance: core.Record, authRecord: core.Record) => {
-  if (instance.getString('uid') !== authRecord.id && !authRecord.getBool('superAdmin')) {
+  if (!canManageInstance(instance, authRecord)) {
     throw new BadRequestError('Non autorise.')
   }
 }
@@ -364,9 +365,8 @@ const aggregateMetricPoints = (points: StoredInstanceMetricPoint[], bucketMs: nu
 }
 
 const findAccessibleInstances = (authRecord: core.Record) => {
-  const records = authRecord.getBool('superAdmin')
-    ? $app.findRecordsByFilter('instances', '1=1', 'subdomain', 500, 0)
-    : $app.findRecordsByFilter('instances', 'uid = {:uid}', 'subdomain', 500, 0, { uid: authRecord.id })
+  const { filter, params } = instanceAccessQuery(authRecord)
+  const records = $app.findRecordsByFilter('instances', filter, 'subdomain', 500, 0, params)
 
   return records.filter((record): record is core.Record => !!record)
 }

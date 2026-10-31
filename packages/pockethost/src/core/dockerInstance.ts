@@ -1,5 +1,7 @@
 import Docker, { ContainerInspectInfo } from 'dockerode'
+import { INSTANCE_IMAGE_ID, INSTANCE_IMAGE_SHA } from '../common/instanceImages'
 import { DOCKER_INSTANCE_IMAGE_NAME, MOTHERSHIP_CONTAINER_NAME } from '../constants'
+import { containerMatchesInstanceImage, hostInstanceImage, hostInstanceImageOverrides } from './instanceImages'
 import {
   isDockerContainerConflict,
   isDockerContainerNotFound,
@@ -16,7 +18,8 @@ export const instanceContainerName = (instanceId: string) => instanceId
 
 const pocketbaseMountDestination = '/home/pockethost/pocketbase'
 
-export const isCustomerInstanceContainerName = (name: string) => name !== MOTHERSHIP_CONTAINER_NAME
+export const isCustomerInstanceContainerName = (name: string) =>
+  name !== MOTHERSHIP_CONTAINER_NAME && INSTANCE_IMAGE_ID.test(name)
 
 export const resolveInstanceIdFromInspect = (info: ContainerInspectInfo): string | undefined => {
   const name = info.Name?.replace(/^\//, '')
@@ -50,24 +53,39 @@ export type RunningInstanceContainer = {
   instanceId: string
   containerId: string
   inspect: ContainerInspectInfo
+  imageMatchesPolicy: boolean
 }
 
 export const listRunningInstanceContainers = async (): Promise<RunningInstanceContainer[]> => {
+  const overrides = hostInstanceImageOverrides()
   const docker = new Docker()
-  const imagePrefix = DOCKER_INSTANCE_IMAGE_NAME()
+  const defaultReference = DOCKER_INSTANCE_IMAGE_NAME()
+  const defaultImage = await docker.getImage(defaultReference).inspect()
+  if (!INSTANCE_IMAGE_SHA.test(defaultImage.Id)) throw new Error('Invalid default PocketBase image identity.')
+  const knownImageIds = new Set([defaultImage.Id, ...Object.values(overrides)])
   const listed = await docker.listContainers({ filters: { status: ['running'] } })
   const results: RunningInstanceContainer[] = []
 
   for (const summary of listed) {
-    if (!summary.Image.startsWith(imagePrefix)) continue
-
+    if (!summary.Names?.some((name) => isCustomerInstanceContainerName(name.replace(/^\//, '')))) continue
     const inspect = await docker.getContainer(summary.Id).inspect()
     const instanceId = resolveInstanceIdFromInspect(inspect)
     if (!instanceId) continue
-
-    results.push({ instanceId, containerId: summary.Id, inspect })
+    const configured = inspect.Config?.Image || ''
+    const legacyNamed =
+      configured === defaultReference ||
+      configured.startsWith(defaultReference + ':') ||
+      configured.startsWith(defaultReference + '@')
+    if (!knownImageIds.has(inspect.Image) && !legacyNamed) continue
+    const reference = hostInstanceImage(instanceId)
+    const expected = { reference, imageId: overrides[instanceId] || defaultImage.Id }
+    results.push({
+      instanceId,
+      containerId: summary.Id,
+      inspect,
+      imageMatchesPolicy: containerMatchesInstanceImage(inspect, expected),
+    })
   }
-
   return results
 }
 

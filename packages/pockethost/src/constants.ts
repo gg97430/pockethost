@@ -16,6 +16,7 @@ import {
   mkString,
   settings,
 } from '.'
+import { instancePublicHostname } from './common/instanceHostnames'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -277,9 +278,9 @@ export const MOTHERSHIP_DATA_DB = () => join(MOTHERSHIP_DATA_ROOT(), `pb_data`, 
 export const mkContainerHomePath = (...path: string[]) => join(`/home/pockethost`, ...path.filter((v) => !!v))
 export const DOC_URL = (...path: string[]) => APP_URL('docs', ...path)
 export const mkInstanceCanonicalHostname = (instance: InstanceFields) =>
-  instance.cname && instance.cname.trim() !== '' ? instance.cname : `${instance.id}.${APEX_DOMAIN()}`
+  instancePublicHostname(instance, APEX_DOMAIN(), 'canonical')
 export const mkInstanceHostname = (instance: InstanceFields) =>
-  [instance.subdomain, APEX_DOMAIN()].filter(Boolean).join('.')
+  instancePublicHostname(instance, APEX_DOMAIN(), 'generated')
 export const mkInstanceUrl = (instance: InstanceFields, ...paths: string[]) =>
   [`${HTTP_PROTOCOL()}//${mkInstanceHostname(instance)}`, paths.join(`/`)].filter(Boolean).join('/')
 export const mkInstanceDataPath = (instanceId: string, ...path: string[]) => INSTANCES_ROOT(instanceId, ...path)

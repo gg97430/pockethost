@@ -14,3 +14,5 @@ export * from './sshKeys'
 export * from './stats'
 export * from './user'
 export * from './versions'
+
+export * from './webApps'

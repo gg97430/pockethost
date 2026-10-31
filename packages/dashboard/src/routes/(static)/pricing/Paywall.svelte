@@ -41,7 +41,7 @@
       'Entrée globale Fly, routage réseau privé',
       'Bande passante, stockage et CPU illimités',
       'Accès FTP',
-      "Flexible - payez seulement ce dont vous avez besoin",
+      'Flexible - payez seulement ce dont vous avez besoin',
     ]}
   />
   <SignupBox

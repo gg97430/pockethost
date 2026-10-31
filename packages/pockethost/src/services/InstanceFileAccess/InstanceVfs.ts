@@ -1,4 +1,4 @@
-import { InstanceFields, Logger, PocketBase, ensureInstanceDirectoryStructure } from '@'
+import { InstanceFields, Logger, PocketBase, UserFields, ensureInstanceDirectoryStructure } from '@'
 import { Mode, constants, createReadStream, createWriteStream } from 'fs'
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'path'
 import { INSTANCES_ROOT } from '../../constants'
@@ -64,11 +64,22 @@ export class InstanceVfs {
       return this.client.collection(`instances`).getFullList<InstanceFields>()
     }
 
-    const instances = await this.client.collection(`instances`).getFullList<InstanceFields>({
-      filter: `uid=${JSON.stringify(this.scope.userId)}`,
-    })
+    const filter = await this.refreshAccessFilter()
+    const instances = await this.client.collection(`instances`).getFullList<InstanceFields>({ filter })
 
     return instances.filter((instance) => instanceAllowedByScope(this.scope, instance.id, instance.uid))
+  }
+
+  private async refreshAccessFilter(): Promise<string> {
+    if (!this.scope) return ''
+    // SFTP uses an internal client: recheck the current account on every operation, including revocations.
+    const user = await this.client.collection('users').getOne<UserFields>(this.scope.userId)
+    if (user.suspension || !user.verified) throw new Error('Accès suspendu.')
+    this.scope = { ...this.scope, superAdmin: !!user.superAdmin, managedInstances: user.managedInstances || [] }
+    if (user.superAdmin) return 'id != ""'
+    const parts = [this.client.filter('uid = {:uid}', { uid: user.id })]
+    for (const id of user.managedInstances || []) parts.push(this.client.filter('id = {:id}', { id }))
+    return `(${parts.join(' || ')})`
   }
 
   get root() {
@@ -100,9 +111,9 @@ export class InstanceVfs {
     const instance = await (async () => {
       dbg(`checking validity`, { subdomain })
       if (!subdomain) return
-      const filter = this.scope
-        ? `subdomain=${JSON.stringify(subdomain)} && uid=${JSON.stringify(this.scope.userId)}`
-        : `subdomain=${JSON.stringify(subdomain)}`
+      const accessFilter = await this.refreshAccessFilter()
+      const nameFilter = this.client.filter('subdomain = {:subdomain}', { subdomain })
+      const filter = accessFilter ? `${nameFilter} && ${accessFilter}` : nameFilter
       const instance = await this.client.collection(`instances`).getFirstListItem<InstanceFields>(filter)
       if (!instance) {
         throw new Error(`${subdomain} not found.`)

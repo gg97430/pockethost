@@ -10,7 +10,7 @@
 </script>
 
 <svelte:head>
-  <title>Connexion - Gestion PocketBase</title>
+  <title>Connexion - Kolab Hosting</title>
 </svelte:head>
 
 <main class="auth-only-page">

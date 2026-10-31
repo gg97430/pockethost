@@ -19,6 +19,7 @@ import {
 import { readFileSync } from 'fs'
 import { FtpSrv } from 'ftp-srv'
 import { createBunyanLoggerShim } from './bunyanLoggerShim'
+import { authorizeFtpLogin } from './ftpTls'
 import { PhFs } from './PhFs'
 
 export type FtpConfig = SingletonBaseConfig & { mothershipUrl: string }
@@ -69,10 +70,12 @@ export const ftpService = mkSingleton((config: FtpConfig) => {
   } as unknown as ConstructorParameters<typeof FtpSrv>[0])
 
   ftpServer.on('login', async ({ connection, username, password }, resolve, reject) => {
-    dbg(`Got a connection with credentials ${username}:${password}`)
+    dbg(`FTP login attempt`)
     dbg(`Finding ${mothershipUrl}`)
     try {
-      const client = await authenticateFileAccess(mothershipUrl, username, password)
+      const client = await authorizeFtpLogin(connection, process.env.PH_FTP_REQUIRE_TLS === 'true', () =>
+        authenticateFileAccess(mothershipUrl, username, password)
+      )
       dbg(`Logged in`)
       const fs = new PhFs(connection, client, _ftpServiceLogger.child(username).context({ ftpSession: Date.now() }))
       resolve({ fs })

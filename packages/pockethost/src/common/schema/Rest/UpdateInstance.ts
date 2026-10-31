@@ -16,6 +16,8 @@ export type UpdateInstancePayload = {
       | 'version'
       | 'dev'
       | 'cname'
+      | 'publicHostname'
+      | 'legacyHostnames'
     >
   >
 }
@@ -83,6 +85,8 @@ export const UpdateInstancePayloadSchema: JSONSchemaType<UpdateInstancePayload> 
         },
         dev: { type: 'boolean', nullable: true },
         cname: { type: 'string', nullable: true },
+        publicHostname: { type: 'string', nullable: true, maxLength: 253 },
+        legacyHostnames: { type: 'array', nullable: true, items: { type: 'string' }, maxItems: 16 },
       },
     },
   },

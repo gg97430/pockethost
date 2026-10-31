@@ -57,7 +57,7 @@ export async function mothership({ logger }: MothershipConfig) {
       MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID: MOTHERSHIP_CLOUDFLARE_ACCOUNT_ID(),
     }).filter((entry): entry is [string, string] => entry[1] != null && entry[1] !== '')
   )
-  dbg({ env })
+  dbg({ environmentKeys: Object.keys(env) })
 
   const pb = PocketBaseBinaryService()
   const port = MOTHERSHIP_PORT()
@@ -69,6 +69,7 @@ export async function mothership({ logger }: MothershipConfig) {
   const args = [
     `serve`,
     `--http`,
+    // Dans le conteneur uniquement : le port publié par Docker ne joint pas la boucle locale du conteneur.
     `0.0.0.0:${port}`,
     `--dir`,
     pbData,
@@ -137,7 +138,8 @@ export async function mothership({ logger }: MothershipConfig) {
       [
         `serve`,
         `--http`,
-        `0.0.0.0:${port}`,
+        // Boucle locale : le contrôleur fait confiance à l'en-tête d'IP du pare-feu, il ne doit être joint que par lui.
+        `127.0.0.1:${port}`,
         `--dir`,
         MOTHERSHIP_DATA_ROOT(`pb_data`),
         `--hooksDir`,

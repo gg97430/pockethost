@@ -1,4 +1,7 @@
 import { mailRecipientSkipReason } from '$util/mailRecipient'
+import { instancePublicHostname } from '../../../../../../common/instanceHostnames'
+import { canManageInstance } from '../../../security/instanceAccess'
+import { instanceHostnameView } from '../hostnames'
 import {
   CollectInstanceResourceMetrics,
   readDockerMetricsSnapshot,
@@ -29,7 +32,7 @@ const DELIVERY_COLLECTION = 'instance_monitoring_deliveries'
 const HEALTH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const INCIDENT_PAGE_SIZE = 25
 
-type MonitoringIncidentType = 'health' | 'cpu' | 'memory' | 'backup'
+type MonitoringIncidentType = 'health' | 'cpu' | 'memory' | 'backup' | 'disk' | 'latency' | 'backup-check'
 type MonitoringChannel = 'email' | 'discord' | 'slack'
 type MonitoringPhase = 'opened' | 'resolved' | 'test'
 
@@ -58,7 +61,7 @@ const findInstance = (id: string) => {
 }
 
 const assertInstanceAccess = (instance: core.Record, authRecord: core.Record) => {
-  if (instance.getString('uid') !== authRecord.id && !authRecord.getBool('superAdmin')) {
+  if (!canManageInstance(instance, authRecord)) {
     throw new BadRequestError('Non autorisé.')
   }
 }
@@ -84,6 +87,10 @@ const setPolicyDefaults = (policy: core.Record, instance: core.Record) => {
   policy.set('memoryEnabled', true)
   policy.set('memoryThresholdPercent', MONITORING_DEFAULTS.memoryThresholdPercent)
   policy.set('memorySustainMinutes', MONITORING_DEFAULTS.memorySustainMinutes)
+  policy.set('diskEnabled', false)
+  policy.set('diskThreshold', 85)
+  policy.set('latencyEnabled', false)
+  policy.set('latencyThreshold', 1000)
   policy.set('backupAlertsEnabled', true)
   policy.set('emailEnabled', true)
   policy.set('discordEnabled', false)
@@ -118,7 +125,7 @@ const createPolicy = (instance: core.Record) => {
 const monitoringApexDomain = () => `${$os.getenv('APEX_DOMAIN') || 'pockethost.lvh.me'}`.trim()
 const monitoringProtocol = () => `${$os.getenv('HTTP_PROTOCOL') || 'https'}`.replace(/:$/, '')
 const monitoringTargetUrl = (instance: core.Record, healthPath: string) =>
-  `${monitoringProtocol()}://${instance.getString('subdomain')}.${monitoringApexDomain()}${healthPath}`
+  `${monitoringProtocol()}://${instancePublicHostname(instanceHostnameView(instance), monitoringApexDomain(), 'generated')}${healthPath}`
 
 const defaultPolicyPayload = (instance: core.Record) => ({
   id: '',
@@ -134,6 +141,12 @@ const defaultPolicyPayload = (instance: core.Record) => ({
   memoryEnabled: true,
   memoryThresholdPercent: MONITORING_DEFAULTS.memoryThresholdPercent,
   memorySustainMinutes: MONITORING_DEFAULTS.memorySustainMinutes,
+  diskEnabled: false,
+  diskThreshold: 85,
+  diskLastValue: null,
+  latencyEnabled: false,
+  latencyThreshold: 1000,
+  latencyLastValue: null,
   backupAlertsEnabled: true,
   emailEnabled: true,
   discordEnabled: false,
@@ -181,6 +194,12 @@ const serializePolicy = (instance: core.Record, policy: core.Record | null) => {
     memoryEnabled: policy.getBool('memoryEnabled'),
     memoryThresholdPercent: policy.getFloat('memoryThresholdPercent') || MONITORING_DEFAULTS.memoryThresholdPercent,
     memorySustainMinutes: policy.getInt('memorySustainMinutes') || MONITORING_DEFAULTS.memorySustainMinutes,
+    diskEnabled: policy.getBool('diskEnabled'),
+    diskThreshold: policy.getFloat('diskThreshold') || 85,
+    diskLastValue: policy.getBool('diskEnabled') ? policy.getFloat('diskLastValue') : null,
+    latencyEnabled: policy.getBool('latencyEnabled'),
+    latencyThreshold: policy.getFloat('latencyThreshold') || 1000,
+    latencyLastValue: policy.getBool('latencyEnabled') ? policy.getFloat('latencyLastValue') : null,
     backupAlertsEnabled: policy.getBool('backupAlertsEnabled'),
     emailEnabled: policy.getBool('emailEnabled'),
     discordEnabled: policy.getBool('discordEnabled'),
@@ -247,6 +266,9 @@ const findOpenIncident = (instanceId: string, type: MonitoringIncidentType, sour
 }
 
 const incidentLabel = (type: MonitoringIncidentType) => {
+  if (type === 'disk') return 'Disque serveur'
+  if (type === 'latency') return 'Latence HTTP'
+  if (type === 'backup-check') return 'Vérification de sauvegarde'
   if (type === 'health') return 'Instance indisponible'
   if (type === 'cpu') return 'CPU élevé'
   if (type === 'memory') return 'Mémoire élevée'
@@ -356,12 +378,17 @@ const resetRuntimeStreaks = (policy: core.Record) => {
   policy.set('cpuNormalStreak', 0)
   policy.set('memoryHighStreak', 0)
   policy.set('memoryNormalStreak', 0)
+  for (const type of ['disk', 'latency']) {
+    policy.set(type + 'HighStreak', 0)
+    policy.set(type + 'NormalStreak', 0)
+  }
 }
 
 const pauseRuntimeMonitoring = (policy: core.Record, instance: core.Record, includeBackups = false) => {
   const types: MonitoringIncidentType[] = includeBackups
-    ? ['health', 'cpu', 'memory', 'backup']
+    ? ['health', 'cpu', 'memory', 'backup', 'backup-check']
     : ['health', 'cpu', 'memory']
+  types.push('disk', 'latency')
   for (const type of types) {
     resolveIncident(policy, instance, findOpenIncident(instance.id, type), 'Surveillance mise en pause.', false)
   }
@@ -539,6 +566,7 @@ const collectMonitoringPolicy = (policy: core.Record, snapshot: DockerMetricsSna
   if (metric.cpuCapacityPercent !== null || metric.memoryPercent !== null) policy.set('lastMetricsAt', nowIso())
   evaluateResource(policy, instance, 'cpu', metric.cpuCapacityPercent)
   evaluateResource(policy, instance, 'memory', metric.memoryPercent)
+  evaluateAdditionalSignals(policy, instance)
   $app.save(policy)
   return true
 }
@@ -781,6 +809,10 @@ export const HandleInstanceMonitoringUpdate = (e: core.RequestEvent) => {
     memoryEnabled: true,
     memoryThresholdPercent: MONITORING_DEFAULTS.memoryThresholdPercent,
     memorySustainMinutes: MONITORING_DEFAULTS.memorySustainMinutes,
+    diskEnabled: false,
+    diskThreshold: 85,
+    latencyEnabled: false,
+    latencyThreshold: 1000,
     backupAlertsEnabled: true,
     emailEnabled: true,
     discordEnabled: false,
@@ -808,6 +840,8 @@ export const HandleInstanceMonitoringUpdate = (e: core.RequestEvent) => {
     throw new BadRequestError('Ajoutez une URL Discord valide.')
   if (data.slackEnabled && !policy.getString('slackWebhook')) throw new BadRequestError('Ajoutez une URL Slack valide.')
 
+  if (data.latencyEnabled && !data.healthEnabled)
+    throw new BadRequestError('Activez la sonde HTTP pour surveiller sa latence.')
   policy.set('user', instance.getString('uid'))
   policy.set('enabled', !!data.enabled)
   policy.set('healthEnabled', !!data.healthEnabled)
@@ -834,6 +868,24 @@ export const HandleInstanceMonitoringUpdate = (e: core.RequestEvent) => {
     'memorySustainMinutes',
     clampNumber(data.memorySustainMinutes, MONITORING_DEFAULTS.memorySustainMinutes, 1, 60, true)
   )
+  for (const type of ['disk', 'latency']) {
+    policy.set(type + 'Enabled', !!data[type + 'Enabled'])
+    policy.set(
+      type + 'Threshold',
+      clampNumber(data[type + 'Threshold'], type === 'disk' ? 85 : 1000, 1, type === 'disk' ? 99 : 60000, true)
+    )
+    if (!data[type + 'Enabled']) {
+      resolveIncident(
+        policy,
+        instance,
+        findOpenIncident(instance.id, type as MonitoringIncidentType),
+        'Alerte désactivée.',
+        false
+      )
+      policy.set(type + 'HighStreak', 0)
+      policy.set(type + 'NormalStreak', 0)
+    }
+  }
   policy.set('backupAlertsEnabled', !!data.backupAlertsEnabled)
   policy.set('emailEnabled', !!data.emailEnabled)
   policy.set('discordEnabled', !!data.discordEnabled)
@@ -871,7 +923,7 @@ export const HandleInstanceMonitoringUpdate = (e: core.RequestEvent) => {
     if (data.enabled && !data.backupAlertsEnabled) {
       const backupIncidents = $app.findRecordsByFilter(
         INCIDENT_COLLECTION,
-        'instance = {:instance} && type = "backup" && status = "open"',
+        'instance = {:instance} && (type = "backup" || type = "backup-check") && status = "open"',
         'openedAt',
         100,
         0,
@@ -987,7 +1039,7 @@ export const HandleInstanceBackupMonitoringUpdate = (e: core.RecordEvent) => {
   }
   const openBackups = $app.findRecordsByFilter(
     INCIDENT_COLLECTION,
-    'instance = {:instance} && type = "backup" && status = "open"',
+    'instance = {:instance} && (type = "backup" || type = "backup-check") && status = "open"',
     'openedAt',
     100,
     0,
@@ -1001,4 +1053,78 @@ export const HandleInstanceBackupMonitoringUpdate = (e: core.RecordEvent) => {
       `Une nouvelle sauvegarde de ${instance.getString('subdomain')} a réussi.`
     )
   }
+}
+
+const evaluateAdditionalSignals = (policy: core.Record, instance: core.Record) => {
+  for (const type of ['disk', 'latency'] as const) {
+    if (!policy.getBool(type + 'Enabled')) continue
+    let value: number
+    if (type === 'latency') {
+      if (!policy.getBool('healthEnabled') || policy.getString('lastHealthStatus') !== 'healthy') {
+        policy.set('latencyHighStreak', 0)
+        policy.set('latencyNormalStreak', 0)
+        continue
+      }
+      value = policy.getFloat('lastLatencyMs')
+    } else {
+      const raw =
+        toString($os.cmd('df', '-P', $os.getenv('DATA_ROOT') || $app.dataDir()).output())
+          .trim()
+          .split('\n')
+          .pop() || ''
+      const match = raw.match(/\s(\d+)%\s/)
+      if (!match) continue
+      value = Number(match[1])
+    }
+    policy.set(type + 'LastValue', value)
+    if (Date.parse(policy.getString('graceUntil')) > Date.now()) continue
+    const threshold = policy.getFloat(type + 'Threshold') || (type === 'disk' ? 85 : 1000)
+    const incident = findOpenIncident(instance.id, type)
+    const result = evaluateThresholdSignal(
+      {
+        highStreak: policy.getInt(type + 'HighStreak'),
+        normalStreak: policy.getInt(type + 'NormalStreak'),
+        incidentOpen: !!incident,
+      },
+      value,
+      threshold,
+      3,
+      3,
+      type === 'disk' ? 5 : Math.max(1, threshold * 0.1)
+    )
+    policy.set(type + 'HighStreak', result.state.highStreak)
+    policy.set(type + 'NormalStreak', result.state.normalStreak)
+    const label = type === 'disk' ? 'Le disque du serveur partagé' : 'La latence de la sonde HTTP'
+    const unit = type === 'disk' ? '%' : 'ms'
+    if (result.transition === 'open')
+      openIncident(
+        policy,
+        instance,
+        type,
+        `${label} atteint ${Math.round(value)} ${unit} depuis 3 contrôles.`,
+        value,
+        threshold
+      )
+    if (result.transition === 'resolve')
+      resolveIncident(policy, instance, incident, `${label} est revenu à ${Math.round(value)} ${unit}.`, true, value)
+  }
+}
+export const ReportBackupCheckIncident = (instance: core.Record, passed: boolean) => {
+  const policy = findPolicy(instance.id)
+  if (!policy?.getBool('enabled') || !policy.getBool('backupAlertsEnabled')) return
+  const incident = findOpenIncident(instance.id, 'backup-check')
+  if (passed)
+    resolveIncident(
+      policy,
+      instance,
+      incident,
+      'La dernière sauvegarde contrôlée a été restaurée et son intégrité SQLite est valide.'
+    )
+  else
+    openIncident(
+      policy,
+      instance,
+      'backup-check',
+      'La vérification de la sauvegarde a échoué. Consultez le rapport avant une restauration.'
+    )
 }

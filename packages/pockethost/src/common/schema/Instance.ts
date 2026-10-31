@@ -36,6 +36,10 @@ export type InstanceWebhookItem = {
 }
 
 export type InstanceFields<TExtra = {}> = BaseFields & {
+  /** Platform-assigned generated address retained across physical host moves. */
+  publicHostname?: string
+  /** Exact historical generated addresses; custom cname remains independently revocable. */
+  legacyHostnames?: string[]
   subdomain: Subdomain
   uid: UserId
   status: InstanceStatus

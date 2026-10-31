@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>Clés SSH - Gestion PocketBase</title>
+  <title>Clés SSH - Kolab Hosting</title>
 </svelte:head>
 
 <SshKeysPanel />

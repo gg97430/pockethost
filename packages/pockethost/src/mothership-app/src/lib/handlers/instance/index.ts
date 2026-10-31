@@ -1,10 +1,12 @@
 export * from './api/HandleInstanceBackups'
+export * from './api/HandleInstanceConsoleAuth'
 export * from './api/HandleInstanceCreate'
 export * from './api/HandleInstanceDelete'
 export * from './api/HandleInstanceDuplicate'
 export * from './api/HandleInstanceMonitoring'
 export * from './api/HandleInstanceOverview'
 export * from './api/HandleInstancesRuntimeReset'
+export * from './api/HandleInstanceTransfers'
 export * from './api/HandleInstanceUpdate'
 export * from './bootstrap/HandleInstancesResetIdle'
 export * from './bootstrap/HandleMigrateCnamesToDomains'
@@ -13,3 +15,14 @@ export * from './model/AfterCreate_notify_discord'
 export * from './model/BeforeCreate_autoVacuum'
 export * from './model/BeforeUpdate_cname'
 export * from './model/BeforeUpdate_version'
+
+export * from './api/HandleInstancePerformance'
+
+export * from './api/HandleInstanceBackupChecks'
+export * from './api/HandleInstanceDiagnostics'
+export * from './api/HandleInstanceServiceAccounts'
+export * from './api/instanceOperationsAccess'
+
+export * from './api/HandleInstanceLitestreamTelemetry'
+
+export * from './hostnames'

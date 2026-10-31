@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "hostname": "app4.monappli.re",
+  "outputDir": "/var/lib/kolab-resource-monitoring",
+  "readGroup": "ubuntu",
+  "docker": [
+    { "kind": "rootful", "socket": "/var/run/docker.sock" },
+    { "kind": "rootless", "socket": "/run/user/1001/docker.sock" }
+  ],
+  "services": [
+    { "id": "platform:stack", "category": "platform", "cgroup": "system.slice/kolab-app4-stack.service" },
+    { "id": "platform:docker", "category": "platform", "cgroup": "system.slice/docker.service" },
+    {
+      "id": "platform:docker-rootless",
+      "category": "platform",
+      "cgroup": "user.slice/user-1001.slice/user@1001.service/app.slice/docker.service"
+    },
+    { "id": "platform:worker", "category": "platform", "cgroup": "system.slice/pockethost-web-worker.service" },
+    { "id": "platform:terminal", "category": "platform", "cgroup": "system.slice/pockethost-web-terminal.service" },
+    { "id": "platform:db-bridge", "category": "platform", "cgroup": "system.slice/pockethost-web-db-bridge.service" },
+    { "id": "backups:recovery", "category": "backups", "cgroup": "system.slice/pockethost-platform-recovery.service" }
+  ],
+  "filesystems": [
+    { "path": "/", "mount": "/" },
+    { "path": "/boot", "mount": "/boot" },
+    { "path": "/boot/efi", "mount": "/boot/efi" }
+  ],
+  "diskRoots": []
+}

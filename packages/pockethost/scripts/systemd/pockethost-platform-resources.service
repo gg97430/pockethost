@@ -1,0 +1,44 @@
+[Unit]
+Description=Kolab global resource counters and bounded history cache
+After=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+SupplementaryGroups=pockethost-web
+UMask=0077
+ExecStart=/usr/bin/python3 -I -B /opt/pockethost-web/platform_resource_collector.py --config /etc/kolab/app4/resources/collector.json
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=10
+StateDirectory=kolab-resource-monitoring
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/kolab-resource-monitoring
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=16
+Nice=10
+IOSchedulingClass=idle
+IOWeight=10
+LimitNOFILE=256
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

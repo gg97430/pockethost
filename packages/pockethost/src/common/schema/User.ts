@@ -31,6 +31,8 @@ export type UserFields<TExtra = {}> = BaseFields & {
   subscription_quantity: number
   suspension: string
   superAdmin?: boolean
+  /** Additional bases administered without changing their owner. */
+  managedInstances?: string[]
 } & TExtra
 
 export type WithCredentials = {

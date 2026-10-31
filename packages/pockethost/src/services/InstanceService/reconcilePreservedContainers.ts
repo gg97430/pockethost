@@ -25,6 +25,7 @@ const shouldStopContainer = (
 ): string | undefined => {
   if (!instance) return 'orphan (not in mothership)'
   if (!instance.power) return 'power off'
+  if (entry.imageMatchesPolicy === false) return 'image mismatch'
   if (expectedBinPath && !containerMatchesBinaryPath(entry.inspect, expectedBinPath)) {
     return 'version mismatch'
   }

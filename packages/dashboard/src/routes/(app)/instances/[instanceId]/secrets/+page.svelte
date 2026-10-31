@@ -29,7 +29,7 @@
 </script>
 
 <svelte:head>
-  <title>Secrets de {subdomain} - Gestion PocketBase</title>
+  <title>Secrets de {subdomain} - Kolab Hosting</title>
 </svelte:head>
 
 <FeatureTab title="Secrets" documentation="/docs/secrets">

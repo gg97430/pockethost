@@ -9,48 +9,74 @@
 @import './lib/pricingCard.css';
 
 :root {
-  /* wa-brand-green on <html> sets the full brand-* scale; keep PocketHost green as the base token. */
-  --wa-color-brand: #1eb854;
+  --app-accent: #3b7cff;
+  --app-accent-hover: #2d6beb;
+  --app-accent-text: #7aa7ff;
+  --app-accent-soft: rgb(59 124 255 / 0.11);
+  --app-accent-border: rgb(59 124 255 / 0.23);
+  --wa-color-brand: var(--app-accent);
   --wa-color-brand-on: #ffffff;
   --wa-color-success: #1eb854;
   --wa-color-warning: #fbbf24;
   --wa-color-danger: #ef4444;
-  --app-bg: #111111;
-  --app-surface: rgb(17 17 17 / 0.92);
-  --app-surface-strong: rgb(0 0 0 / 0.35);
-  --app-surface-soft: rgb(255 255 255 / 0.04);
-  --app-surface-hover: rgb(255 255 255 / 0.08);
-  --app-text: rgb(255 255 255 / 0.9);
-  --app-text-strong: #ffffff;
-  --app-text-muted: rgb(255 255 255 / 0.62);
-  --app-text-faint: rgb(255 255 255 / 0.45);
-  --app-border: rgb(255 255 255 / 0.1);
-  --app-border-strong: rgb(255 255 255 / 0.22);
-  --app-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
-  --app-shadow-sm: 0 8px 24px rgb(0 0 0 / 0.18);
+  --app-bg: #101012;
+  --app-sidebar: #141416;
+  --app-surface: #1a1a1d;
+  --app-surface-strong: #202023;
+  --app-surface-soft: #171719;
+  --app-surface-hover: #222226;
+  --app-text: #ededef;
+  --app-text-strong: #fafafa;
+  --app-text-muted: #a1a1aa;
+  --app-text-faint: #71717a;
+  --app-border: #2a2a2f;
+  --app-border-strong: #3a3a42;
+  --app-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  --app-shadow-sm: none;
+  --wa-color-brand-fill-loud: var(--app-accent);
+  --wa-color-brand-fill-normal: var(--app-accent-soft);
+  --wa-color-brand-fill-quiet: var(--app-accent-soft);
+  --wa-color-brand-on-normal: var(--app-accent-text);
+  --wa-color-brand-on-quiet: var(--app-accent-text);
+  --wa-color-brand-on-loud: #ffffff;
+  --wa-color-brand-border-normal: var(--app-accent-border);
+  --wa-color-brand-border-loud: var(--app-accent);
+  --wa-color-focus: var(--app-accent);
+  --wa-color-surface-default: var(--app-surface);
+  --wa-color-surface-raised: var(--app-surface-strong);
+  --wa-color-text-normal: var(--app-text);
+  --wa-form-control-background-color: var(--app-bg);
+  --wa-form-control-border-color: var(--app-border);
+  --wa-form-control-activated-color: var(--app-accent);
+  --wa-form-control-value-font-size: 0.8125rem;
+  --wa-font-size-m: 0.8125rem;
+  --wa-border-radius-m: 0.375rem;
 }
 
 html[data-theme='dark'],
 .wa-dark {
-  --wa-color-text-link: #1eb854;
+  --wa-color-text-link: var(--app-accent-text);
   color-scheme: dark;
 }
 
 html[data-theme='light'] {
-  --app-bg: #f5f7f2;
-  --app-surface: rgb(255 255 255 / 0.96);
-  --app-surface-strong: rgb(255 255 255 / 0.9);
-  --app-surface-soft: rgb(20 32 24 / 0.045);
-  --app-surface-hover: rgb(20 32 24 / 0.075);
-  --app-text: rgb(20 32 24 / 0.88);
-  --app-text-strong: #142018;
-  --app-text-muted: rgb(20 32 24 / 0.64);
-  --app-text-faint: rgb(20 32 24 / 0.46);
-  --app-border: rgb(20 32 24 / 0.12);
-  --app-border-strong: rgb(20 32 24 / 0.24);
-  --app-shadow: 0 16px 40px rgb(20 32 24 / 0.12);
-  --app-shadow-sm: 0 8px 22px rgb(20 32 24 / 0.09);
-  --wa-color-text-link: #15803d;
+  --app-bg: #f7f7f8;
+  --app-sidebar: #ffffff;
+  --app-surface: #ffffff;
+  --app-surface-strong: #fafafa;
+  --app-surface-soft: #f3f3f5;
+  --app-surface-hover: #ededf0;
+  --app-text: #27272a;
+  --app-text-strong: #18181b;
+  --app-text-muted: #63636e;
+  --app-text-faint: #767680;
+  --app-border: #e4e4e7;
+  --app-border-strong: #d0d0d6;
+  --app-accent-text: #2864dc;
+  --app-accent-soft: rgb(59 124 255 / 0.075);
+  --app-accent-border: rgb(59 124 255 / 0.2);
+  --app-shadow: 0 8px 24px rgb(24 24 27 / 0.06);
+  --wa-color-text-link: var(--app-accent-text);
   color-scheme: light;
 }
 
@@ -63,6 +89,9 @@ html[data-theme='light'] {
   body {
     background-color: var(--app-bg);
     color: var(--app-text);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
   }
 }
 
@@ -642,4 +671,586 @@ pre {
 
 .input {
   background-color: #111111b4;
+}
+
+/* Shared console foundation. Semantic success/danger colors remain independent
+   from the blue interaction accent. Native checkboxes keep their own geometry. */
+.workspace-main {
+  font-size: 13px;
+}
+.workspace-sidebar,
+.workspace-sidebar :where(*),
+.workspace-main,
+.workspace-main :where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-border-strong) transparent;
+}
+.workspace-sidebar ::-webkit-scrollbar,
+.workspace-main ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.workspace-sidebar ::-webkit-scrollbar-thumb,
+.workspace-main ::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--app-border-strong);
+}
+.workspace-sidebar ::-webkit-scrollbar-track,
+.workspace-main ::-webkit-scrollbar-track,
+.workspace-main ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.workspace-main :where(h1) {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+}
+.workspace-main :where(h2) {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.workspace-main :where(input, select, textarea, button) {
+  accent-color: var(--app-accent);
+}
+.workspace-main
+  :where(
+    input:not(
+      [type='checkbox'],
+      [type='radio'],
+      [type='range'],
+      [type='hidden'],
+      [type='file'],
+      [type='button'],
+      [type='submit']
+    ),
+    select,
+    textarea
+  ) {
+  border-color: var(--app-border);
+  border-radius: 5px;
+  background-color: var(--app-bg);
+  color: var(--app-text);
+  box-shadow: none;
+}
+.workspace-main :where(input, select, textarea):focus-visible {
+  outline: 2px solid var(--app-accent-border);
+  outline-offset: 1px;
+  border-color: var(--app-accent);
+}
+.workspace-main :where(input[type='checkbox']) {
+  accent-color: var(--app-accent);
+}
+.workspace-main :where(button, a):focus-visible {
+  outline-color: var(--app-accent);
+}
+.workspace-main :where(code, pre, kbd) {
+  font-size: 11px;
+}
+.workspace-main :where(table) {
+  font-size: 12px;
+}
+.workspace-main :where(table thead) {
+  color: var(--app-text-muted);
+}
+.workspace-main :where(table th) {
+  font-size: 11px;
+  font-weight: 500;
+}
+.workspace-main :where(hr) {
+  border-color: var(--app-border);
+}
+
+.auth-card {
+  border-color: var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  box-shadow: none;
+}
+.auth-field {
+  background: var(--app-bg);
+  border-color: var(--app-border);
+}
+.auth-field:focus {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-soft);
+}
+.auth-submit {
+  background: var(--app-accent);
+  box-shadow: none;
+}
+.auth-submit:hover:not(:disabled) {
+  background: var(--app-accent-hover);
+}
+.auth-link,
+.auth-footer-button {
+  color: var(--app-accent-text);
+}
+.auth-link:hover,
+.auth-footer-button:hover {
+  color: var(--app-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-body,
+  .workspace-main *,
+  .workspace-main *::before,
+  .workspace-main *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Instance features share the same compact surfaces as the workspace. Keep
+   health/status indicators semantic; blue identifies actions and selections. */
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .backup-import,
+    .backup-policy,
+    .backup-live,
+    .backup-row,
+    .backup-cron-wizard,
+    .restore-modal,
+    .overview-cockpit,
+    .overview-panel,
+    .instance-health-card,
+    .resource-chart-panel
+  ) {
+  border-color: var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface);
+  box-shadow: none;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .backup-import,
+    .backup-policy,
+    .backup-live,
+    .backup-row,
+    .overview-cockpit,
+    .overview-panel,
+    .resource-chart-panel
+  ) {
+  padding: 16px;
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--app-surface);
+  box-shadow: none;
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav button {
+  min-height: 43px;
+  padding: 7px 10px;
+  gap: 3px 9px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-text-muted);
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav button:hover {
+  border-color: var(--app-border);
+  background: var(--app-surface-hover);
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav button.active {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav wa-icon {
+  color: var(--app-text-faint);
+  font-size: 14px;
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav button.active wa-icon {
+  color: var(--app-accent-text);
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav span {
+  font-size: 12px;
+  font-weight: 500;
+}
+:root .workspace-main .feature-content .backup-page-tabs__nav small {
+  font-size: 10px;
+  font-weight: 400;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(.backup-create-btn, .backup-policy-primary, .restore-modal__confirm, .primary-action) {
+  min-height: 32px;
+  height: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--app-accent);
+  border-radius: 5px;
+  background: var(--app-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  box-shadow: none;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(.backup-create-btn, .backup-policy-primary, .restore-modal__confirm, .primary-action):hover:not(:disabled) {
+  border-color: var(--app-accent-hover);
+  background: var(--app-accent-hover);
+  box-shadow: none;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(.backup-create-btn, .backup-policy-primary, .backup-name-field, .backup-policy-input):focus-visible,
+:root .workspace-main .feature-content .backup-name-field:focus-within {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-soft);
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .backup-import-zip-cta,
+    .backup-import-btn,
+    .backup-policy-secondary,
+    .backup-action,
+    .restore-modal__cancel,
+    .secondary-action,
+    .load-more
+  ) {
+  min-height: 32px;
+  height: auto;
+  padding: 6px 11px;
+  border-color: var(--app-border);
+  border-radius: 5px;
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  box-shadow: none;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .backup-import-zip-cta,
+    .backup-import-btn,
+    .backup-policy-secondary,
+    .backup-action,
+    .secondary-action,
+    .load-more
+  ):hover:not(:disabled) {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+  box-shadow: none;
+}
+:root .workspace-main .feature-content .backup-action--danger {
+  color: #f87171;
+}
+:root .workspace-main .feature-content .backup-action--danger:hover:not(:disabled) {
+  border-color: rgb(239 68 68 / 0.3);
+  background: rgb(239 68 68 / 0.08);
+  color: #f87171;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .backup-policy__header strong,
+    .backup-import-copy strong,
+    .backup-live__header strong,
+    .backup-title,
+    .restore-modal__header h2,
+    .overview-cockpit h3,
+    .overview-panel h3,
+    .resource-chart-head h3
+  ) {
+  font-size: 14px;
+  font-weight: 600;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .backup-policy-toggle strong,
+    .backup-policy-field > label,
+    .backup-policy-field-label,
+    .backup-policy-check,
+    .backup-policy-section-title strong,
+    .backup-name-field__label,
+    .backup-policy-retention,
+    .backup-cron-chip,
+    .backup-status,
+    .backup-policy-status,
+    .backup-action,
+    .restore-destination-options strong
+  ) {
+  font-size: 11px;
+  font-weight: 500;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .backup-name-field,
+    .backup-policy-toggle,
+    .backup-policy-field,
+    .backup-file,
+    .backup-server-path,
+    .backup-policy-input,
+    .backup-source-file
+  ) {
+  min-height: 32px;
+  border-radius: 5px;
+  border-color: var(--app-border);
+  background: var(--app-bg);
+  box-shadow: none;
+}
+:root .workspace-main .feature-content :is(.backup-name-field input, .backup-policy-input, .backup-server-path) {
+  font-size: 12px;
+  font-weight: 400;
+}
+:root .workspace-main .feature-content :is(.backup-policy-toggle, .backup-policy-field) {
+  padding: 12px;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(.backup-upload-progress__track span, .backup-live__track span, .backup-row-progress__track span) {
+  background: var(--app-accent);
+  box-shadow: none;
+}
+:root .workspace-main .feature-content .instance-health-card {
+  min-height: 105px;
+  padding: 14px;
+}
+:root .workspace-main .feature-content .instance-health-card strong {
+  font-size: 20px;
+  font-weight: 600;
+}
+:root .workspace-main .feature-content :is(.instance-health-label, .overview-eyebrow, .resource-chart-eyebrow) {
+  margin-bottom: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+:root .workspace-main .feature-content .instance-action {
+  min-height: 36px;
+  border-color: var(--app-border);
+  border-radius: 5px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: none;
+}
+:root .workspace-main .feature-content .instance-action--primary {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+}
+:root .workspace-main .feature-content .instance-action:hover:not(:disabled) {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+  transform: none;
+}
+:root .workspace-main .feature-content .overview-monitoring {
+  border-color: var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface);
+}
+:root .workspace-main .feature-content .overview-settings a {
+  padding: 12px;
+  border-radius: 5px;
+  background: var(--app-surface);
+}
+:root .workspace-main .feature-content .overview-settings a:hover {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+}
+:root .workspace-main .feature-content .overview-settings strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+:root .workspace-main .feature-content .resource-chart-panel::before {
+  background-image: none;
+}
+:root .workspace-main .feature-content .resource-chart-ranges .resource-chart-range--active {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+  box-shadow: inset 0 0 0 1px var(--app-accent-border);
+}
+:root .workspace-main .feature-content :is(.resource-chart-metric strong, .resource-chart-window strong) {
+  font-size: 18px;
+  font-weight: 500;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .resource-chart-ranges button,
+    .resource-history-toggle > span:last-child,
+    .overview-url-row button,
+    .overview-panel-head a
+  ) {
+  font-size: 11px;
+  font-weight: 500;
+}
+:root .workspace-main .feature-content .monitor-stack {
+  --monitor-border: var(--app-border);
+  --monitor-muted: var(--app-text-muted);
+  --monitor-surface: var(--app-surface);
+  color: var(--app-text);
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .monitor-command,
+    .monitor-metrics article,
+    .monitor-panel,
+    .signal-card,
+    .monitor-loading,
+    .channel-list article
+  ) {
+  border-color: var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  box-shadow: none;
+}
+:root .workspace-main .feature-content :is(.monitor-command__copy h3, .monitor-panel__header h3, .signal-card h3) {
+  color: var(--app-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .monitor-command__copy p,
+    .signal-card p,
+    .monitor-command__meta span,
+    .field-block,
+    .signal-reading,
+    .backup-rule,
+    .monitor-metrics small
+  ) {
+  color: var(--app-text-muted);
+  font-weight: 400;
+}
+:root .workspace-main .feature-content .monitor-metrics strong {
+  color: var(--app-text-strong);
+  font-size: 22px;
+  font-weight: 600;
+}
+:root .workspace-main .feature-content .monitor-actions {
+  border-color: var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface);
+  box-shadow: none;
+}
+:root .workspace-main .feature-content .range-selector {
+  border-color: var(--app-border);
+  border-radius: 5px;
+  background: var(--app-bg);
+}
+:root .workspace-main .feature-content .range-selector button {
+  color: var(--app-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+:root .workspace-main .feature-content .range-selector button.active {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+  box-shadow: inset 0 0 0 1px var(--app-accent-border);
+}
+:root .workspace-main .feature-content :is(.field-block input, .secret-row input) {
+  min-height: 32px;
+  padding: 7px 10px;
+  border-color: var(--app-border);
+  border-radius: 5px;
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-size: 12px;
+}
+:root .workspace-main .feature-content :is(.field-block input, .secret-row input):focus {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-soft);
+}
+:root .workspace-main .feature-content .channel-list article.active {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+}
+:root .workspace-main .feature-content .master-switch input:checked + .master-switch__track,
+:root .workspace-main .feature-content .compact-toggle input:checked + span {
+  background: var(--app-accent);
+}
+:root .workspace-main .feature-content .master-switch input:checked + .master-switch__track span,
+:root .workspace-main .feature-content .compact-toggle input:checked + span::after {
+  background: #fff;
+}
+:root .workspace-main .feature-content .ls-dashboard :is(.card, .panel, .headline) {
+  border-color: var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface);
+  padding: 16px;
+  box-shadow: none;
+}
+:root .workspace-main .feature-content .ls-dashboard .button {
+  min-height: 32px;
+  border-radius: 5px;
+  padding: 6px 11px;
+  border-color: var(--app-border);
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root .workspace-main .feature-content .ls-dashboard .primary {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+  color: #fff;
+}
+:root .workspace-main .feature-content .ls-dashboard :is(h3, .facts strong) {
+  font-size: 13px;
+  font-weight: 500;
+}
+:root .workspace-main .feature-content .ls-dashboard .card > strong {
+  font-size: 20px;
+  font-weight: 600;
+}
+:root .workspace-main .feature-content :is(.log-console, .log-dialog-shell) {
+  --console-bg: #101012;
+  --console-surface: #1a1a1d;
+  border-color: var(--app-border);
+  border-radius: 6px;
+  box-shadow: none;
+}
+:root .workspace-main .feature-content .log-console-toolbar {
+  background: var(--app-surface);
+}
+:root .workspace-main .feature-content .log-console-title strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+:root .workspace-main .feature-content .dashboard-page-feature :is(.text-sm, .auth-label) {
+  font-size: 12px;
+}
+:root .workspace-main .feature-content .dashboard-page-feature .text-lg {
+  font-size: 14px;
+  font-weight: 600;
+}
+:root .workspace-main .feature-content .dashboard-page-feature .text-2xl {
+  font-size: 21px;
+  font-weight: 600;
+}
+:root .workspace-main .feature-content .dashboard-page-feature :is(.auth-field, .auth-submit) {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
 }

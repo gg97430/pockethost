@@ -1,7 +1,6 @@
 import {
   APEX_DOMAIN,
   createCleanupManager,
-  DOCKER_INSTANCE_IMAGE_NAME,
   getContainerPortBinding,
   instanceContainerName,
   InstanceLogWriter,
@@ -34,6 +33,11 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { gte } from 'semver'
 import { AsyncReturnType } from 'type-fest'
+import {
+  containerMatchesInstanceImage,
+  hostInstanceImageOverrides,
+  inspectHostInstanceImage,
+} from '../../core/instanceImages'
 
 export type Env = { [_: string]: string }
 export type SpawnConfig = {
@@ -128,6 +132,7 @@ const mkPocketbaseProcess = (
 }
 
 export const createPocketbaseService = async (config: PocketbaseServiceConfig) => {
+  hostInstanceImageOverrides() // Invalid operator configuration fails before any Docker action.
   const _serviceLogger = (config.logger ?? LoggerService()).create('PocketbaseService')
   const { dbg, error } = _serviceLogger
 
@@ -165,6 +170,11 @@ export const createPocketbaseService = async (config: PocketbaseServiceConfig) =
 
     if (!containerInfo.State.Running) {
       throw userError(`${instanceId} container is not running`)
+    }
+
+    const expectedImage = await inspectHostInstanceImage(docker, instanceId)
+    if (!containerMatchesInstanceImage(containerInfo, expectedImage)) {
+      throw userError('Preserved PocketBase container image does not match the operator policy.')
     }
 
     const portBinding = getContainerPortBinding(containerInfo)
@@ -229,6 +239,8 @@ export const createPocketbaseService = async (config: PocketbaseServiceConfig) =
       throw systemError(`PocketBase binary (${binPath}) not found. Contact pockethost.io.`)
     }
 
+    // Resolve the trusted host policy before removal/recreation. cfg.env cannot influence the image.
+    const expectedImage = await inspectHostInstanceImage(new Docker(), instanceId)
     const state = { started: false, stopped: false, stopping: false }
     const containerStartTime = Date.now()
     dbg(`[${instanceId}] Starting Docker container creation at ${new Date(containerStartTime).toISOString()}`)
@@ -255,11 +267,13 @@ export const createPocketbaseService = async (config: PocketbaseServiceConfig) =
 
       const containerName = instanceContainerName(instanceId)
       const createOptions: ContainerCreateOptions = {
-        Image: DOCKER_INSTANCE_IMAGE_NAME(),
+        Image: expectedImage.reference,
         Env: Object.entries({
           ...env,
           DEV: dev && gte(realVersion, `0.20.1`),
           PH_APEX_DOMAIN: APEX_DOMAIN(),
+          PH_HOST_UID: process.getuid?.(),
+          PH_HOST_GID: process.getgid?.(),
         }).map(([k, v]) => `${k}=${v}`),
         name: containerName,
         HostConfig: {
@@ -297,7 +311,7 @@ export const createPocketbaseService = async (config: PocketbaseServiceConfig) =
             void (async () => {
               await removeNamedContainer(docker, containerName, PH_CONTAINER_STOP_TIMEOUT_SEC())
               const emitter = docker
-                .run(DOCKER_INSTANCE_IMAGE_NAME(), [''], [stdout, stderr], createOptions, (err, data) => {
+                .run(expectedImage.reference, [''], [stdout, stderr], createOptions, (err, data) => {
                   state.stopped = true
                   stderr.removeAllListeners(`data`)
                   stdout.removeAllListeners(`data`)
@@ -340,6 +354,8 @@ export const createPocketbaseService = async (config: PocketbaseServiceConfig) =
                   try {
                     const portBinding = await (async () => {
                       const containerInfo = await dockerContainer.inspect()
+                      if (!containerMatchesInstanceImage(containerInfo, expectedImage))
+                        throw systemError('Started container image does not match the operator policy.')
                       const binding = getContainerPortBinding(containerInfo)
                       if (!binding) {
                         throw systemError('Could not get port binding from container')

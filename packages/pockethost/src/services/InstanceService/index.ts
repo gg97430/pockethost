@@ -23,8 +23,8 @@ import {
   SpawnConfig,
   stringify,
   tryFetch,
-  UserFields,
   userError,
+  UserFields,
   VacuumLockService,
 } from '@'
 import Bottleneck from 'bottleneck'
@@ -234,6 +234,8 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
             ...instance.secrets,
             PH_APP_NAME: instance.subdomain,
             PH_INSTANCE_URL: mkInstanceUrl(instance),
+            PH_INSTANCE_ID: instance.id,
+            PH_MOTHERSHIP_URL: APP_URL(),
           },
           version,
           logger: systemInstanceLogger,
@@ -244,13 +246,19 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
           const uid = instance.uid
           dbg(`Fetching token info for uid ${uid}`)
           try {
-            const { email, tokenKey, passwordHash } = await client.getUserTokenInfo({ id: uid })
-            dbg(`Token info is`, { email, tokenKey, passwordHash })
-            spawnArgs.env!.ADMIN_SYNC = stringify({
-              id: uid,
+            const {
+              id: nativeId,
               email,
               tokenKey,
               passwordHash,
+              preserveExistingNativeIdentity,
+            } = await client.getUserTokenInfo({ id: uid, instanceId: instance.id })
+            spawnArgs.env!.ADMIN_SYNC = stringify({
+              id: nativeId || uid,
+              email,
+              tokenKey,
+              passwordHash,
+              ...(preserveExistingNativeIdentity ? { preserveExistingNativeIdentity: true } : {}),
             })
           } catch {
             warn(`Could not fetch admin sync for ${id}; launching without ADMIN_SYNC (mothership may be unavailable)`)
@@ -535,7 +543,9 @@ export const instanceService = mkSingleton(async (config: InstanceServiceConfig)
         */
     dbg(`Checking for active instances`)
     if (owner.subscription_quantity === 0) {
-      throw userError(`Les instances ne fonctionneront pas tant que vous n'aurez pas <a href=${APP_URL(`access`)}>changé d'offre</a>`)
+      throw userError(
+        `Les instances ne fonctionneront pas tant que vous n'aurez pas <a href=${APP_URL(`access`)}>changé d'offre</a>`
+      )
     }
 
     /*

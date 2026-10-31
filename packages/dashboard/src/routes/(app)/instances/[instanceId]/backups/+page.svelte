@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte'
   import CronSchedulePicker from '$components/CronSchedulePicker.svelte'
   import FeatureTab from '$components/FeatureTab.svelte'
+  import InstanceTransferPanel from '$components/InstanceTransferPanel.svelte'
   import { restoreActivityState } from '$lib/backupRestoreActivity'
   import { validateCronExpression } from '$lib/cronExpression'
   import { NATURAL_CRON_EXAMPLES, parseNaturalCron } from '$lib/naturalCron'
@@ -15,7 +16,7 @@
     type UpdateInstanceLitestreamPolicyInput,
     type UploadProgress,
   } from '$src/pocketbase-client'
-  import { globalInstancesStore } from '$util/stores'
+  import { globalInstancesStore, userStore } from '$util/stores'
   import type { InstanceFields } from 'pockethost/common'
   import { instance } from '../store'
 
@@ -85,7 +86,7 @@
     serviceName: '',
     configPath: '',
   }
-  let backupPageTab: 'archive' | 'schedule' | 'litestream' = 'archive'
+  let backupPageTab: 'archive' | 'schedule' | 'litestream' | 'transfer' = 'archive'
   let backupPolicyCustomCron = false
   let isPolicyLoading = true
   let isLitestreamLoading = true
@@ -270,6 +271,7 @@
 
   function kindLabel(kind: InstanceBackup['kind']) {
     if (kind === 'pre-restore') return 'Avant restauration'
+    if (kind === 'transfer') return 'Transfert'
     if (kind === 'import') return 'Importée'
     if (kind === 'scheduled') return 'Automatique'
     return 'Manuelle'
@@ -774,6 +776,8 @@
   }
 
   onMount(() => {
+    if (window.location.hash === '#litestream') backupPageTab = 'litestream'
+
     void loadBackups()
     void loadBackupPolicy()
     void loadLitestreamPolicy()
@@ -1249,7 +1253,26 @@
         <span>Litestream</span>
         <small>{litestreamStatusText}</small>
       </button>
+      {#if $userStore?.superAdmin}
+        <button
+          type="button"
+          role="tab"
+          id="backup-tab-transfer-tab"
+          aria-selected={backupPageTab === 'transfer'}
+          aria-controls="backup-tab-transfer"
+          class:active={backupPageTab === 'transfer'}
+          onclick={() => (backupPageTab = 'transfer')}
+        >
+          <wa-icon name="arrow-right-arrow-left"></wa-icon><span>Transfert</span><small>Autre serveur</small>
+        </button>
+      {/if}
     </div>
+
+    {#if backupPageTab === 'transfer' && $userStore?.superAdmin}
+      <div id="backup-tab-transfer" class="backup-tab-panel" role="tabpanel" aria-labelledby="backup-tab-transfer-tab">
+        <InstanceTransferPanel instanceId={id} />
+      </div>
+    {/if}
 
     {#if backupPageTab === 'archive'}
       <div id="backup-tab-archive" class="backup-tab-panel" role="tabpanel" aria-labelledby="backup-tab-archive-tab">
@@ -1555,6 +1578,7 @@
         <div class="backup-policy__header">
           <div>
             <strong>Litestream à la demande</strong>
+            <a href={`/instances/${id}/litestream`}>Ouvrir le tableau de bord Litestream →</a>
             <span>Répliquer <code>data.db</code> en continu vers S3/R2 uniquement quand cette option est activée.</span>
           </div>
           <span class="backup-policy-status {litestreamStatusClass(litestreamPolicy?.status)}"

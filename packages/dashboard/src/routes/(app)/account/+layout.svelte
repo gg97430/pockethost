@@ -6,12 +6,14 @@
   $: pathname = $page.url.pathname
   $: isAccountActive = pathname === '/account' || pathname === '/account/'
   $: isKeysActive = pathname.startsWith('/account/keys')
+  $: isSecurityActive = pathname.startsWith('/account/security')
 
   $: sections = [
     {
       items: [
         { href: '/account', label: 'Compte', icon: 'user', isActive: isAccountActive },
         { href: '/account/keys', label: 'Clés', icon: 'key', isActive: isKeysActive },
+        { href: '/account/security', label: 'Sécurité', icon: 'shield-halved', isActive: isSecurityActive },
       ],
     },
   ] satisfies FeatureTabNavSection[]

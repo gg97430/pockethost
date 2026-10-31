@@ -22,4 +22,16 @@ describe('instanceAllowedByScope', () => {
     expect(instanceAllowedByScope(scope, 'inst1', userId)).toBe(true)
     expect(instanceAllowedByScope(scope, 'inst3', userId)).toBe(false)
   })
+
+  it('allows attached bases while preserving SSH key restrictions', () => {
+    const scope = { userId, instanceIds: ['shared'], managedInstances: ['shared', 'other'] }
+    expect(instanceAllowedByScope(scope, 'shared', 'owner')).toBe(true)
+    expect(instanceAllowedByScope(scope, 'other', 'owner')).toBe(false)
+    expect(instanceAllowedByScope(scope, 'unrelated', 'owner')).toBe(false)
+  })
+
+  it('allows superadmins across owners within the SSH key scope', () => {
+    expect(instanceAllowedByScope({ userId, instanceIds: null, superAdmin: true }, 'any', 'owner')).toBe(true)
+    expect(instanceAllowedByScope({ userId, instanceIds: ['allowed'], superAdmin: true }, 'other', 'owner')).toBe(false)
+  })
 })

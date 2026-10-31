@@ -2,8 +2,10 @@ import type { UserId } from '@'
 
 export type VfsScope = {
   userId: UserId
-  /** Null = all instances owned by the user */
+  /** Null = all bases the account may administer. */
   instanceIds: string[] | null
+  managedInstances?: string[]
+  superAdmin?: boolean
 }
 
 export function instanceAllowedByScope(scope: VfsScope | undefined, instanceId: string, userId: string): boolean {
@@ -11,7 +13,7 @@ export function instanceAllowedByScope(scope: VfsScope | undefined, instanceId: 
     return true
   }
 
-  if (scope.userId !== userId) {
+  if (scope.userId !== userId && !scope.superAdmin && !scope.managedInstances?.includes(instanceId)) {
     return false
   }
 

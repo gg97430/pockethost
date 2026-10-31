@@ -20,10 +20,7 @@
   }
 </script>
 
-<span
-  class="runtime-badge {badgeClass[state]}"
-  title={runtimeStateLabel[state]}
->
+<span class="runtime-badge {badgeClass[state]}" title={runtimeStateLabel[state]}>
   {#if state === 'running'}
     <span class="runtime-badge-dot runtime-badge-dot--running"></span>
   {:else if state === 'starting'}

@@ -15,8 +15,8 @@
 
   <h2 class="font-bold text-2xl mb-4 mt-10">Discord</h2>
   <p>
-    Nous avons aussi un <a class="text-primary" href={DISCORD_URL}>serveur Discord</a> avec plus de 1 500 membres prêts
-    à aider.
+    Nous avons aussi un <a class="text-primary" href={DISCORD_URL}>serveur Discord</a> avec plus de 1 500 membres prêts à
+    aider.
   </p>
 
   <h2 class="font-bold text-2xl mb-4 mt-10">Support email</h2>

@@ -14,9 +14,11 @@ import {
   type DeleteInstanceResult,
   type InstanceFields,
   type InstanceId,
+  type InstanceTransfer,
   PocketBase,
   RestCommands,
   RestMethods,
+  type TransferMetadata,
   type UntrustedInstanceLogFields,
   type UpdateInstancePayload,
   UpdateInstancePayloadSchema,
@@ -97,11 +99,15 @@ export type OperatorUser = {
   created: string
   updated: string
   instanceCount: number
+  managedInstances: string[]
 }
+
+export type OperatorInstance = { id: string; subdomain: string; uid: string }
 
 export type OperatorAdminOverview = {
   settings: OperatorSettings
   users: OperatorUser[]
+  instances: OperatorInstance[]
   stats: {
     totalUsers: number
     verifiedUsers: number
@@ -123,6 +129,7 @@ export type OperatorDiskCleanupEntry = {
 }
 
 export type OperatorDiskCleanupResult = {
+  snapshot: string
   scannedAt: string
   dataRoot: string
   orphanCount: number
@@ -136,7 +143,7 @@ export type InstanceBackup = {
   id: string
   user: string
   instance: string
-  kind: 'manual' | 'pre-restore' | 'import' | 'scheduled'
+  kind: 'manual' | 'pre-restore' | 'import' | 'scheduled' | 'transfer'
   status: 'running' | 'ready' | 'failed'
   name: string
   filename: string
@@ -363,6 +370,12 @@ export type InstanceMonitoringPolicy = {
   memoryEnabled: boolean
   memoryThresholdPercent: number
   memorySustainMinutes: number
+  diskEnabled: boolean
+  diskThreshold: number
+  diskLastValue: number | null
+  latencyEnabled: boolean
+  latencyThreshold: number
+  latencyLastValue: number | null
   backupAlertsEnabled: boolean
   emailEnabled: boolean
   discordEnabled: boolean
@@ -411,6 +424,10 @@ export type UpdateInstanceMonitoringInput = Pick<
   | 'memoryEnabled'
   | 'memoryThresholdPercent'
   | 'memorySustainMinutes'
+  | 'diskEnabled'
+  | 'diskThreshold'
+  | 'latencyEnabled'
+  | 'latencyThreshold'
   | 'backupAlertsEnabled'
   | 'emailEnabled'
   | 'discordEnabled'
@@ -448,7 +465,7 @@ export type InstanceMonitoringHistoryResponse = {
 
 export type InstanceMonitoringIncident = {
   id: string
-  type: 'health' | 'cpu' | 'memory' | 'backup'
+  type: 'health' | 'cpu' | 'memory' | 'backup' | 'disk' | 'latency' | 'backup-check'
   status: 'open' | 'resolved'
   openedAt: string
   resolvedAt: string
@@ -556,9 +573,37 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
    * @param {string} email The email of the user
    * @param {string} password The password of the user
    */
-  const authViaEmail = async (email: string, password: string) => {
-    return await client.collection('users').authWithPassword(email, password)
+  const authViaEmail = async (email: string, password: string, totpCode = '') => {
+    return await client
+      .collection('users')
+      .authWithPassword(email, password, { body: { identity: email, password, totpCode } })
   }
+
+  const getTotpStatus = () =>
+    client.send<{ enabled: boolean; recoveryCodesRemaining: number }>('/api/account/totp', { method: 'GET' })
+  const setupTotp = (password: string) =>
+    client.send<{ secret: string; uri: string; qrSvg: string }>('/api/account/totp/setup', {
+      method: 'POST',
+      body: { password },
+    })
+  const confirmTotp = async (password: string, code: string) => {
+    const result = await client.send<{ enabled: true; token: string; recoveryCodes: string[] }>(
+      '/api/account/totp/confirm',
+      { method: 'POST', body: { password, code } }
+    )
+    client.authStore.save(result.token, client.authStore.record)
+    return result
+  }
+  const disableTotp = async (password: string, code: string) => {
+    const result = await client.send<{ enabled: false; token: string }>('/api/account/totp/disable', {
+      method: 'POST',
+      body: { password, code },
+    })
+    client.authStore.save(result.token, client.authStore.record)
+    return result
+  }
+  const regenerateTotpRecovery = (password: string, code: string) =>
+    client.send<{ recoveryCodes: string[] }>('/api/account/totp/recovery', { method: 'POST', body: { password, code } })
 
   const refreshAuthToken = () => client.collection('users').authRefresh()
 
@@ -639,6 +684,29 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     client.send<{ backup: InstanceBackup }>(`/api/instance/${id}/backups`, {
       method: 'POST',
       body: input,
+    })
+
+  const createInstanceTransfer = (id: InstanceId) =>
+    client.send<{ transfer: InstanceTransfer; link: string; code: string }>(`/api/instance/${id}/transfers`, {
+      method: 'POST',
+    })
+  const listInstanceTransfers = (instanceId = '') =>
+    client.send<{ transfers: InstanceTransfer[] }>('/api/instance-transfers', {
+      method: 'GET',
+      query: instanceId ? { instance: instanceId } : {},
+      requestKey: null,
+    })
+  const inspectInstanceTransfer = (input: { link: string; code?: string }) =>
+    client.send<TransferMetadata>('/api/instance-transfers/inspect', { method: 'POST', body: input })
+  const importInstanceTransfer = (input: { link: string; code?: string; subdomain: string }) =>
+    client.send<{ transfer: InstanceTransfer }>('/api/instance-transfers/import', { method: 'POST', body: input })
+  const cancelInstanceTransfer = (id: string) =>
+    client.send<{ transfer: InstanceTransfer }>(`/api/instance-transfers/${id}/cancel`, { method: 'POST' })
+  const retryInstanceTransfer = (id: string) =>
+    client.send<{ transfer: InstanceTransfer }>(`/api/instance-transfers/${id}/retry`, { method: 'POST' })
+  const renewInstanceTransferLink = (id: string) =>
+    client.send<{ transfer: InstanceTransfer; link: string; code: string }>(`/api/instance-transfers/${id}/link`, {
+      method: 'POST',
     })
 
   const uploadBackupChunk = async (input: {
@@ -983,9 +1051,10 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   const getOperatorAdminOverview = () => client.send<OperatorAdminOverview>('/api/admin/overview', {})
   const previewOperatorDiskCleanup = () =>
     client.send<{ cleanup: OperatorDiskCleanupResult }>('/api/admin/disk-cleanup', {})
-  const runOperatorDiskCleanup = () =>
+  const runOperatorDiskCleanup = (snapshot: string) =>
     client.send<{ cleanup: OperatorDiskCleanupResult }>('/api/admin/disk-cleanup', {
       method: 'POST',
+      body: { snapshot },
     })
 
   const createOperatorUser = (data: {
@@ -996,8 +1065,9 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     subscription: string
     subscription_quantity: number
     suspension: string
+    managedInstances?: string[]
   }) =>
-    client.send<{ user: OperatorUser }>('/api/admin/users', {
+    client.send<{ user: OperatorUser; warning?: string }>('/api/admin/users', {
       method: 'POST',
       body: data,
     })
@@ -1012,6 +1082,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       subscription: string
       subscription_quantity: number
       suspension: string
+      managedInstances: string[]
     }>
   ) =>
     client.send<{ user: OperatorUser }>(`/api/admin/users/${id}`, {
@@ -1019,7 +1090,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       body: data,
     })
 
-  const updateOperatorSettings = (data: OperatorSettings) =>
+  const updateOperatorSettings = (data: Partial<OperatorSettings>) =>
     client.send<{ settings: OperatorSettings }>('/api/admin/settings', {
       method: 'PUT',
       body: data,
@@ -1030,17 +1101,16 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       '/api/admin/settings/backup-s3/test',
       {
         method: 'POST',
-        body: data,
+        body: { backupS3: data.backupS3 },
       }
     )
 
   const testOperatorSMTP = (data: OperatorSettings, testEmail: string) =>
     client.send<{
-      settings: OperatorSettings
       test: { to: string; host: string; port: number; message: string }
     }>('/api/admin/settings/smtp/test', {
       method: 'POST',
-      body: { ...data, testEmail },
+      body: { smtp: data.smtp, testEmail },
     })
 
   const parseError = (e: Error): string[] => {
@@ -1196,6 +1266,11 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     getInstanceBySubdomain,
     createInstance,
     authViaEmail,
+    getTotpStatus,
+    setupTotp,
+    confirmTotp,
+    disableTotp,
+    regenerateTotpRecovery,
     createUser,
     requestPasswordReset,
     requestPasswordResetConfirm,
@@ -1229,6 +1304,13 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     getInstanceMonitoringIncidents,
     testInstanceMonitoring,
     createInstanceBackup,
+    createInstanceTransfer,
+    listInstanceTransfers,
+    inspectInstanceTransfer,
+    importInstanceTransfer,
+    cancelInstanceTransfer,
+    retryInstanceTransfer,
+    renewInstanceTransferLink,
     importInstanceBackup,
     listInstanceBackups,
     getInstanceBackupPolicy,

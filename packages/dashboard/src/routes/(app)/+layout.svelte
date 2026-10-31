@@ -36,15 +36,15 @@
   .app-content-shell {
     position: relative;
     z-index: 10;
-    width: min(100%, 110rem);
+    width: 100%;
+    max-width: 100rem;
     margin-inline: auto;
-    padding: 1.5rem 1rem 0;
+    padding: 1.5rem 1rem 2rem;
   }
 
   @media (min-width: 768px) {
     .app-content-shell {
-      padding-top: 2.5rem;
-      padding-inline: clamp(2rem, 4vw, 5rem);
+      padding: 1.5rem 1.5rem 2rem;
     }
   }
 </style>

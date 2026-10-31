@@ -85,6 +85,11 @@ export type WebAppDomain = {
   lastError: string
   certificateExpiresAt: string
   created: string
+  cloudflare?: {
+    enabled: boolean
+    status: 'pending_validation' | 'pending_https' | 'active' | 'disabled' | 'error'
+    lastError: string
+  }
 }
 export type WebRepository = { id: string | number; fullName: string; defaultBranch: string; private: boolean }
 export type WebGitHubSettings = {

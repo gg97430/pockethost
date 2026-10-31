@@ -480,6 +480,7 @@ routerAdd("POST", "/api/web-apps/{id}/domains", (e) => require(`${__hooks}/mothe
 routerAdd("POST", "/api/web-apps/{id}/domains/{domainId}/verify", (e) => require(`${__hooks}/mothership`).HandleWebDomainVerify(e), $apis.requireAuth("users"));
 routerAdd("DELETE", "/api/web-apps/{id}/domains/{domainId}", (e) => require(`${__hooks}/mothership`).HandleWebDomainDelete(e), $apis.requireAuth("users"));
 cronAdd("web-app-maintenance", "17 */6 * * *", () => require(`${__hooks}/mothership`).HandleWebMaintenance());
+cronAdd("web-cloudflare-validation", "* * * * *", () => require(`${__hooks}/mothership`).HandleWebCloudflareMaintenance());
 onBootstrap((e) => {
 	e.next();
 	require(`${__hooks}/mothership`).normalizeWebDeliveryConnections();

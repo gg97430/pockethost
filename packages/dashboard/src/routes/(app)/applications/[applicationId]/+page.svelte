@@ -82,6 +82,8 @@
   let domainBusy = ''
   let domainError = ''
   let domainsLoaded = false
+  let domainsLoading = false
+  let domainRequest = 0
   let selectedLog: WebDeployment | null = null
   let logText = ''
   let logTruncated = false
@@ -143,6 +145,9 @@
     recentDeployments = []
     domains = []
     domainsLoaded = false
+    domainsLoading = false
+    domainError = ''
+    ++domainRequest
     selectedLog = null
     logCursor = undefined
     ++logRequest
@@ -213,7 +218,15 @@
         if (latest) selectedLog = latest
         if (logAuto) void readLogs()
       }
-      if (tab === 'domains') void loadDomains()
+      if (
+        tab === 'domains' ||
+        domains.some(
+          (domain) =>
+            ['verified', 'pending_certificate'].includes(domain.status) ||
+            ['pending_validation', 'pending_https'].includes(domain.cloudflare?.status || '')
+        )
+      )
+        void loadDomains()
       if (tab === 'webhooks' && webhookPage === 1) void loadWebhooks(1)
     } catch (e) {
       if (!disposed && applicationId === id) loadError = webError(e)
@@ -458,15 +471,20 @@
   const duration = (milliseconds?: number) =>
     milliseconds == null ? '—' : `${(milliseconds / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} s`
   const loadDomains = async () => {
-    if (domainBusy) return
+    if (domainBusy || domainsLoading || disposed || !applicationId) return
     const id = applicationId
+    const request = ++domainRequest
+    domainsLoading = true
     try {
       const value = await webRequest<{ items: WebAppDomain[] }>(`/${id}/domains`)
-      if (disposed || applicationId !== id) return
+      if (disposed || applicationId !== id || request !== domainRequest) return
       domains = value.items
       domainsLoaded = true
+      domainError = ''
     } catch (e) {
-      domainError = webError(e)
+      if (!disposed && applicationId === id && request === domainRequest) domainError = webError(e)
+    } finally {
+      if (request === domainRequest) domainsLoading = false
     }
   }
   const loadWebhooks = async (next: number) => {
@@ -592,7 +610,7 @@
     mounted = true
     const timer = setInterval(() => {
       if (!document.hidden) void load()
-    }, 5000)
+    }, 4000)
     return () => {
       mounted = false
       disposed = true
@@ -916,13 +934,15 @@
           <div class="web-panel">
             <div class="web-row">
               <h2>Domaines personnalisés</h2>
-              <button class="web-button" onclick={loadDomains} disabled={!!domainBusy}>Actualiser</button>
+              <button class="web-button" onclick={loadDomains} disabled={!!domainBusy || domainsLoading}
+                >Actualiser</button
+              >
             </div>
             {#if !domainsLoaded}<p role="status">Chargement des domaines…</p>{:else if !domains.length}<p
                 class="web-muted"
               >
                 Aucun domaine personnalisé.
-              </p>{/if}{#each domains as domain}<article class="web-domain">
+              </p>{/if}{#each domains as domain (domain.id)}<article class="web-domain">
                 <div class="web-row">
                   <h3>{domain.hostname}</h3>
                   <WebAppStatus status={domain.status} />

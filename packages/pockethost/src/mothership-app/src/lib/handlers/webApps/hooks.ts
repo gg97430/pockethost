@@ -145,6 +145,9 @@ routerAdd(
   $apis.requireAuth('users')
 )
 cronAdd('web-app-maintenance', '17 */6 * * *', () => require(`${__hooks}/mothership`).HandleWebMaintenance())
+cronAdd('web-cloudflare-validation', '* * * * *', () =>
+  require(`${__hooks}/mothership`).HandleWebCloudflareMaintenance()
+)
 // Livraisons GitHub App reçues sans connexion par l'ancien code (retour arrière du code seul) : principale.
 onBootstrap((e) => {
   e.next()

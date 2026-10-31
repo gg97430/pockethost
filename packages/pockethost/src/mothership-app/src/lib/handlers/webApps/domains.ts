@@ -9,6 +9,13 @@ import {
   webJson,
   webRoot,
 } from './api'
+import {
+  assertCloudflareIdle,
+  cloudflareCredential,
+  forgetCloudflareConfiguration,
+  verifyCloudflareOrigin,
+  webCloudflareDomainView,
+} from './cloudflareAutomation'
 import { webRateLimit } from './gitSource'
 
 const COLLECTION = 'web_app_domains'
@@ -95,6 +102,7 @@ const serialize = (row: core.Record) => ({
   lastError: row.getString('lastError'),
   certificateExpiresAt: row.getString('certificateExpiresAt'),
   created: row.getString('created'),
+  cloudflare: webCloudflareDomainView(row),
 })
 const findDomain = (e: core.RequestEvent) => {
   const id = e.request!.pathValue('domainId')
@@ -200,6 +208,13 @@ export const HandleWebDomainVerify = (e: core.RequestEvent) => {
     app = found!,
     row = findDomain(e)
   assertAliasAllowed(e, row.getString('host'))
+  assertCloudflareIdle(row.id)
+  const result = verifyAndQueueWebDomain(row, app, user.id)
+  return webJson(e, result, 202)
+}
+
+/** Shared with the durable, platform-authorized Cloudflare workflow. No network call runs inside a DB transaction. */
+export const verifyAndQueueWebDomain = (row: core.Record, app: core.Record, actorId: string) => {
   if (!publicIp()) throw new BadRequestError('Adresse publique du serveur Applications web non configurée.')
   const https = webHttpsPreflight()
   if (!https.ready) throw new BadRequestError(https.error)
@@ -234,7 +249,20 @@ export const HandleWebDomainVerify = (e: core.RequestEvent) => {
       0o600 as any
     )
     const helper = $os.getenv('WEB_APPS_DOMAIN_HELPER') || 'packages/pockethost/scripts/web_app_domains.py'
-    const result = JSON.parse(toString($os.cmd('python3', helper, file).combinedOutput()))
+    let result = JSON.parse(toString($os.cmd('python3', helper, file).combinedOutput()))
+    // Public Cloudflare edge IPs cannot prove the origin. Check its exact provider A and ownership TXT instead.
+    if (!result.verified && cloudflareCredential()) {
+      try {
+        result = verifyCloudflareOrigin(row)
+      } catch (error) {
+        if (error instanceof BadRequestError)
+          result = {
+            verified: false,
+            error:
+              'La propriété DNS et l’origine Cloudflare ne sont pas confirmées. Vérifiez le TXT et l’adresse du serveur.',
+          }
+      }
+    }
     if (!result.verified) {
       row.set('lastError', result.error || 'Vérification DNS non réussie.')
       $app.save(row)
@@ -249,8 +277,8 @@ export const HandleWebDomainVerify = (e: core.RequestEvent) => {
     } catch {
       throw new BadRequestError(UNAVAILABLE)
     }
-    const job = queueWebDeployment(app, 'domain', user.id, { domainId: row.id, domain: row.getString('host') })
-    return webJson(e, { domain: serialize(row), deploymentId: job.id }, 202)
+    const job = queueWebDeployment(app, 'domain', actorId, { domainId: row.id, domain: row.getString('host') })
+    return { domain: serialize(row), deploymentId: job.id }
   } catch (error) {
     if (error instanceof BadRequestError || error instanceof TooManyRequestsError) throw error
     throw new BadRequestError('Vérification DNS indisponible. Réessayez après propagation.')
@@ -264,18 +292,24 @@ export const HandleWebDomainDelete = (e: core.RequestEvent) => {
   const { user, app: found } = requireWebAppPermission(e, 'domains.manage'),
     app = found!,
     row = findDomain(e)
-  const pending = $app.findRecordsByFilter(
-    'web_deployments',
-    'appId = {:id} && (status = "queued" || status = "running")',
-    '',
-    1,
-    0,
-    { id: app.id }
-  )
-  if (pending.length) throw new BadRequestError('Attendez la fin du déploiement avant de supprimer ce domaine.')
-  const wasRouted = ['verified', 'pending_certificate', 'active'].includes(row.getString('status'))
-  $app.delete(row)
-  if (wasRouted) queueWebDeployment(app, 'domains-sync', user.id)
+  $app.runInTransaction((tx) => {
+    const current = tx.findRecordById(COLLECTION, row.id)
+    if (current.getString('appId') !== app.id) throw new ForbiddenError('Accès refusé.')
+    const pending = tx.findRecordsByFilter(
+      'web_deployments',
+      'appId={:id} && (status="queued" || status="running")',
+      '',
+      1,
+      0,
+      { id: app.id }
+    )
+    if (pending.length) throw new BadRequestError('Attendez la fin du déploiement avant de supprimer ce domaine.')
+    assertCloudflareIdle(current.id, tx)
+    const wasRouted = ['verified', 'pending_certificate', 'active'].includes(current.getString('status'))
+    tx.delete(current)
+    forgetCloudflareConfiguration(current.id, tx)
+    if (wasRouted) queueWebDeployment(app, 'domains-sync', user.id, {}, tx)
+  })
   return webJson(e, { deleted: true })
 }
 

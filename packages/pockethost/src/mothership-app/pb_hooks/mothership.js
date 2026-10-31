@@ -5680,7 +5680,7 @@ const KEY_COMMENT = "pockethost-web-deploy";
 const FINGERPRINT = /^SHA256:[A-Za-z0-9+\/]{43}$/;
 const FAILED = "Le contrôle du dépôt Git a échoué. Réessayez.";
 const now$3 = () => (/* @__PURE__ */ new Date()).toISOString();
-const transport$2 = (action, values) => {
+const transport$1 = (action, values) => {
 	const file = `${$app.dataDir()}/.web-git-source-${$security.randomString(24)}.json`;
 	try {
 		$os.writeFile(file, JSON.stringify({
@@ -5703,7 +5703,7 @@ const transport$2 = (action, values) => {
 };
 /** Appel du lecteur ; une réponse {error} devient une BadRequestError au message fixe. */
 const webGitSource = (action, values = {}) => {
-	const result = transport$2(action, values);
+	const result = transport$1(action, values);
 	if (result.error) throw new BadRequestError(`${result.error}`.slice(0, 300));
 	return result;
 };
@@ -6070,7 +6070,7 @@ const HandleWebGitSourceTest = (e) => {
 	const { row } = sourceAccess(e, "app.configure"), input = webInput(e), branch = typeof input.branch === "string" ? input.branch : "";
 	if (branch && !webGitBranchValid(branch)) throw new BadRequestError("Branche invalide.");
 	rateLimit(row.id);
-	const r = transport$2("test", {
+	const r = transport$1("test", {
 		...credentials(row),
 		branch
 	}), error = r.error ? `${r.error}`.slice(0, 300) : "", code = error ? `${r.code || "failed"}` : branch && !r.branchFound ? "branch" : "ok", updated = recordCheck(row.id, code, error || (code === "branch" ? "Branche introuvable dans ce dépôt." : "")) || row;
@@ -11979,6 +11979,238 @@ const encryptWebValue = encrypt;
 const decryptWebValue = decrypt;
 
 //#endregion
+//#region src/lib/handlers/webApps/cloudflareAutomation.ts
+const PREFIX = "cloudflare-domain:", PENDING = "cloudflare-pending:";
+const cloudflareSetting = (key, store = $app) => store.findRecordsByFilter("web_app_settings", "key={:key}", "", 1, 0, { key })[0];
+const cloudflareCredential = () => {
+	const row = cloudflareSetting("cloudflare");
+	return (row ? `${decryptWebValue(row.getString("valueEncrypted")).token || ""}` : "") || $os.getenv("MOTHERSHIP_CLOUDFLARE_API_TOKEN") || "";
+};
+const cloudflareTransport = (action, values) => {
+	const token = cloudflareCredential();
+	if (!token) throw new BadRequestError("Connectez Cloudflare avec un jeton Zone:Read et DNS:Edit.");
+	const file = `${$app.dataDir()}/.cloudflare-${$security.randomString(24)}.json`;
+	try {
+		$os.writeFile(file, JSON.stringify({
+			action,
+			token,
+			...values
+		}), 384);
+		const helper = $os.getenv("WEB_APPS_CLOUDFLARE_HELPER") || ($os.getenv("WEB_APPS_DOMAIN_HELPER") || "packages/pockethost/scripts/web_app_domains.py").replace(/[^/]+$/, "web_cloudflare.py");
+		const response = JSON.parse(toString($os.cmd("python3", helper, file).combinedOutput()));
+		if (response.error) throw new BadRequestError(response.error);
+		if (!response.result) throw new Error("Missing helper result");
+		return response.result;
+	} catch (error) {
+		if (error instanceof BadRequestError) throw error;
+		throw new BadRequestError("Cloudflare est indisponible. Relisez les DNS avant de réessayer.");
+	} finally {
+		try {
+			$os.remove(file);
+		} catch {}
+	}
+};
+const stateOf = (domainId, store = $app) => {
+	const row = cloudflareSetting(PREFIX + domainId, store);
+	return row ? decryptWebValue(row.getString("valueEncrypted")) : null;
+};
+const writeState = (state, store = $app, pending = false) => {
+	const row = cloudflareSetting(PREFIX + state.domainId, store) || new Record(store.findCollectionByNameOrId("web_app_settings"));
+	row.set("key", PREFIX + state.domainId);
+	row.set("valueEncrypted", encryptWebValue(state));
+	store.save(row);
+	const marker = cloudflareSetting(PENDING + state.domainId, store);
+	if (pending) {
+		const next = marker || new Record(store.findCollectionByNameOrId("web_app_settings"));
+		next.set("key", PENDING + state.domainId);
+		next.set("valueEncrypted", encryptWebValue({ domainId: state.domainId }));
+		store.save(next);
+	} else if (marker) store.delete(marker);
+};
+const cloudflareDomainValues = (domain) => ({
+	hostname: domain.getString("host"),
+	publicIp: $os.getenv("WEB_APPS_PUBLIC_IP") || "",
+	ownershipValue: "pockethost-verification=" + domain.getString("ownershipToken")
+});
+const cloudflareCertificateReady = (domain) => domain.getString("status") === "active" && Date.parse(domain.getString("certificateExpiresAt")) > Date.now() + 6e4;
+const webCloudflareDomainView = (domain) => {
+	try {
+		const state = stateOf(domain.id);
+		if (!state || state.appId !== domain.getString("appId") || state.hostname !== domain.getString("host")) return void 0;
+		return {
+			enabled: state.enabled === true,
+			status: state.status,
+			lastError: `${state.lastError || ""}`
+		};
+	} catch {
+		return;
+	}
+};
+const assertCloudflareIdle = (domainId, store = $app) => {
+	if ((stateOf(domainId, store)?.leaseUntil || 0) > Date.now()) throw new BadRequestError("La configuration Cloudflare est en cours. Réessayez dans un instant.");
+};
+const beginCloudflareConfiguration = (domain, actorId, enabled, expectedProxied, store) => {
+	assertCloudflareIdle(domain.id, store);
+	const leaseToken = $security.randomString(32);
+	writeState({
+		version: 1,
+		appId: domain.getString("appId"),
+		domainId: domain.id,
+		hostname: domain.getString("host"),
+		actorId,
+		enabled,
+		expectedProxied,
+		status: "pending_validation",
+		attempts: 0,
+		certificateAttempts: 0,
+		nextAttemptAt: 0,
+		lastError: "",
+		leaseToken,
+		leaseUntil: Date.now() + 18e4
+	}, store, true);
+	return leaseToken;
+};
+const context = (state, store = $app) => {
+	const actor = store.findRecordById("users", state.actorId), domain = store.findRecordById("web_app_domains", state.domainId), app = store.findRecordById("web_apps", state.appId);
+	if (!isWebPlatformAdmin(actor) || actor.getString("suspension") || app.getString("deletionId") || app.getString("suspension") || domain.getString("appId") !== app.id || domain.getString("host") !== state.hostname) throw new BadRequestError("La configuration a changé ou son autorisation a été retirée. Préparez un nouvel aperçu Cloudflare.");
+	return {
+		actor,
+		domain,
+		app
+	};
+};
+const finishCloudflareConfiguration = (domainId, leaseToken, result, error = "") => {
+	$app.runInTransaction((tx) => {
+		const state = stateOf(domainId, tx);
+		if (!state || state.leaseToken !== leaseToken) return;
+		if (error) {
+			writeState({
+				...state,
+				status: "error",
+				lastError: error,
+				leaseUntil: 0,
+				leaseToken: ""
+			}, tx);
+			return;
+		}
+		const { domain } = context(state, tx);
+		if (typeof result.zoneId !== "string" || !result.zoneId || typeof result.recordId !== "string" || !result.recordId || typeof result.proxied !== "boolean") throw new BadRequestError("La configuration DNS distante doit être relue avant de continuer.");
+		const ready = cloudflareCertificateReady(domain);
+		const status = ready && result.proxied && state.enabled ? "active" : ready && !state.enabled ? "disabled" : "pending_validation";
+		writeState({
+			...state,
+			status,
+			zoneId: result.zoneId,
+			recordId: result.recordId,
+			lastError: "",
+			leaseUntil: 0,
+			leaseToken: "",
+			nextAttemptAt: 0
+		}, tx, !["active", "disabled"].includes(status));
+	});
+};
+const forgetCloudflareConfiguration = (domainId, store = $app) => {
+	for (const prefix of [PREFIX, PENDING]) {
+		const row = cloudflareSetting(prefix + domainId, store);
+		if (row) store.delete(row);
+	}
+};
+/** A proxied public IP proves nothing about the origin: require the provider A plus public/provider TXT. */
+const verifyCloudflareOrigin = (domain) => {
+	const result = cloudflareTransport("verify", cloudflareDomainValues(domain)), state = stateOf(domain.id);
+	if (result.verified !== true || state?.recordId && (state.recordId !== result.recordId || state.zoneId !== result.zoneId)) throw new BadRequestError("Les DNS Cloudflare ont changé. Préparez un nouvel aperçu.");
+	return result;
+};
+/** Durable, bounded automation: survives navigation, retries propagation, never re-applies a DNS plan. */
+const HandleWebCloudflareMaintenance = () => {
+	if ($os.getenv("WEB_APPS_ENABLED") !== "true") return;
+	const markers = $app.findRecordsByFilter("web_app_settings", "key ~ {:prefix}", "updated,id", 100, 0, { prefix: PENDING });
+	let processed = 0;
+	for (const marker of markers) {
+		if (processed >= 2) break;
+		const domainId = marker.getString("key").slice(19);
+		if (!/^[a-z0-9]{15}$/.test(domainId)) continue;
+		let state;
+		$app.runInTransaction((tx) => {
+			const current = stateOf(domainId, tx);
+			if (!current) {
+				const orphan = cloudflareSetting(PENDING + domainId, tx);
+				if (orphan) tx.delete(orphan);
+				return;
+			}
+			if (current.leaseUntil > Date.now() || current.nextAttemptAt > Date.now()) return;
+			state = {
+				...current,
+				leaseToken: $security.randomString(32),
+				leaseUntil: Date.now() + 18e4
+			};
+			writeState(state, tx, true);
+		});
+		if (!state) continue;
+		processed++;
+		let next = { ...state }, pending = true, permanentFailure = false;
+		const authorized = () => {
+			try {
+				return context(state);
+			} catch {
+				permanentFailure = true;
+				throw new BadRequestError("La configuration a changé ou son autorisation a été retirée. Préparez un nouvel aperçu Cloudflare.");
+			}
+		};
+		try {
+			const { domain, app, actor } = authorized();
+			if (!next.zoneId || !next.recordId) {
+				const proof = cloudflareTransport("verify", cloudflareDomainValues(domain));
+				if (proof.verified !== true || proof.proxied !== state.expectedProxied || !proof.zoneId || !proof.recordId) throw new BadRequestError("Relisez et confirmez les DNS Cloudflare avant de continuer.");
+				next.zoneId = proof.zoneId;
+				next.recordId = proof.recordId;
+			}
+			if (cloudflareCertificateReady(domain)) {
+				if (state.enabled) {
+					authorized();
+					if (cloudflareTransport("activate", {
+						...cloudflareDomainValues(domain),
+						zoneId: next.zoneId,
+						recordId: next.recordId
+					}).proxied !== true) throw new BadRequestError("Le proxy Cloudflare n’est pas encore confirmé.");
+				}
+				next.status = state.enabled ? "active" : "disabled";
+				next.lastError = "";
+				pending = false;
+			} else {
+				if (!$app.findRecordsByFilter("web_deployments", "appId={:app} && action=\"domain\" && (status=\"queued\" || status=\"running\")", "", 1, 0, { app: app.id }).length) {
+					if ((state.certificateAttempts || 0) >= 3) {
+						permanentFailure = true;
+						throw new BadRequestError("La validation HTTPS a échoué après 3 demandes automatiques. Vérifiez le domaine et préparez un nouvel aperçu Cloudflare.");
+					}
+					if (!app.getString("activeDeployment")) throw new BadRequestError("Publiez le site pour terminer la validation HTTPS.");
+					verifyAndQueueWebDomain(domain, app, actor.id);
+					next.certificateAttempts = (state.certificateAttempts || 0) + 1;
+				}
+				next.status = "pending_https";
+				next.lastError = "";
+				next.nextAttemptAt = Date.now() + 15e3;
+			}
+		} catch (error) {
+			next.attempts = (state.attempts || 0) + 1;
+			next.status = "error";
+			next.lastError = error instanceof BadRequestError ? `${error.message}`.slice(0, 500) : "La validation automatique a échoué. Préparez un nouvel aperçu si le problème persiste.";
+			next.nextAttemptAt = Date.now() + Math.min(3e5, 6e4 * 2 ** Math.min(next.attempts - 1, 3));
+			pending = !permanentFailure && next.attempts < 8;
+		}
+		$app.runInTransaction((tx) => {
+			const current = stateOf(domainId, tx);
+			if (!current || current.leaseToken !== state.leaseToken) return;
+			writeState({
+				...next,
+				leaseUntil: 0,
+				leaseToken: ""
+			}, tx, pending);
+		});
+	}
+};
+
+//#endregion
 //#region src/lib/handlers/webApps/domains.ts
 const COLLECTION$4 = "web_app_domains";
 /** Message unique : ni le détenteur d'un nom (plateforme, instance, autre équipe), ni son existence ne se déduisent. */
@@ -12049,7 +12281,8 @@ const serialize$2 = (row) => ({
 	dnsTarget: publicIp(),
 	lastError: row.getString("lastError"),
 	certificateExpiresAt: row.getString("certificateExpiresAt"),
-	created: row.getString("created")
+	created: row.getString("created"),
+	cloudflare: webCloudflareDomainView(row)
 });
 const findDomain = (e) => {
 	const id = e.request.pathValue("domainId");
@@ -12143,6 +12376,11 @@ const HandleWebDomainCreate = (e) => {
 const HandleWebDomainVerify = (e) => {
 	const { user, app: found } = requireWebAppPermission(e, "domains.manage"), app = found, row = findDomain(e);
 	assertAliasAllowed(e, row.getString("host"));
+	assertCloudflareIdle(row.id);
+	return webJson(e, verifyAndQueueWebDomain(row, app, user.id), 202);
+};
+/** Shared with the durable, platform-authorized Cloudflare workflow. No network call runs inside a DB transaction. */
+const verifyAndQueueWebDomain = (row, app, actorId) => {
 	if (!publicIp()) throw new BadRequestError("Adresse publique du serveur Applications web non configurée.");
 	const https = webHttpsPreflight();
 	if (!https.ready) throw new BadRequestError(https.error);
@@ -12158,7 +12396,15 @@ const HandleWebDomainVerify = (e) => {
 			ownershipToken: row.getString("ownershipToken")
 		}), 384);
 		const helper = $os.getenv("WEB_APPS_DOMAIN_HELPER") || "packages/pockethost/scripts/web_app_domains.py";
-		const result = JSON.parse(toString($os.cmd("python3", helper, file).combinedOutput()));
+		let result = JSON.parse(toString($os.cmd("python3", helper, file).combinedOutput()));
+		if (!result.verified && cloudflareCredential()) try {
+			result = verifyCloudflareOrigin(row);
+		} catch (error) {
+			if (error instanceof BadRequestError) result = {
+				verified: false,
+				error: "La propriété DNS et l’origine Cloudflare ne sont pas confirmées. Vérifiez le TXT et l’adresse du serveur."
+			};
+		}
 		if (!result.verified) {
 			row.set("lastError", result.error || "Vérification DNS non réussie.");
 			$app.save(row);
@@ -12171,14 +12417,14 @@ const HandleWebDomainVerify = (e) => {
 		} catch {
 			throw new BadRequestError(UNAVAILABLE);
 		}
-		const job = queueWebDeployment(app, "domain", user.id, {
+		const job = queueWebDeployment(app, "domain", actorId, {
 			domainId: row.id,
 			domain: row.getString("host")
 		});
-		return webJson(e, {
+		return {
 			domain: serialize$2(row),
 			deploymentId: job.id
-		}, 202);
+		};
 	} catch (error) {
 		if (error instanceof BadRequestError || error instanceof TooManyRequestsError) throw error;
 		throw new BadRequestError("Vérification DNS indisponible. Réessayez après propagation.");
@@ -12190,14 +12436,20 @@ const HandleWebDomainVerify = (e) => {
 };
 const HandleWebDomainDelete = (e) => {
 	const { user, app: found } = requireWebAppPermission(e, "domains.manage"), app = found, row = findDomain(e);
-	if ($app.findRecordsByFilter("web_deployments", "appId = {:id} && (status = \"queued\" || status = \"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Attendez la fin du déploiement avant de supprimer ce domaine.");
-	const wasRouted = [
-		"verified",
-		"pending_certificate",
-		"active"
-	].includes(row.getString("status"));
-	$app.delete(row);
-	if (wasRouted) queueWebDeployment(app, "domains-sync", user.id);
+	$app.runInTransaction((tx) => {
+		const current = tx.findRecordById(COLLECTION$4, row.id);
+		if (current.getString("appId") !== app.id) throw new ForbiddenError("Accès refusé.");
+		if (tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Attendez la fin du déploiement avant de supprimer ce domaine.");
+		assertCloudflareIdle(current.id, tx);
+		const wasRouted = [
+			"verified",
+			"pending_certificate",
+			"active"
+		].includes(current.getString("status"));
+		tx.delete(current);
+		forgetCloudflareConfiguration(current.id, tx);
+		if (wasRouted) queueWebDeployment(app, "domains-sync", user.id, {}, tx);
+	});
 	return webJson(e, { deleted: true });
 };
 /** Native collection requests must obey the same domain reservations as the dashboard APIs. */
@@ -22508,7 +22760,7 @@ const appMeta = (config) => ({
 	owner: config.ownerLogin
 });
 const installUrl = (slug, state) => `https://github.com/apps/${encodeURIComponent(slug)}/installations/new?state=${encodeURIComponent(state)}`;
-const transport$1 = (action, values) => {
+const transport = (action, values) => {
 	const file = `${$app.dataDir()}/.web-github-connect-${$security.randomString(24)}.json`;
 	try {
 		$os.writeFile(file, JSON.stringify({
@@ -22649,7 +22901,7 @@ const HandleWebGithubConnectManifest = (e) => {
 	if (typeof input.code !== "string" || !/^[A-Za-z0-9_-]{20,200}$/.test(input.code)) throw new BadRequestError("Code GitHub invalide.");
 	const row = consume(user.id, state, "manifest");
 	try {
-		const config = validatedConversion(transport$1("convert", { code: input.code }));
+		const config = validatedConversion(transport("convert", { code: input.code }));
 		const info = publicInfo(row);
 		if (info.organization && info.organization.toLowerCase() !== config.ownerLogin.toLowerCase()) throw new BadRequestError("La GitHub App n’appartient pas à l’organisation choisie.");
 		const nextState = token();
@@ -22765,7 +23017,7 @@ const HandleWebGithubConnectInstall = (e) => {
 	if (!/^[1-9][0-9]{0,19}$/.test(installationId)) throw new BadRequestError("Identifiant d’installation GitHub invalide.");
 	const row = consume(user.id, state, "installation");
 	try {
-		const config = pendingConfig(row), result = transport$1("verify-installation", {
+		const config = pendingConfig(row), result = transport("verify-installation", {
 			config,
 			installationId
 		});
@@ -22792,7 +23044,7 @@ const HandleWebGithubConnectInstallCheck = (e) => {
 	try {
 		const config = pendingConfig(row);
 		if (!config.githubAppId) throw new BadRequestError("La création de la GitHub App n’est pas terminée.");
-		const result = transport$1("discover-installation", { config });
+		const result = transport("discover-installation", { config });
 		return webJson(e, activateConnection(row, user.id, config, result));
 	} catch (error) {
 		markFailed(row.id, "installation_failed", error);
@@ -25239,12 +25491,12 @@ const HandleWebPrivateDatabaseStatus = (e) => {
 //#endregion
 //#region src/lib/handlers/webApps/cloudflare.ts
 const key = "cloudflare";
-const setting = (name, store = $app) => store.findRecordsByFilter("web_app_settings", "key = {:key}", "", 1, 0, { key: name })[0];
+const setting = cloudflareSetting;
 const savedToken = () => {
 	const row = setting(key);
 	return row ? `${decryptWebValue(row.getString("valueEncrypted")).token || ""}` : "";
 };
-const credential = () => savedToken() || $os.getenv("MOTHERSHIP_CLOUDFLARE_API_TOKEN") || "";
+const credential = cloudflareCredential;
 const status = () => ({
 	configured: !!credential(),
 	source: savedToken() ? "saved" : credential() ? "server" : "none",
@@ -25264,48 +25516,27 @@ const HandleWebCloudflarePut = (e) => {
 	$app.save(row);
 	return webJson(e, status());
 };
-const transport = (action, values) => {
-	const token = credential();
-	if (!token) throw new BadRequestError("Connectez Cloudflare avec un jeton Zone:Read et DNS:Edit limité aux zones souhaitées.");
-	const file = `${$app.dataDir()}/.cloudflare-${$security.randomString(24)}.json`;
-	try {
-		$os.writeFile(file, JSON.stringify({
-			action,
-			token,
-			...values
-		}), 384);
-		const helper = $os.getenv("WEB_APPS_CLOUDFLARE_HELPER") || ($os.getenv("WEB_APPS_DOMAIN_HELPER") || "packages/pockethost/scripts/web_app_domains.py").replace(/[^/]+$/, "web_cloudflare.py");
-		const result = JSON.parse(toString($os.cmd("python3", helper, file).combinedOutput()));
-		if (result.error) throw new BadRequestError(result.error);
-		if (!result.result) throw new Error("Missing result");
-		return result.result;
-	} catch (error) {
-		if (error instanceof BadRequestError) throw error;
-		throw new BadRequestError("Cloudflare est indisponible. Relisez les DNS avant de réessayer.");
-	} finally {
-		try {
-			$os.remove(file);
-		} catch {}
-	}
-};
 const target = (e) => {
 	requirePlatformAdmin(e);
 	const { row, app } = assertWebDomainDnsAccess(e);
 	return {
 		row,
 		app,
-		values: {
-			hostname: row.getString("host"),
-			publicIp: $os.getenv("WEB_APPS_PUBLIC_IP") || "",
-			ownershipValue: `pockethost-verification=${row.getString("ownershipToken")}`
-		}
+		values: cloudflareDomainValues(row)
 	};
 };
 const contextHash = (values) => $security.sha256(JSON.stringify(values) + credential());
 const HandleWebCloudflarePreview = (e) => {
 	const { row, app, values } = target(e);
 	webRateLimit(app.id, "cloudflare_preview", 6, "Trop de lectures Cloudflare. Réessayez dans une minute.");
-	const plan = transport("preview", values);
+	const input = webInput(e), proxyEnabled = input.proxyEnabled === void 0 ? true : input.proxyEnabled;
+	if (typeof proxyEnabled !== "boolean") throw new BadRequestError("Le choix du proxy Cloudflare doit être explicite.");
+	assertCloudflareIdle(row.id);
+	const proxied = proxyEnabled && cloudflareCertificateReady(row);
+	const plan = cloudflareTransport("preview", {
+		...values,
+		proxied
+	});
 	const preview = new Record($app.findCollectionByNameOrId("web_app_settings"));
 	const id = $security.randomString(32), expiresAt = Date.now() + 600 * 1e3;
 	preview.set("key", `cloudflare-plan:${id}`);
@@ -25314,7 +25545,12 @@ const HandleWebCloudflarePreview = (e) => {
 		app: app.id,
 		domain: row.id,
 		expiresAt,
-		context: contextHash(values),
+		context: contextHash({
+			...values,
+			proxied
+		}),
+		proxyEnabled,
+		proxied,
 		revision: plan.revision,
 		state: "pending"
 	}));
@@ -25326,20 +25562,28 @@ const HandleWebCloudflarePreview = (e) => {
 		hostname: plan.hostname,
 		zone: plan.zone,
 		current: plan.current,
-		changes: plan.changes
+		changes: plan.changes,
+		proxyEnabled,
+		proxyDeferred: proxyEnabled && !proxied
 	});
 };
 const HandleWebCloudflareApply = (e) => {
 	const { row, app, values } = target(e), input = webInput(e);
 	if (input.confirmHostname !== values.hostname || !/^[A-Za-z0-9]{32}$/.test(`${input.previewId || ""}`)) throw new BadRequestError("Confirmez le nom exact du domaine affiché dans l’aperçu.");
 	webRateLimit(app.id, "cloudflare_apply", 3, "Trop de modifications Cloudflare. Réessayez dans une minute.");
-	const context = contextHash(values);
-	let revision = "", planRowId = "";
+	let revision = "", planRowId = "", leaseToken = "", proxied = false;
 	$app.runInTransaction((tx) => {
 		const pending = setting(`cloudflare-plan:${input.previewId}`, tx);
 		if (!pending) throw new BadRequestError("Aperçu introuvable. Préparez un nouvel aperçu.");
 		const plan = decryptWebValue(pending.getString("valueEncrypted"));
+		const wanted = plan.proxyEnabled === true;
+		proxied = wanted && cloudflareCertificateReady(row);
+		const context = contextHash({
+			...values,
+			proxied
+		});
 		if (plan.state !== "pending" || plan.actor !== e.auth.id || plan.app !== app.id || plan.domain !== row.id || plan.expiresAt < Date.now() || plan.context !== context) throw new BadRequestError("Aperçu expiré, déjà utilisé ou configuration modifiée. Préparez un nouvel aperçu.");
+		leaseToken = beginCloudflareConfiguration(row, e.auth.id, wanted, proxied, tx);
 		revision = plan.revision;
 		planRowId = pending.id;
 		pending.set("valueEncrypted", encryptWebValue({
@@ -25350,12 +25594,15 @@ const HandleWebCloudflareApply = (e) => {
 	});
 	let result, failure;
 	try {
-		result = transport("apply", {
+		result = cloudflareTransport("apply", {
 			...values,
-			revision
+			revision,
+			proxied
 		});
+		finishCloudflareConfiguration(row.id, leaseToken, result);
 	} catch (error) {
 		failure = error;
+		finishCloudflareConfiguration(row.id, leaseToken, null, "La configuration DNS doit être relue. Préparez un nouvel aperçu Cloudflare.");
 	}
 	const audit = $app.findRecordById("web_app_settings", planRowId), plan = decryptWebValue(audit.getString("valueEncrypted"));
 	audit.set("valueEncrypted", encryptWebValue({
@@ -25369,7 +25616,7 @@ const HandleWebCloudflareApply = (e) => {
 	if (failure) throw failure;
 	return webJson(e, {
 		...result,
-		message: "DNS enregistrés en mode DNS uniquement. La propagation peut prendre quelques minutes ; lancez ensuite Vérifier DNS et HTTPS."
+		message: proxied ? "DNS enregistrés et proxy Cloudflare activé." : plan.proxyEnabled ? "DNS enregistrés. La validation DNS et HTTPS se poursuit automatiquement, puis le proxy Cloudflare sera activé." : "DNS enregistrés sans proxy. La validation DNS et HTTPS se poursuit automatiquement."
 	});
 };
 
@@ -25542,6 +25789,7 @@ exports.HandleWebCiTokensCreate = HandleWebCiTokensCreate;
 exports.HandleWebCiTokensList = HandleWebCiTokensList;
 exports.HandleWebCloudflareApply = HandleWebCloudflareApply;
 exports.HandleWebCloudflareGet = HandleWebCloudflareGet;
+exports.HandleWebCloudflareMaintenance = HandleWebCloudflareMaintenance;
 exports.HandleWebCloudflarePreview = HandleWebCloudflarePreview;
 exports.HandleWebCloudflarePut = HandleWebCloudflarePut;
 exports.HandleWebDeletionClaim = HandleWebDeletionClaim;
@@ -25824,6 +26072,7 @@ exports.serializeWebGitSource = serializeWebGitSource;
 exports.serializeWebGithubConnection = serializeWebGithubConnection;
 exports.storageWorkerSnapshot = storageWorkerSnapshot;
 exports.validateRuntimeProfile = validateRuntimeProfile;
+exports.verifyAndQueueWebDomain = verifyAndQueueWebDomain;
 exports.webActorCan = webActorCan;
 exports.webAlertSummary = webAlertSummary;
 exports.webAppAccessQuery = webAppAccessQuery;

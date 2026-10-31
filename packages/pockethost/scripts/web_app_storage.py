@@ -164,7 +164,7 @@ def restartable_container(info,app,running=True):
     return targets
 
 
-def _wait_resumed(docker,app,ident,targets,timeout=30):
+def _wait_resumed(docker,app,ident,targets,timeout=120):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self,*args,**kwargs):return None
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())

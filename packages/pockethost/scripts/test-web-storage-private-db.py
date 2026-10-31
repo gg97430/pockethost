@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Private-wrapper snapshot regression; synthetic Docker plus real tar/AES fixtures."""
 import copy
+import contextlib
 import importlib.util
 import json
 import pathlib
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -128,6 +130,34 @@ class PrivateStorageTests(unittest.TestCase):
             self.assertEqual(events[:2],[('start',CID),('start',other)]);events.append(('wait',ident))
         with mock.patch.object(storage,'_wait_resumed',side_effect=wait):storage._resume(docker,APP,[CID,other])
         self.assertEqual(events[-2:],[('wait',CID),('wait',other)])
+
+    def test_resume_waits_for_delayed_docker_health_then_two_http_successes(self):
+        clock=[0.0];info=wrapped(self.info(),self.root)
+        info['Config']['Labels']['pockethost.web.healthpath']='/ready'
+        binding=[{'HostIp':'127.0.0.1','HostPort':'39999'}]
+        info['HostConfig']['PortBindings']={'3000/tcp':binding};info['NetworkSettings']['Ports']={'3000/tcp':binding}
+        def docker(_args,**_kwargs):
+            info['State']['Health']={'Status':'healthy'if clock[0]>=50 else'starting'}
+            return json.dumps([info])
+        opener=mock.Mock();opener.open.side_effect=lambda *_args,**_kwargs:contextlib.nullcontext(types.SimpleNamespace(status=200))
+        with mock.patch.object(storage.time,'monotonic',side_effect=lambda:clock[0]),\
+             mock.patch.object(storage.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)),\
+             mock.patch.object(storage.urllib.request,'build_opener',return_value=opener):
+            storage._wait_resumed(docker,APP,CID,['http://127.0.0.1:39999'])
+        self.assertGreaterEqual(clock[0],50);self.assertLess(clock[0],120)
+        self.assertEqual(opener.open.call_count,2)
+        self.assertTrue(all(call==mock.call('http://127.0.0.1:39999/ready',timeout=1)for call in opener.open.call_args_list))
+
+    def test_resume_remains_bounded_when_docker_never_becomes_healthy(self):
+        clock=[0.0];info=wrapped(self.info(),self.root);info['State']['Health']={'Status':'starting'}
+        opener=mock.Mock()
+        with mock.patch.object(storage.time,'monotonic',side_effect=lambda:clock[0]),\
+             mock.patch.object(storage.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)),\
+             mock.patch.object(storage.urllib.request,'build_opener',return_value=opener):
+            with self.assertRaisesRegex(RuntimeError,'reprise'):
+                storage._wait_resumed(lambda *_args,**_kwargs:json.dumps([info]),APP,CID,[])
+        self.assertGreaterEqual(clock[0],120);self.assertLess(clock[0],120.21)
+        opener.open.assert_not_called()
 
     def test_foreign_sidecar_or_wrong_role_does_not_bypass_validation(self):
         for value in ('false','TRUE',True):

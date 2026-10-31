@@ -119,9 +119,37 @@ def _measure(docker,app,volume):
     return int(value)*1024
 
 
+def _private_database_mounts(info,app):
+    """Only the three read-only mounts installed by the trusted private DB wrapper."""
+    config=info.get('Config')or{};host=info.get('HostConfig')or{};labels=config.get('Labels')or{}
+    observed=[mount for mount in info.get('Mounts',[])if mount.get('Type')=='bind']
+    defined=[mount for mount in host.get('Mounts',[])or[]if mount.get('Type')=='bind']
+    if not observed and not defined:return labels.get('pockethost.web.private-db.wait')!='true'
+    deployment=labels.get('pockethost.web.deployment','');service=labels.get('pockethost.web.service')or'web'
+    if labels.get('pockethost.web.private-db.wait')!='true'or labels.get('pockethost.web.private-db')!='false'or not ID.fullmatch(deployment)or not NAME.fullmatch(service):return False
+    base='ph-web-'+app+'-'+deployment;front=labels.get('pockethost.web.front')
+    expected_name=base if front=='true'or(front is None and service=='web')else base+'-'+service if front=='false'else''
+    if info.get('Name','').lstrip('/')!=expected_name:return False
+    root=pathlib.Path(os.environ.get('WEB_APPS_ROOT','/home/pockethost-web/data'))
+    from web_app_private_db import SCRIPT_ROOT
+    home=root/'private-db-runtime'/app/(deployment+'-'+service)
+    expected={str(home/'ready'):'/run/kolab-ready',str(home/'wait-env'):'/run/kolab-wait-env',str(SCRIPT_ROOT/'web_private_db_wait.cjs'):'/run/kolab-wait.cjs'}
+    try:
+        if not root.is_absolute()or root.resolve(strict=True)!=root:return False
+        for source,target in expected.items():
+            path=pathlib.Path(source)
+            if path.resolve(strict=True)!=path or(path.is_dir()if target!='/run/kolab-wait.cjs'else path.is_file())is not True:return False
+    except OSError:return False
+    return(len(observed)==len(defined)==3
+        and all(mount.get('RW')is False and isinstance(mount.get('Source'),str)and mount['Source']in expected and expected[mount['Source']]==mount.get('Destination')for mount in observed)
+        and len({mount['Destination']for mount in observed})==3
+        and all(mount.get('ReadOnly')is True and isinstance(mount.get('Source'),str)and mount['Source']in expected and expected[mount['Source']]==mount.get('Target')for mount in defined)
+        and len({mount['Target']for mount in defined})==3)
+
+
 def restartable_container(info,app,running=True):
     config=info.get('Config')or{};host=info.get('HostConfig')or{};labels=config.get('Labels')or{}
-    if not ID.fullmatch(app)or not re.fullmatch('[a-f0-9]{64}',info.get('Id',''))or not re.fullmatch('ph-web-'+app+'-[a-z0-9]{15}(?:-[a-z][a-z0-9-]{0,30})?',info.get('Name','').lstrip('/'))or labels.get('pockethost.web.app')!=app or labels.get('pockethost.web')!='true'or config.get('User')!='10001:10001'or host.get('Privileged')or not host.get('ReadonlyRootfs')or host.get('Binds')or any(m.get('Type')=='bind'for m in info.get('Mounts',[])):
+    if not ID.fullmatch(app)or not re.fullmatch('[a-f0-9]{64}',info.get('Id',''))or not re.fullmatch('ph-web-'+app+'-[a-z0-9]{15}(?:-[a-z][a-z0-9-]{0,30})?',info.get('Name','').lstrip('/'))or labels.get('pockethost.web.app')!=app or labels.get('pockethost.web')!='true'or labels.get('pockethost.web.private-db')=='true'or config.get('User')!='10001:10001'or host.get('Privileged')or not host.get('ReadonlyRootfs')or host.get('Binds')or not _private_database_mounts(info,app):
         raise RuntimeError('Conteneur étranger ou isolation invalide avant la pause du stockage.')
     if info.get('State',{}).get('Paused'):raise RuntimeError('Un service est déjà gelé. Rétablissez son état avant le snapshot.')
     bindings=host.get('PortBindings')or{};actual=info.get('NetworkSettings',{}).get('Ports')or{};targets=[]
@@ -170,6 +198,9 @@ def quiesce(docker,app,resume=True,journal=None):
         for ident in docker(['ps','-q','--no-trunc','--filter','label=pockethost.web=true','--filter','label=pockethost.web.app='+app]).split():
             info=json.loads(docker(['inspect',ident]))[0]
             if info.get('Id')!=ident:raise RuntimeError('Identité du service invalide avant le snapshot.')
+            labels=info.get('Config',{}).get('Labels')or{}
+            if labels.get('pockethost.web.app')!=app or labels.get('pockethost.web')!='true':raise RuntimeError('Service étranger avant le snapshot.')
+            if labels.get('pockethost.web.private-db')=='true':continue
             restartable_container(info,app);candidates.append(ident)
         if len(candidates)>4:raise RuntimeError('Le snapshot accepte au maximum quatre services publiés.')
         for ident in candidates:

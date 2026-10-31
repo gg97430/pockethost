@@ -386,6 +386,9 @@ class Job:
   for ident in docker(['ps','-q','--no-trunc','--filter','label=pockethost.web=true','--filter','label=pockethost.web.app='+self.app]).split():
    info=json.loads(docker(['inspect',ident]))[0]
    if info.get('Id')!=ident:raise RuntimeError('Identité du service du site invalide.')
+   labels=info.get('Config',{}).get('Labels')or{}
+   if labels.get('pockethost.web.app')!=self.app or labels.get('pockethost.web')!='true':raise RuntimeError('Service étranger avant la pause du stockage.')
+   if labels.get('pockethost.web.private-db')=='true':continue
    restartable_container(info,self.app)
    self.recreate_previous.append(ident)
   current=load(ROOT/'current-job.json')

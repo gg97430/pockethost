@@ -4,6 +4,7 @@ import { requireWebAppPermission } from './access'
 import { decryptWebValue, encryptWebValue, webAppsCapability, webInput, webJson } from './api'
 const COLLECTION = 'web_runtime_profiles'
 const kinds = ['nextjs', 'auto', 'dockerfile', 'image', 'compose', 'worker']
+const composeLimits = { cpuMillicores: 4000, memoryMiB: 8192, pids: 512 }
 const name = /^[a-z][a-z0-9-]{0,30}$/
 const integer = (value: any, min: number, max: number) => {
   if (!Number.isInteger(value) || value < min || value > max) throw new BadRequestError('Quota ou port invalide.')
@@ -38,7 +39,7 @@ const text = (value: any) => {
     throw new BadRequestError('Commande de démarrage ou de construction invalide (une ligne, 1000 caractères maximum).')
   return value
 }
-const quota = (value: any = {}) => {
+const quota = (value: any = {}, compose = false) => {
   if (
     !value ||
     typeof value !== 'object' ||
@@ -47,8 +48,8 @@ const quota = (value: any = {}) => {
   )
     throw new BadRequestError('Quotas invalides.')
   return {
-    cpuMillicores: integer(value.cpuMillicores ?? 500, 50, 1000),
-    memoryMiB: integer(value.memoryMiB ?? 768, 64, 1536),
+    cpuMillicores: integer(value.cpuMillicores ?? 500, 50, compose ? composeLimits.cpuMillicores : 1000),
+    memoryMiB: integer(value.memoryMiB ?? 768, 64, compose ? composeLimits.memoryMiB : 1536),
     pids: integer(value.pids ?? 256, 16, 512),
   }
 }
@@ -85,7 +86,7 @@ export const validateRuntimeProfile = (input: any = {}) => {
     image: ['image', 'worker'].includes(kind) ? input.image || '' : '',
     command: command(input.command),
     entrypoint: command(input.entrypoint),
-    resources: quota(input.resources),
+    resources: quota(input.resources, kind === 'compose'),
   }
   if ((kind === 'image' || kind === 'worker') && profile.image && !webImageDigestValid(profile.image))
     throw new BadRequestError('Image attendue avec @sha256 et un digest complet.')
@@ -167,10 +168,26 @@ export const validateRuntimeProfile = (input: any = {}) => {
       )
         throw new BadRequestError('Compose référence uniquement les noms des variables enregistrées.')
       if (
-        !Array.isArray(depends) ||
-        depends.some((v) => typeof v !== 'string' || v === key || !Object.hasOwn(compose.services, v))
+        (!Array.isArray(depends) && (!depends || typeof depends !== 'object')) ||
+        Object.keys(depends).length > 4 ||
+        (Array.isArray(depends) ? depends : Object.keys(depends)).some(
+          (v) => typeof v !== 'string' || v === key || !Object.hasOwn(compose.services, v)
+        )
       )
         throw new BadRequestError('Dépendance Compose invalide.')
+      if (
+        !Array.isArray(depends) &&
+        Object.values(depends).some(
+          (value: any) =>
+            !value ||
+            typeof value !== 'object' ||
+            Array.isArray(value) ||
+            Object.keys(value).length !== 1 ||
+            !Object.hasOwn(value, 'condition') ||
+            !['service_started', 'service_healthy'].includes(value.condition)
+        )
+      )
+        throw new BadRequestError('Condition de dépendance Compose invalide.')
       if (
         !Array.isArray(volumes) ||
         volumes.length > 4 ||
@@ -187,14 +204,17 @@ export const validateRuntimeProfile = (input: any = {}) => {
           cpuMillicores: Math.max(50, Math.floor(profile.resources.cpuMillicores / count)),
           memoryMiB: Math.max(64, Math.floor(profile.resources.memoryMiB / count)),
           pids: Math.max(16, Math.floor(profile.resources.pids / count)),
-        }
+        },
+        true
       )
       let healthcheck: any
       if (item.healthcheck) {
         const check = item.healthcheck,
           test = command(check.test)
         if (
-          Object.keys(check).some((k) => !['test', 'timeoutSeconds', 'intervalSeconds', 'retries'].includes(k)) ||
+          Object.keys(check).some(
+            (k) => !['test', 'timeoutSeconds', 'intervalSeconds', 'retries', 'startPeriodSeconds'].includes(k)
+          ) ||
           test[0] !== 'CMD' ||
           test.length < 2
         )
@@ -204,6 +224,7 @@ export const validateRuntimeProfile = (input: any = {}) => {
           timeoutSeconds: integer(check.timeoutSeconds ?? 5, 1, 10),
           intervalSeconds: integer(check.intervalSeconds ?? 10, 5, 60),
           retries: integer(check.retries ?? 3, 1, 10),
+          startPeriodSeconds: integer(check.startPeriodSeconds ?? 0, 0, 60),
         }
       }
       services[key] = {
@@ -218,22 +239,29 @@ export const validateRuntimeProfile = (input: any = {}) => {
         ...(healthcheck ? { healthcheck } : {}),
       }
     }
-    for (const [key, max] of [
-      ['cpuMillicores', 1000],
-      ['memoryMiB', 1536],
-      ['pids', 512],
-    ] as const)
+    for (const [key, max] of Object.entries(composeLimits))
       if (Object.values(services).reduce((n: number, row: any) => n + row.resources[key], 0) > max)
         throw new BadRequestError('La somme des quotas Compose dépasse celle du site.')
     const ordered: string[] = []
     while (ordered.length < count) {
       const ready = Object.keys(services).filter(
-        (key) => !ordered.includes(key) && services[key].depends_on.every((dep: string) => ordered.includes(dep))
+        (key) =>
+          !ordered.includes(key) &&
+          (Array.isArray(services[key].depends_on)
+            ? services[key].depends_on
+            : Object.keys(services[key].depends_on)
+          ).every((dep: string) => ordered.includes(dep))
       )
       if (!ready.length) throw new BadRequestError('Cycle de dépendances Compose refusé.')
       ordered.push(...ready)
     }
     profile.compose = { front: compose.front, services }
+    profile.resources = Object.fromEntries(
+      Object.keys(composeLimits).map((key) => [
+        key,
+        Object.values(services).reduce((total: number, service: any) => total + service.resources[key], 0),
+      ])
+    )
   }
   return profile
 }
@@ -255,16 +283,17 @@ export const runtimeWorkerSnapshot = (app: core.Record, store: any = $app) => {
 const view = (app: core.Record, canConfigure: boolean) => {
   const row = rowOf(app),
     registry =
-      canConfigure && row?.getString('registryEncrypted') ? decryptWebValue(row.getString('registryEncrypted')) : {}
+      canConfigure && row?.getString('registryEncrypted') ? decryptWebValue(row.getString('registryEncrypted')) : {},
+    profile = runtimeProfile(app)
   return {
-    profile: runtimeProfile(app),
+    profile,
     revision: row?.getString('revision') || '',
     registry: { server: registry.server || '', username: registry.username || '', hasPassword: !!registry.password },
     capabilities: {
       kinds,
       maxServices: 4,
-      maxCpuMillicores: 1000,
-      maxMemoryMiB: 1536,
+      maxCpuMillicores: profile.kind === 'compose' ? composeLimits.cpuMillicores : 1000,
+      maxMemoryMiB: profile.kind === 'compose' ? composeLimits.memoryMiB : 1536,
       maxPids: 512,
       hostBindings: false,
       railpackAvailable: webAppsCapability().railpackAvailable,

@@ -38,7 +38,8 @@ const validate = (value: any) => {
       throw new BadRequestError('Nom de volume invalide ou dupliqué.')
     if (
       typeof item.target !== 'string' ||
-      !/^\/(?:data|mnt|app\/(?:data|uploads|storage))(?:\/[A-Za-z0-9_.-]+)*$/.test(item.target) ||
+      (!/^\/(?:data|mnt|app\/(?:data|uploads|storage))(?:\/[A-Za-z0-9_.-]+)*$/.test(item.target) &&
+        item.target !== '/app/.next/cache') ||
       item.target.split('/').some((part: string) => part === '..' || part === '.') ||
       targets.some(
         (target) =>

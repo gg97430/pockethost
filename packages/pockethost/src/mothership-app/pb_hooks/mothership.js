@@ -4728,6 +4728,11 @@ const kinds = [
 	"compose",
 	"worker"
 ];
+const composeLimits = {
+	cpuMillicores: 4e3,
+	memoryMiB: 8192,
+	pids: 512
+};
 const name$1 = /^[a-z][a-z0-9-]{0,30}$/;
 const integer = (value, min, max) => {
 	if (!Number.isInteger(value) || value < min || value > max) throw new BadRequestError("Quota ou port invalide.");
@@ -4747,15 +4752,15 @@ const text$1 = (value) => {
 	if (typeof value !== "string" || value.length > 1e3 || /[\0\r\n]/.test(value)) throw new BadRequestError("Commande de démarrage ou de construction invalide (une ligne, 1000 caractères maximum).");
 	return value;
 };
-const quota = (value = {}) => {
+const quota = (value = {}, compose = false) => {
 	if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((k) => ![
 		"cpuMillicores",
 		"memoryMiB",
 		"pids"
 	].includes(k))) throw new BadRequestError("Quotas invalides.");
 	return {
-		cpuMillicores: integer(value.cpuMillicores ?? 500, 50, 1e3),
-		memoryMiB: integer(value.memoryMiB ?? 768, 64, 1536),
+		cpuMillicores: integer(value.cpuMillicores ?? 500, 50, compose ? composeLimits.cpuMillicores : 1e3),
+		memoryMiB: integer(value.memoryMiB ?? 768, 64, compose ? composeLimits.memoryMiB : 1536),
 		pids: integer(value.pids ?? 256, 16, 512)
 	};
 };
@@ -4783,7 +4788,7 @@ const validateRuntimeProfile = (input = {}) => {
 		image: ["image", "worker"].includes(kind) ? input.image || "" : "",
 		command: command$2(input.command),
 		entrypoint: command$2(input.entrypoint),
-		resources: quota(input.resources)
+		resources: quota(input.resources, kind === "compose")
 	};
 	if ((kind === "image" || kind === "worker") && profile.image && !webImageDigestValid(profile.image)) throw new BadRequestError("Image attendue avec @sha256 et un digest complet.");
 	if (kind === "image" && !profile.image) throw new BadRequestError("Image immuable requise.");
@@ -4825,13 +4830,14 @@ const validateRuntimeProfile = (input = {}) => {
 			if (item.dockerfile) relative(item.dockerfile);
 			const env = item.environment || [], depends = item.depends_on || [], volumes = item.volumes || [];
 			if (!Array.isArray(env) || env.length > 100 || env.some((v) => typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]{0,100}$/.test(v))) throw new BadRequestError("Compose référence uniquement les noms des variables enregistrées.");
-			if (!Array.isArray(depends) || depends.some((v) => typeof v !== "string" || v === key || !Object.hasOwn(compose.services, v))) throw new BadRequestError("Dépendance Compose invalide.");
+			if (!Array.isArray(depends) && (!depends || typeof depends !== "object") || Object.keys(depends).length > 4 || (Array.isArray(depends) ? depends : Object.keys(depends)).some((v) => typeof v !== "string" || v === key || !Object.hasOwn(compose.services, v))) throw new BadRequestError("Dépendance Compose invalide.");
+			if (!Array.isArray(depends) && Object.values(depends).some((value) => !value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 || !Object.hasOwn(value, "condition") || !["service_started", "service_healthy"].includes(value.condition))) throw new BadRequestError("Condition de dépendance Compose invalide.");
 			if (!Array.isArray(volumes) || volumes.length > 4 || volumes.some((v) => typeof v !== "string" || !/^[a-z][a-z0-9-]{0,30}:\/[A-Za-z0-9_./-]+(?::ro)?$/.test(v) || v.split(":")[1].split("/").includes(".."))) throw new BadRequestError("Montage Compose invalide : volume nommé uniquement.");
 			const resources = quota(item.resources || {
 				cpuMillicores: Math.max(50, Math.floor(profile.resources.cpuMillicores / count)),
 				memoryMiB: Math.max(64, Math.floor(profile.resources.memoryMiB / count)),
 				pids: Math.max(16, Math.floor(profile.resources.pids / count))
-			});
+			}, true);
 			let healthcheck;
 			if (item.healthcheck) {
 				const check = item.healthcheck, test = command$2(check.test);
@@ -4839,13 +4845,15 @@ const validateRuntimeProfile = (input = {}) => {
 					"test",
 					"timeoutSeconds",
 					"intervalSeconds",
-					"retries"
+					"retries",
+					"startPeriodSeconds"
 				].includes(k)) || test[0] !== "CMD" || test.length < 2) throw new BadRequestError("Contrôle Compose attendu avec CMD.");
 				healthcheck = {
 					test,
 					timeoutSeconds: integer(check.timeoutSeconds ?? 5, 1, 10),
 					intervalSeconds: integer(check.intervalSeconds ?? 10, 5, 60),
-					retries: integer(check.retries ?? 3, 1, 10)
+					retries: integer(check.retries ?? 3, 1, 10),
+					startPeriodSeconds: integer(check.startPeriodSeconds ?? 0, 0, 60)
 				};
 			}
 			services[key] = {
@@ -4860,14 +4868,10 @@ const validateRuntimeProfile = (input = {}) => {
 				...healthcheck ? { healthcheck } : {}
 			};
 		}
-		for (const [key, max] of [
-			["cpuMillicores", 1e3],
-			["memoryMiB", 1536],
-			["pids", 512]
-		]) if (Object.values(services).reduce((n, row) => n + row.resources[key], 0) > max) throw new BadRequestError("La somme des quotas Compose dépasse celle du site.");
+		for (const [key, max] of Object.entries(composeLimits)) if (Object.values(services).reduce((n, row) => n + row.resources[key], 0) > max) throw new BadRequestError("La somme des quotas Compose dépasse celle du site.");
 		const ordered = [];
 		while (ordered.length < count) {
-			const ready = Object.keys(services).filter((key) => !ordered.includes(key) && services[key].depends_on.every((dep) => ordered.includes(dep)));
+			const ready = Object.keys(services).filter((key) => !ordered.includes(key) && (Array.isArray(services[key].depends_on) ? services[key].depends_on : Object.keys(services[key].depends_on)).every((dep) => ordered.includes(dep)));
 			if (!ready.length) throw new BadRequestError("Cycle de dépendances Compose refusé.");
 			ordered.push(...ready);
 		}
@@ -4875,6 +4879,7 @@ const validateRuntimeProfile = (input = {}) => {
 			front: compose.front,
 			services
 		};
+		profile.resources = Object.fromEntries(Object.keys(composeLimits).map((key) => [key, Object.values(services).reduce((total, service) => total + service.resources[key], 0)]));
 	}
 	return profile;
 };
@@ -4892,9 +4897,9 @@ const runtimeWorkerSnapshot = (app, store = $app) => {
 };
 /** Serveur et compte du registre : app.configure seulement (mêmes champs vides pour les autres rôles). */
 const view$1 = (app, canConfigure) => {
-	const row = rowOf(app), registry = canConfigure && row?.getString("registryEncrypted") ? decryptWebValue(row.getString("registryEncrypted")) : {};
+	const row = rowOf(app), registry = canConfigure && row?.getString("registryEncrypted") ? decryptWebValue(row.getString("registryEncrypted")) : {}, profile = runtimeProfile(app);
 	return {
-		profile: runtimeProfile(app),
+		profile,
 		revision: row?.getString("revision") || "",
 		registry: {
 			server: registry.server || "",
@@ -4904,8 +4909,8 @@ const view$1 = (app, canConfigure) => {
 		capabilities: {
 			kinds,
 			maxServices: 4,
-			maxCpuMillicores: 1e3,
-			maxMemoryMiB: 1536,
+			maxCpuMillicores: profile.kind === "compose" ? composeLimits.cpuMillicores : 1e3,
+			maxMemoryMiB: profile.kind === "compose" ? composeLimits.memoryMiB : 1536,
 			maxPids: 512,
 			hostBindings: false,
 			railpackAvailable: webAppsCapability().railpackAvailable
@@ -9393,7 +9398,7 @@ const validate$1 = (value) => {
 			"sizeMiB",
 			"readOnly"
 		].includes(k)) || typeof item.name !== "string" || !name.test(item.name) || seen.has(item.name)) throw new BadRequestError("Nom de volume invalide ou dupliqué.");
-		if (typeof item.target !== "string" || !/^\/(?:data|mnt|app\/(?:data|uploads|storage))(?:\/[A-Za-z0-9_.-]+)*$/.test(item.target) || item.target.split("/").some((part) => part === ".." || part === ".") || targets.some((target) => item.target === target || item.target.startsWith(target + "/") || target.startsWith(item.target + "/"))) throw new BadRequestError("Cible de volume invalide ou recouvrant un autre volume.");
+		if (typeof item.target !== "string" || !/^\/(?:data|mnt|app\/(?:data|uploads|storage))(?:\/[A-Za-z0-9_.-]+)*$/.test(item.target) && item.target !== "/app/.next/cache" || item.target.split("/").some((part) => part === ".." || part === ".") || targets.some((target) => item.target === target || item.target.startsWith(target + "/") || target.startsWith(item.target + "/"))) throw new BadRequestError("Cible de volume invalide ou recouvrant un autre volume.");
 		const sizeMiB = item.sizeMiB ?? 256, readOnly = item.readOnly ?? false;
 		if (!Number.isInteger(sizeMiB) || sizeMiB < 16 || sizeMiB > 2048 || typeof readOnly !== "boolean") throw new BadRequestError("Volume attendu entre 16 et 2048 Mio.");
 		seen.add(item.name);

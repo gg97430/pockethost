@@ -29,7 +29,7 @@ def validate_volumes(value):
     for item in value:
         if not isinstance(item,dict)or set(item)-{'name','target','sizeMiB','readOnly'}or not NAME.fullmatch(item.get('name',''))or item['name']in seen:raise RuntimeError('Nom ou options de volume invalides.')
         target=item.get('target','')
-        if not isinstance(target,str)or not re.fullmatch(r'/(?:data|mnt|app/(?:data|uploads|storage))(?:/[A-Za-z0-9_.-]+)*',target)or any(part in ('.','..')for part in target.split('/')):raise RuntimeError('Le volume doit cibler /data, /mnt ou le dossier data/uploads/storage de l’application.')
+        if not isinstance(target,str)or (target!='/app/.next/cache'and not re.fullmatch(r'/(?:data|mnt|app/(?:data|uploads|storage))(?:/[A-Za-z0-9_.-]+)*',target))or any(part in ('.','..')for part in target.split('/')):raise RuntimeError('Le volume doit cibler /data, /mnt, data/uploads/storage de l’application ou le cache Next exact /app/.next/cache.')
         size=item.get('sizeMiB',256)
         if type(size)is not int or not 16<=size<=2048 or type(item.get('readOnly',False))is not bool:raise RuntimeError('Limite de volume invalide (16 à 2048 Mio).')
         if any(target==row['target']or target.startswith(row['target']+'/')or row['target'].startswith(target+'/')for row in result):raise RuntimeError('Les montages ne peuvent pas se recouvrir.')

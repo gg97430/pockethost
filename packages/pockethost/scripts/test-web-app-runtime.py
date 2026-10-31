@@ -39,7 +39,7 @@ class RuntimeTests(unittest.TestCase):
         base['compose']['services']['web']['depends_on']=['cache'];base['compose']['services']['cache']['depends_on']=['web']
         with self.assertRaises(RuntimeError):runtime.validate_profile(base)
     def test_compose_aggregate_limits_are_not_per_service_limits(self):
-        source={'kind':'compose','compose':{'front':'web','services':{name:{'image':DIGEST,'resources':{'memoryMiB':1000,'cpuMillicores':500,'pids':256}}for name in ['web','other']}}}
+        source={'kind':'compose','compose':{'front':'web','services':{name:{'image':DIGEST,'resources':{'memoryMiB':5000,'cpuMillicores':500,'pids':256}}for name in ['web','other']}}}
         with self.assertRaises(RuntimeError):runtime.validate_profile(source)
     def test_cgroup_admission_checks_reserved_and_actual_memory_and_cpu(self):
         def docker(args):

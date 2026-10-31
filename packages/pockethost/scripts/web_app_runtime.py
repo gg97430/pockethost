@@ -15,6 +15,8 @@ NAME = re.compile(r'^[a-z][a-z0-9-]{0,30}$')
 DIGEST = re.compile(r'^(?:[a-z0-9.-]+(?::[0-9]{1,5})?/)?[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')
 RESERVE = 512 * 1024**2
 CGROUP_ROOT = pathlib.Path('/sys/fs/cgroup')
+COMPOSE_LIMITS = {'cpuMillicores': 4000, 'memoryMiB': 8192, 'pids': 512}
+DEPENDENCY_TIMEOUT_SECONDS = 120
 
 
 def number(value, low, high):
@@ -43,6 +45,20 @@ def text(value):
     return value
 
 
+def quotas(value=None, compose=False):
+    value = value or {}
+    if not isinstance(value, dict) or set(value) - {'cpuMillicores','memoryMiB','pids'}:
+        raise RuntimeError('Quotas invalides.')
+    limits = COMPOSE_LIMITS if compose else {'cpuMillicores':1000,'memoryMiB':1536,'pids':512}
+    return {'cpuMillicores':number(value.get('cpuMillicores',500),50,limits['cpuMillicores']),
+            'memoryMiB':number(value.get('memoryMiB',768),64,limits['memoryMiB']),
+            'pids':number(value.get('pids',256),16,limits['pids'])}
+
+
+def dependency_names(value):
+    return list(value) if isinstance(value, dict) else value
+
+
 def validate_profile(value=None):
     value = value or {}
     allowed = {'kind','port','dockerfile','image','command','entrypoint','registry','compose','resources','buildTarget','startCommand','buildCommand','pruneDependencies'}
@@ -50,12 +66,9 @@ def validate_profile(value=None):
         raise RuntimeError('Options de runtime non prises en charge.')
     kind = value.get('kind', 'nextjs')
     if kind not in KINDS: raise RuntimeError('Runtime inconnu.')
-    resources = value.get('resources') or {}
-    if not isinstance(resources, dict) or set(resources) - {'cpuMillicores','memoryMiB','pids'}: raise RuntimeError('Quotas invalides.')
     result = {**value, 'kind': kind, 'port': None if kind == 'worker' else number(value.get('port',3000),1,65535),
         'command': command(value.get('command')), 'entrypoint': command(value.get('entrypoint')),
-        'resources': {'cpuMillicores': number(resources.get('cpuMillicores',500),50,1000),
-            'memoryMiB': number(resources.get('memoryMiB',768),64,1536), 'pids': number(resources.get('pids',256),16,512)}}
+        'resources': quotas(value.get('resources'),kind=='compose')}
     result['dockerfile'] = relative(value.get('dockerfile','Dockerfile'))
     image = value.get('image','')if kind in('image','worker')else''
     result['image']=image
@@ -79,7 +92,11 @@ def validate_profile(value=None):
             or not isinstance(registry.get('username'),str) or not isinstance(registry.get('password'),str)
             or any('\x00' in str(item) or '\n' in str(item) for item in registry.values())):
             raise RuntimeError('Identifiants de registre invalides.')
-    if kind == 'compose': result['compose'] = validate_compose(value.get('compose'), result['resources'])
+    if kind == 'compose':
+        result['compose'] = validate_compose(value.get('compose'), result['resources'])
+        # Report the actual aggregate, also for older profiles whose explicit
+        # service quotas already exceeded the default top-level budget.
+        result['resources'] = {key:sum(item['resources'][key]for item in result['compose']['services'].values())for key in COMPOSE_LIMITS}
     return result
 
 
@@ -99,24 +116,26 @@ def validate_compose(value, resources):
         if not isinstance(env,list) or len(env)>100 or any(not isinstance(key,str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,100}',key) for key in env):
             raise RuntimeError('Compose référence uniquement les noms des variables enregistrées, sans valeurs littérales.')
         depends = item.get('depends_on',[])
-        if not isinstance(depends,list) or any(key not in value['services'] or key==name for key in depends): raise RuntimeError('Dépendance Compose invalide.')
+        if not isinstance(depends,(list,dict)) or len(depends)>4 or any(not isinstance(key,str)or key not in value['services'] or key==name for key in depends): raise RuntimeError('Dépendance Compose invalide.')
+        if isinstance(depends,dict):
+            if any(not isinstance(condition,dict)or set(condition)!={'condition'}or condition['condition']not in('service_started','service_healthy')for condition in depends.values()):raise RuntimeError('Condition de dépendance Compose invalide.')
         quota = item.get('resources') or {'cpuMillicores':max(50,resources['cpuMillicores']//len(value['services'])), 'memoryMiB':max(64,resources['memoryMiB']//len(value['services'])), 'pids':max(16,resources['pids']//len(value['services']))}
-        quota = validate_profile({'kind':'worker','resources':quota})['resources']
+        quota = quotas(quota,compose=True)
         mounts = item.get('volumes',[])
         if not isinstance(mounts,list) or len(mounts)>4 or any(not isinstance(mount,str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,30}:/[A-Za-z0-9_./-]+(?::ro)?',mount) or '..' in mount.split(':')[1].split('/') for mount in mounts):
             raise RuntimeError('Compose accepte seulement les volumes nommés enregistrés ; aucun bind hôte.')
         check = item.get('healthcheck')
         if check:
-            if not isinstance(check,dict) or set(check)-{'test','timeoutSeconds','intervalSeconds','retries'}: raise RuntimeError('Contrôle de service invalide.')
+            if not isinstance(check,dict) or set(check)-{'test','timeoutSeconds','intervalSeconds','retries','startPeriodSeconds'}: raise RuntimeError('Contrôle de service invalide.')
             test=command(check.get('test'))
             if not test or test[0]!='CMD' or len(test)<2: raise RuntimeError('Le contrôle exige un tableau CMD.')
-            check={'Test':test,'Timeout':number(check.get('timeoutSeconds',5),1,10)*10**9,'Interval':number(check.get('intervalSeconds',10),5,60)*10**9,'Retries':number(check.get('retries',3),1,10)}
+            check={'Test':test,'Timeout':number(check.get('timeoutSeconds',5),1,10)*10**9,'Interval':number(check.get('intervalSeconds',10),5,60)*10**9,'Retries':number(check.get('retries',3),1,10),'StartPeriod':number(check.get('startPeriodSeconds',0),0,60)*10**9}
         services[name]={**item,'command':command(item.get('command')),'entrypoint':command(item.get('entrypoint')),'environment':env,'depends_on':depends,'volumes':mounts,'resources':quota,'port':number(item.get('port',3000),1,65535),'healthcheck':check}
-    for key, maximum in [('cpuMillicores',1000),('memoryMiB',1536),('pids',512)]:
+    for key, maximum in COMPOSE_LIMITS.items():
         if sum(item['resources'][key] for item in services.values())>maximum: raise RuntimeError('La somme des quotas Compose dépasse celle du site.')
     ordered=[]
     while len(ordered)<len(services):
-        ready=[name for name,item in services.items() if name not in ordered and all(dep in ordered for dep in item['depends_on'])]
+        ready=[name for name,item in services.items() if name not in ordered and all(dep in ordered for dep in dependency_names(item['depends_on']))]
         if not ready: raise RuntimeError('Cycle de dépendances Compose refusé.')
         ordered.extend(sorted(ready))
     return {'front':front,'services':services,'order':ordered}
@@ -243,6 +262,26 @@ class RuntimeEngine:
         self.profile=validate_profile(job.snapshot.get('runtime'))
         self.created=[]; self.network='ph-web-net-'+job.app+'-'+job.id
 
+    def wait_dependencies(self,item,started,deadline):
+        depends=item.get('depends_on',[])
+        if not isinstance(depends,dict):return  # historical list: start order only
+        for name,condition in depends.items():
+            ident=started.get(name,'')
+            if not re.fullmatch(r'[a-f0-9]{64}',ident):raise RuntimeError('Dépendance du candidat absente.')
+            while time.monotonic()<deadline:
+                info=json.loads(self.docker(['inspect',ident],timeout=min(5,max(.1,deadline-time.monotonic()))))[0]
+                labels=(info.get('Config')or{}).get('Labels')or{}
+                if info.get('Id')!=ident or any(labels.get(key)!=value for key,value in [('pockethost.web.app',self.job.app),('pockethost.web.deployment',self.job.id),('pockethost.web.service',name)]):raise RuntimeError('Dépendance étrangère au candidat refusée.')
+                state=info.get('State')or{}
+                if not state.get('Running'):raise RuntimeError('Une dépendance du candidat s’est arrêtée.')
+                if condition['condition']=='service_started':break
+                health=(state.get('Health')or{}).get('Status')
+                if health=='healthy':break
+                if health not in('starting',):raise RuntimeError('Une dépendance exige un contrôle de santé valide et réussi.')
+                self.job.heartbeat()
+                time.sleep(min(1,max(0,deadline-time.monotonic())))
+            else:raise RuntimeError('Le contrôle de santé d’une dépendance dépasse le délai de 120 secondes.')
+
     def pulled_tag(self, image):
         # Per-application proof that this app obtained the digest from its registry (own credentials or public).
         return 'ph-web-pull/'+self.job.app+':'+image.rsplit('@sha256:',1)[1]
@@ -344,8 +383,15 @@ class RuntimeEngine:
         envfile.write_text('\n'.join(name+'='+shlex.quote(value['value']) for name,value in self.job.snapshot.get('env',{}).items() if value.get('build'))+'\n'); envfile.chmod(0o600)
         args=['docker','--host','unix://'+self.socket,'buildx','build','--builder','ph-web-builder','--output','type=docker,compression=uncompressed','--progress','plain',*(['--no-cache'] if self.job.snapshot.get('fullRebuild') is True else []),'--label','pockethost.web=true','--label','pockethost.web.app='+self.job.app,'--label','pockethost.web.runtime='+self.profile['kind'],'--label','pockethost.web.deployment='+self.job.id,'--secret','id=env,src='+str(envfile),'-f',str(path),'-t',tag]
         if profile.get('buildTarget'): args+=['--target',profile['buildTarget']]
+        public=public_build_arguments(self.job.snapshot.get('env',{}))
+        for name in public:args+=['--build-arg',name]
+        from web_app_build import cache_namespace
+        cache_scope=cache_namespace(self.job.app,getattr(self,'hmac_key',''))
+        if self.job.snapshot.get('fullRebuild')is True:cache_scope+='-'+self.job.id
+        self.job.secrets.append(cache_scope)
+        args+=['--build-arg','BUILDKIT_CACHE_MOUNT_NS']
         args.append(str(context))
-        self.job.run(args,env=build_environment(self.job,work))
+        self.job.run(args,env={**build_environment(self.job,work),**public,'BUILDKIT_CACHE_MOUNT_NS':cache_scope})
         return tag
 
     def start(self,image,storage):
@@ -359,9 +405,11 @@ class RuntimeEngine:
         tooling=prepare_tooling(self.docker)
         network=self.request('POST','/networks/create',{'Name':self.network,'Driver':'bridge','Internal':False,'Labels':{'pockethost.web':'true','pockethost.web.app':self.job.app,'pockethost.web.deployment':self.job.id}})['Id']
         result={'runtimeKind':profile['kind'],'public':public,'services':[],'images':{},'network':self.network,'storage':storage,'target':''}
+        started={};dependency_deadline=time.monotonic()+DEPENDENCY_TIMEOUT_SECONDS
         from web_app_storage import prepare_mounts
         for name in order:
             item=services[name]; is_front=name==front
+            self.wait_dependencies(item,started,dependency_deadline)
             container='ph-web-'+self.job.app+'-'+self.job.id+('' if is_front else '-'+name)
             current_image=image[name] if isinstance(image,dict) else image
             owned=json.loads(self.docker(['image','inspect',current_image]))[0]
@@ -400,6 +448,7 @@ class RuntimeEngine:
             private_database=prepare_app(self.job,config,self.root,self.docker,name,tooling)
             created=self.request('POST','/containers/create?'+urllib.parse.urlencode({'name':container}),config)['Id']; self.created.append(created)
             self.request('POST','/containers/'+created+'/start')
+            started[name]=created
             if private_database:attach_app(created)
             info=json.loads(self.docker(['inspect',container]))[0]
             if next_directory:
@@ -417,6 +466,17 @@ class RuntimeEngine:
                     if len(bindings)!=1 or bindings[0].get('HostIp')!='127.0.0.1'or bindings[0].get('HostPort')!=host_port: raise RuntimeError('Le frontal doit conserver son port loopback réservé.')
                     result['target']='http://127.0.0.1:'+bindings[0]['HostPort']
         return result
+
+
+def public_build_arguments(environment):
+    """Only explicit public build-scope values enter ARG; values never enter argv."""
+    result={}
+    for name,value in environment.items():
+        if not isinstance(name,str)or not re.fullmatch(r'NEXT_PUBLIC_[A-Za-z0-9_]{0,89}',name)or not isinstance(value,dict)or value.get('build')is not True:continue
+        raw=value.get('value')
+        if not isinstance(raw,str)or '\x00'in raw or len(raw)>10000:raise RuntimeError('Variable publique de construction invalide.')
+        result[name]=raw
+    return {key:result[key]for key in sorted(result)}
 
 
 def build_environment(job,work):

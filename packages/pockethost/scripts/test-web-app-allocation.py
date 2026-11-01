@@ -118,9 +118,21 @@ class AllocationTests(unittest.TestCase):
             'web':{'image':image,'resources':{'memoryMiB':512,'cpuMillicores':500}},
             'cache':{'image':image,'resources':{'memoryMiB':1024,'cpuMillicores':500}}
         }}})
-        hosts = [r.resource_config(profile, value['resources']) for value in profile['compose']['services'].values()]
+        hosts = [r.resource_config(profile, value['resources'], name) for name,value in profile['compose']['services'].items()]
         self.assertEqual(sum(host['MemoryReservation'] for host in hosts),384*MIB)
         self.assertEqual(sum(host['CpuShares'] for host in hosts),1024)
+
+    def test_skewed_groups_respect_docker_minimum_and_exact_total(self):
+        image='example.org/site@sha256:'+'a'*64
+        for sizes in ([64,8128],[64,64,64,8000],[512,1024]):
+            for request in (32,33,256,sum(sizes)):
+                profile=r.validate_profile({'kind':'compose','memoryRequestMiB':request,'compose':{'front':'s0','services':{
+                    's'+str(i):{'image':image,'resources':{'memoryMiB':size,'cpuMillicores':50,'pids':16}}for i,size in enumerate(sizes)
+                }}})
+                hosts=[r.resource_config(profile,value['resources'],name)for name,value in profile['compose']['services'].items()]
+                self.assertEqual(sum(host['MemoryReservation']for host in hosts),request*MIB)
+                self.assertEqual(r.admission_memory(profile),request)
+                self.assertTrue(all(6*MIB<=host['MemoryReservation']<=host['Memory']for host in hosts))
 
     def test_invalid_policy_or_baseline_cannot_disable_limits(self):
         for invalid in [{'allocation':'unlimited'}, {'priority':'root'}, {'allocation':None}, {'memoryRequestMiB':None}, {'memoryRequestMiB':0},

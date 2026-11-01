@@ -257,21 +257,35 @@ def host_memory():
     except (OSError,ValueError,KeyError,IndexError):raise RuntimeError('Mémoire disponible du serveur invérifiable.')from None
 
 
-def resource_config(profile, resources):
+def memory_requests(profile):
+    if profile['kind']!='compose':return {'':profile['memoryRequestMiB']}
+    services=profile['compose']['services'];request=profile['memoryRequestMiB']
+    # Docker requires >=6 MiB per reservation. Split the remainder by available
+    # headroom so no service can exceed its own limit, even at full reservation.
+    remaining=request-6*len(services)
+    capacities={name:item['resources']['memoryMiB']-6 for name,item in services.items()}
+    total=sum(capacities.values())
+    if remaining<0 or remaining>total:raise RuntimeError('Demande mémoire du groupe invalide.')
+    result={name:6+remaining*capacity//total for name,capacity in capacities.items()}
+    order=sorted(capacities,key=lambda name:(-(remaining*capacities[name]%total),name))
+    for name in order[:request-sum(result.values())]:result[name]+=1
+    return result
+
+
+def resource_config(profile, resources, service=''):
     """Memory is allocated on demand; reservations are soft protections, never guarantees."""
     result={'NanoCpus':resources['cpuMillicores']*1000000,'Memory':resources['memoryMiB']*1024**2,
             'MemorySwap':resources['memoryMiB']*1024**2,'PidsLimit':resources['pids']}
     if allocation_mode(profile.get('allocation'))=='adaptive':
         count=len(profile['compose']['services'])if profile['kind']=='compose'else 1
         result['CpuShares']=max(2,{'low':256,'normal':1024,'high':2048}[profile.get('priority','normal')]//count)
-        result['MemoryReservation']=max(1,profile['memoryRequestMiB']*resources['memoryMiB']//profile['resources']['memoryMiB'])*1024**2
+        result['MemoryReservation']=memory_requests(profile)[service if profile['kind']=='compose'else'']*1024**2
     return result
 
 
 def admission_memory(profile):
     if allocation_mode(profile.get('allocation'))!='adaptive':return profile['resources']['memoryMiB']
-    if profile['kind']=='compose':return sum(resource_config(profile,item['resources'])['MemoryReservation']//1024**2 for item in profile['compose']['services'].values())
-    return profile['memoryRequestMiB']
+    return sum(memory_requests(profile).values())
 
 
 def admit(docker, memory_mib=0, cpu_millicores=0, build=False, mode=None):
@@ -526,7 +540,7 @@ class RuntimeEngine:
             admit_project(self.root,self.job,self.docker,resources['memoryMiB'],resources['cpuMillicores'])
             config={'Image':current_image,'User':'10001:10001','Env':[key+'='+value for key,value in values.items()],
                 'Labels':{'pockethost.web':'true','pockethost.web.app':self.job.app,'pockethost.web.deployment':self.job.id,'pockethost.web.private-db':'false','pockethost.web.private-db.wait':'false','pockethost.web.service':name,'pockethost.web.front':str(is_front).lower(),'pockethost.web.allocation':allocation_mode(profile['allocation']),'pockethost.web.priority':profile['priority'],'pockethost.web.tooling':tooling,'pockethost.web.healthpath':self.job.snapshot.get('config',{}).get('healthPath','/')},
-                'HostConfig':{'NetworkMode':self.network,**resource_config(profile,resources),
+                'HostConfig':{'NetworkMode':self.network,**resource_config(profile,resources,name),
                     'SecurityOpt':['no-new-privileges'],'CapDrop':['ALL'],'ReadonlyRootfs':True,'Mounts':mounts,'Tmpfs':{'/tmp':'rw,noexec,nosuid,size=128m,uid=10001,gid=10001'},'RestartPolicy':{'Name':'unless-stopped'},'LogConfig':{'Type':'json-file','Config':{'max-size':'10m','max-file':'3'}}},
                 'NetworkingConfig':{'EndpointsConfig':{self.network:{'Aliases':[name]}}}}
             if next_directory:config['HostConfig']['Tmpfs'][next_directory+'/cache']='rw,nosuid,uid=10001,gid=10001,size=128m'

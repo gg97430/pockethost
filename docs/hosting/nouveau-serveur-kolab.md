@@ -843,6 +843,14 @@ Utiliser `stat`, les propriétaires, les empreintes et des vues filtrées. Ne pa
 
 Pour les réglages sensibles, conserver des preuves telles que `configured=true`, longueur attendue, propriétaire/mode ou identité du fichier, sans sa valeur. Les configurations publiques du dashboard peuvent être vérifiées séparément.
 
+### 15.4 Connexion PocketBase au démarrage d’une application
+
+Une compilation réussie suivie de `Failed to authenticate` sur `_superusers/auth-with-password` signale un accès administrateur refusé par la BDD. Vérifier l’URL, les variables réellement transmises à l’exécution et les identifiants, sans les publier dans les journaux. Ne pas relever les budgets CPU/RAM pour contourner ce problème.
+
+Utiliser un **compte technique distinct par application**, créé dans la seule BDD concernée via les comptes techniques gérés de Kolab. Enregistrer les secrets dans les variables chiffrées de l’application, conserver ses autres clés de chiffrement et ne pas réutiliser le compte d’un autre worker. Vérifier l’authentification avant un nouveau déploiement. Ne pas réinitialiser le compte humain pour réparer une variable périmée.
+
+Lire les scripts de préparation exécutés avant l’ouverture du port HTTP : certains appliquent des migrations d’authentification. Si des changements sont nécessaires, disposer d’une sauvegarde et d’un retour arrière adaptés avant de relancer ; ne pas désactiver la MFA/TOTP pour faire passer le contrôle de santé. Si le schéma est déjà conforme et la préparation idempotente, constater qu’aucune migration n’est requise.
+
 ## 16. Reboot obligatoire avant réception
 
 Faire ce test avant les clients, ou dans un créneau prévu si le serveur est déjà utilisé.

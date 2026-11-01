@@ -116,7 +116,7 @@ timedatectl status
 
 Attendus : architecture compatible avec les binaires/images retenus ; `cgroup2fs` ; disques et inodes disponibles ; synchronisation de l’heure active. Conserver le fuseau système choisi dans la fiche ; vérifier séparément le fuseau des planifications du dashboard.
 
-Budgéter **BDD + sites + builder + plateforme + sauvegardes + marge**. Une limite du builder doit tenir dans celle du parent rootless, en plus des sites déjà réservés et de la coexistence de deux versions lors d’un déploiement.
+Budgéter **BDD + sites + builder + plateforme + sauvegardes + marge**. En mode fixe, additionner les plafonds. En [mode adaptatif](../../WEB_RESOURCE_ALLOCATION.md), conserver un plafond global, une demande mémoire par application et une marge ; le worker contrôle les engagements et la disponibilité réelle avant chaque démarrage, y compris lors de la coexistence de deux versions.
 
 Profil app4 après ajustement du 1er novembre 2026 : parent hébergement 9 CPU / 16 Gio sur un hôte à 12 CPU logiques, builder 4 CPU / 8 Gio. L’ancien plafond de 8 CPU refusait un build dès que les sites et auxiliaires réservaient 4,1 CPU : `4,1 + 4 = 8,1`, même avec de la RAM disponible. Compter aussi les auxiliaires, et vérifier CPU et mémoire séparément. Ce sont des plafonds d’un profil existant, pas des valeurs à appliquer à tout nouvel hôte. Le builder n’obtient pas 8 Gio supplémentaires en dehors des 16 Gio du parent.
 
@@ -144,16 +144,7 @@ ssh -o BatchMode=yes -o PreferredAuthentications=publickey "ubuntu@${KOLAB_PUBLI
 Installer les prérequis **avant** de lancer une sauvegarde ou une restauration :
 
 ```bash
-sudo apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
-  apt-get install -y --no-install-recommends \
-  ca-certificates curl git openssh-client openssh-server \
-  python3 python3-boto3 python3-cryptography \
-  build-essential pkg-config \
-  tar gzip zip unzip rsync sqlite3 jq util-linux cpulimit \
-  uidmap dbus-user-session slirp4netns fuse-overlayfs \
-  ufw fail2ban unattended-upgrades logrotate \
-  certbot python3-certbot-dns-cloudflare
+sudo bash packages/pockethost/scripts/install-server-prerequisites.sh
 ```
 
 Revoir les mises à jour et effectuer les redémarrages système nécessaires avant la recette finale. `NEEDRESTART_MODE=l` limite les redémarrages automatiques pendant cette installation ; il ne dispense pas de traiter les services ou le noyau à mettre à jour.
@@ -300,10 +291,12 @@ Le script [setup-web-hosting.sh](../../packages/pockethost/scripts/setup-web-hos
 
 ```bash
 sudo env WEB_APPS_MEMORY_MAX='<BUDGET_GIO>G' \
+  WEB_APPS_CPU_QUOTA='<BUDGET_CPU_EN_POURCENT>%' \
+  WEB_NODE_BINARY='<CHEMIN_ABSOLU_NODE_24>' \
   bash packages/pockethost/scripts/setup-web-hosting.sh
 ```
 
-Ce script possède un plafond CPU initial de 2 CPU et une valeur mémoire par défaut de 5 Gio. Le paramètre mémoire ne change pas le plafond CPU : adapter les drop-ins de `user@1001.service` et `user-1001.slice` au profil retenu, puis contrôler les **limites effectives**. Les unités worker et terminal sont installées mais ne doivent être démarrées qu’après configuration.
+Ce script exige les budgets CPU et mémoire explicites : `900%` représente 9 CPU. Il exige le profil actuel `ubuntu=1000:1000`, `pockethost-web=1001:1001` et refuse toute collision d’identités sans renumérotation automatique. Il refuse un budget supérieur à la capacité physique (au moins 1 Gio réservé hors hébergement), Node <24 et la reconfiguration d’un worker ou terminal actif. Il installe les prérequis communs, sans réinstaller de force un moteur rootless existant. Les unités worker et terminal restent à activer après configuration. En mode fixe, additionner **builder + sites + auxiliaires + réserve**. En mode adaptatif, le contrôle de réception vérifie les demandes et la marge ; le worker vérifie la capacité réelle à chaque admission. Pour modifier un hôte actif, suivre une procédure de maintenance avec vérification des limites effectives.
 
 Contrôles sous l’identité web :
 
@@ -430,6 +423,7 @@ WEB_APPS_DOCKER_SOCKET=/run/user/1001/docker.sock
 WEB_APPS_CONTROL_URL=http://127.0.0.1:8091
 WEB_APPS_PUBLIC_IP=<IPV4_PUBLIQUE>
 WEB_APPS_CERT_EMAIL=<CONTACT_CERTIFICATS>
+WEB_APPS_ALLOCATION_MODE=adaptive
 WEB_APPS_BUILD_CPUS=<CPU_BUILDER>
 WEB_APPS_BUILD_MEMORY=<MEMOIRE_BUILDER_EX_8g>
 WEB_APPS_BUILDKIT_IMAGE=moby/buildkit@sha256:<DIGEST_VERIFIE>
@@ -838,43 +832,7 @@ Installer `nmap` sur le poste de contrôle si nécessaire. Tester aussi le **vra
 Ce test crée uniquement des fichiers temporaires factices sous `ubuntu`, utilise les mêmes types de wrappers CPU/IO que les archives, puis supprime son dossier. Il ne lance aucune restauration cliente.
 
 ```bash
-sudo -u ubuntu python3 -B - <<'PY'
-import hashlib, json, pathlib, sqlite3, subprocess, tempfile
-
-with tempfile.TemporaryDirectory(prefix='kolab-archive-check-') as work:
-    root = pathlib.Path(work)
-    source, target = root / 'source', root / 'restored'
-    (source / 'pb_data').mkdir(parents=True)
-    target.mkdir()
-    original = source / 'pb_data/data.db'
-    with sqlite3.connect(original) as db:
-        db.execute('CREATE TABLE validation(value TEXT)')
-        db.execute('INSERT INTO validation VALUES (?)', ('kolab-check',))
-    archive = root / 'backup.tar.gz'
-    limits = ['cpulimit', '-q', '-m', '-f', '-l', '50', '--',
-              'ionice', '-c', '3', 'nice', '-n', '19']
-    commands = [
-        limits + ['tar', '-I', 'gzip -1', '-cf', str(archive),
-                  '-C', str(source), 'pb_data'],
-        limits + ['tar', '-tzf', str(archive)],
-        limits + ['tar', '-xzf', str(archive), '-C', str(target),
-                  '--no-same-owner', '--no-same-permissions'],
-    ]
-    for command in commands:
-        subprocess.run(command, check=True, capture_output=True, timeout=30)
-    restored = target / 'pb_data/data.db'
-    assert hashlib.sha256(original.read_bytes()).digest() == hashlib.sha256(restored.read_bytes()).digest()
-    result = subprocess.run(
-        ['sqlite3', '-readonly', str(restored),
-         'PRAGMA quick_check; SELECT value FROM validation;'],
-        check=True, capture_output=True, text=True, timeout=10,
-    )
-    assert result.stdout.splitlines() == ['ok', 'kolab-check']
-    with sqlite3.connect(restored) as db:
-        assert db.execute('SELECT value FROM validation').fetchone()[0] == 'kolab-check'
-    print(json.dumps({'archive': True, 'extraction': True,
-                      'sqliteCliVerified': True, 'cpuLimitPercent': 50}))
-PY
+sudo -u ubuntu python3 -B packages/pockethost/scripts/check-server-archive.py
 ```
 
 Lancer aussi une vraie sauvegarde/restauration de la BDD jetable : ce petit test ne valide ni les identifiants S3, ni le format de toutes les archives historiques, ni le cycle d’arrêt/redémarrage applicatif.
@@ -1002,3 +960,39 @@ Les secrets eux-mêmes restent dans le coffre et les fichiers privés prévus, p
 - [Paramètres du runtime et chemins de données](../../packages/pockethost/src/constants.ts).
 
 Les anciens documents du dépôt contiennent parfois des noms de serveurs, statuts de pilote ou commandes historiques. Pour une nouvelle installation, recouper leurs détails avec le code de la release choisie et les validations de ce guide.
+
+
+## 18. Contrôle automatique bloquant d’un nouvel hôte
+
+L’ancien `setup.sh` refuse désormais toute exécution avec un message d’orientation : il ne doit plus modifier Docker, les comptes ou les domaines historiques. Les outils versionnés remplacent les commandes de préparation recopiées à la main.
+
+1. Identifier le commit de livraison. Exécuter les commandes depuis **ce checkout**, et installer les scripts de ce même checkout dans `/opt/pockethost-web` (root:root, non modifiables par les services). Les clés, données et fichiers `.env` restent propres au serveur.
+2. Installer les prérequis via `install-server-prerequisites.sh`. Il comprend notamment les exécutables `sqlite3` et `cpulimit`, ainsi que les dépendances Python et le plugin DNS Cloudflare ; il installe uniquement les paquets absents, sans mise à niveau globale.
+3. Préparer le moteur via `setup-web-hosting.sh` avec des budgets explicites. Terminer la configuration, les unités et les bundles décrits dans ce guide.
+4. Adapter [server-profile.example.json](../../packages/pockethost/scripts/server-profile.example.json), **sans secrets**, et le conserver dans le dossier opérateur du nouvel hôte. Les chiffres du modèle illustrent un hôte de 12 CPU / 31 Gio ; choisir `allocationMode` et recalculer les demandes du profil. En mode adaptatif, `siteMemoryGiB` représente une demande de démarrage prévue ; en mode fixe, compter les plafonds de tous les sites et auxiliaires. Les demandes par application et les marges sont détaillées dans [la politique d’allocation](../../WEB_RESOURCE_ALLOCATION.md). Ne pas copier le profil sans inventorier l’hôte.
+5. Lancer le contrôle en lecture seule en tant que root :
+
+```bash
+sudo python3 packages/pockethost/scripts/check-server-readiness.py \
+  --profile /etc/kolab/<IDENTIFIANT_SERVEUR>/server-profile.json
+```
+
+Le code de sortie est **1 dès qu’un contrôle échoue ou que l’inspection est incomplète**. Le JSON contient les résultats sans valeurs de secrets ni sortie brute des commandes. Corriger puis relancer ; ne pas masquer l’échec avec `|| true`. Les contrôles portent sur les outils de restauration, Node, les empreintes des scripts worker/reprise/relais/collecteur, les permissions, les budgets configurés et effectifs du parent, le moteur rootless, les services de supervision/reprise, SSH, les entrées Docker IPv4/IPv6 et les ports internes. Les règles `Match` SSH nécessitent en complément leur contrôle contextuel.
+
+**Ce résultat n’est pas une réception fonctionnelle complète.** Il ne prouve ni un routage DNS/TLS extérieur, ni une livraison SMTP en boîte, ni une restauration réelle, ni le fonctionnement d’une application. Terminer les tests jetables du §14, le test des ports publics du §15 et le redémarrage du §16 avant de déclarer le serveur ouvert. Le contrôle ne démarre ni ne redémarre aucun service et n’active pas les limites PocketBase des projets.
+
+### Railpack reproductible
+
+[install-railpack.sh](../../packages/pockethost/scripts/install-railpack.sh) est maintenant versionné. Fournir les **binaires Linux amd64 décompressés** obtenus depuis les releases officielles Railpack et mise correspondant aux versions de `web_app_railpack.py` :
+
+```bash
+sudo bash packages/pockethost/scripts/install-railpack.sh \
+  --railpack /chemin/prive/railpack \
+  --mise /chemin/prive/mise
+```
+
+L’installateur utilise directement les empreintes du worker, valide les deux binaires avant installation et écrit des fichiers root:root 0755 dans des répertoires protégés. Aucune archive, aucun téléchargement implicite, aucune exécution de binaire ni redémarrage de service. Le frontend épinglé reste préchargé selon la procédure du builder ; le test de construction prouve sa disponibilité. Pour l’option `INSTALL_RAILPACK=1` du préparateur, fournir `RAILPACK_BINARY_SOURCE` et `MISE_BINARY_SOURCE`.
+
+### Régressions exécutées en CI
+
+Le job `server-provisioning` vérifie la syntaxe des installateurs, les contrôles de réception, les runtimes, Railpack et le worker. Il couvre notamment le refus d’un budget d’admission insuffisant, les demandes adaptatives, la pression mémoire et les priorités, les prérequis oubliés, les scripts installés obsolètes, les binaires non conformes et les chemins de construction. Le job existant de fraîcheur des hooks empêche de publier un bundle PocketBase divergent de ses sources TypeScript. Ces tests automatiques complètent la recette sur un hôte Linux vierge ; ils ne la remplacent pas.

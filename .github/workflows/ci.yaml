@@ -64,3 +64,31 @@ jobs:
 
       - name: Verify pb_hooks matches TS source
         run: pnpm check:mothership-hooks
+
+  server-provisioning:
+    name: Server provisioning regressions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Shell syntax
+        run: |
+          bash -n setup.sh
+          bash -n packages/pockethost/scripts/install-server-prerequisites.sh
+          bash -n packages/pockethost/scripts/setup-web-hosting.sh
+          bash -n packages/pockethost/scripts/install-railpack.sh
+      - name: Server acceptance and hosting regressions
+        run: |
+          python3 packages/pockethost/scripts/test-server-readiness.py
+          python3 packages/pockethost/scripts/test-web-app-runtime.py
+          python3 packages/pockethost/scripts/test-web-app-allocation.py
+          python3 packages/pockethost/scripts/test-web-app-railpack.py
+          python3 packages/pockethost/scripts/test-web-app-worker.py
+      - name: Fresh Ubuntu prerequisites and disposable archive round trip
+        run: |
+          docker run --rm --volume "$GITHUB_WORKSPACE:/src:ro" ubuntu:24.04 bash -euc '
+            bash /src/packages/pockethost/scripts/install-server-prerequisites.sh
+            bash /src/packages/pockethost/scripts/install-server-prerequisites.sh
+            useradd --create-home kolab-check
+            runuser -u kolab-check -- python3 -B /src/packages/pockethost/scripts/check-server-archive.py
+          '

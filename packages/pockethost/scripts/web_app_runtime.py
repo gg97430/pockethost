@@ -15,6 +15,7 @@ NAME = re.compile(r'^[a-z][a-z0-9-]{0,30}$')
 DIGEST = re.compile(r'^(?:[a-z0-9.-]+(?::[0-9]{1,5})?/)?[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')
 RESERVE = 512 * 1024**2
 CGROUP_ROOT = pathlib.Path('/sys/fs/cgroup')
+PROC_MEMINFO = pathlib.Path('/proc/meminfo')
 COMPOSE_LIMITS = {'cpuMillicores': 4000, 'memoryMiB': 8192, 'pids': 512}
 DEPENDENCY_TIMEOUT_SECONDS = 120
 
@@ -58,11 +59,11 @@ def text(value):
     return value
 
 
-def quotas(value=None, compose=False):
+def quotas(value=None, compose=False, adaptive=False):
     value = value or {}
     if not isinstance(value, dict) or set(value) - {'cpuMillicores','memoryMiB','pids'}:
         raise RuntimeError('Quotas invalides.')
-    limits = COMPOSE_LIMITS if compose else {'cpuMillicores':1000,'memoryMiB':1536,'pids':512}
+    limits = COMPOSE_LIMITS if compose or adaptive else {'cpuMillicores':1000,'memoryMiB':1536,'pids':512}
     return {'cpuMillicores':number(value.get('cpuMillicores',500),50,limits['cpuMillicores']),
             'memoryMiB':number(value.get('memoryMiB',768),64,limits['memoryMiB']),
             'pids':number(value.get('pids',256),16,limits['pids'])}
@@ -74,14 +75,16 @@ def dependency_names(value):
 
 def validate_profile(value=None):
     value = value or {}
-    allowed = {'kind','port','dockerfile','image','command','entrypoint','registry','compose','resources','buildTarget','startCommand','buildCommand','pruneDependencies'}
+    allowed = {'kind','port','dockerfile','image','command','entrypoint','registry','compose','resources','buildTarget','startCommand','buildCommand','pruneDependencies','allocation','priority','memoryRequestMiB'}
     if not isinstance(value, dict) or set(value) - allowed:
         raise RuntimeError('Options de runtime non prises en charge.')
     kind = value.get('kind', 'nextjs')
     if kind not in KINDS: raise RuntimeError('Runtime inconnu.')
-    result = {**value, 'kind': kind, 'port': None if kind == 'worker' else number(value.get('port',3000),1,65535),
+    allocation=value.get('allocation','adaptive');priority=value.get('priority','normal')
+    if allocation not in ('adaptive','fixed') or priority not in ('low','normal','high'):raise RuntimeError('Politique d’allocation invalide.')
+    result = {**value, 'allocation':allocation, 'priority':priority, 'kind': kind, 'port': None if kind == 'worker' else number(value.get('port',3000),1,65535),
         'command': command(value.get('command')), 'entrypoint': command(value.get('entrypoint')),
-        'resources': quotas(value.get('resources'),kind=='compose')}
+        'resources': quotas(value.get('resources'),kind=='compose',allocation=='adaptive')}
     result['dockerfile'] = relative(value.get('dockerfile','Dockerfile'))
     image = value.get('image','')if kind in('image','worker')else''
     result['image']=image
@@ -110,6 +113,9 @@ def validate_profile(value=None):
         # Report the actual aggregate, also for older profiles whose explicit
         # service quotas already exceeded the default top-level budget.
         result['resources'] = {key:sum(item['resources'][key]for item in result['compose']['services'].values())for key in COMPOSE_LIMITS}
+    if allocation=='adaptive':
+        result['memoryRequestMiB']=number(value.get('memoryRequestMiB',min(256,result['resources']['memoryMiB']//2)),32,result['resources']['memoryMiB'])
+    elif value.get('memoryRequestMiB')is not None:raise RuntimeError('Demande mémoire réservée au mode adaptatif.')
     return result
 
 
@@ -212,21 +218,94 @@ def effective_cpu_millicores():
     return (os.cpu_count() or 2)*1000 if found else 2000
 
 
-def admit(docker, memory_mib=0, cpu_millicores=0, build=False):
-    constraints=effective_memory(); reserved=0; cpu=0
+class ResourcePressure(RuntimeError):
+    """Temporary pressure: a build may wait without stopping published containers."""
+
+
+def allocation_mode(value=None):
+    configured=os.environ.get('WEB_APPS_ALLOCATION_MODE','adaptive')
+    if configured not in ('adaptive','fixed') or value not in (None,'adaptive','fixed'):
+        raise RuntimeError('Politique d’allocation invalide.')
+    # An operator can restore conservative admission globally without rewriting profiles.
+    return 'fixed' if configured=='fixed' or value=='fixed' else 'adaptive'
+
+
+def memory_pressure(constraints):
+    for row in constraints:
+        path=pathlib.Path(row['scope'])/'memory.pressure'
+        try:
+            found=False
+            for line in path.read_text().splitlines():
+                parts=line.split()
+                if parts and parts[0]=='some':
+                    found=True
+                    average=float(dict(item.split('=',1)for item in parts[1:])['avg10'])
+                    if not 0<=average<=100:raise ValueError()
+                    if average>=10:return True
+            if not found:raise ValueError()
+        except FileNotFoundError:pass  # PSI is optional; live memory counters remain mandatory.
+        except (OSError,ValueError,KeyError):raise RuntimeError('Pression mémoire invérifiable.')from None
+    return False
+
+
+def host_memory():
+    try:
+        values={line.split(':',1)[0]:line.split(':',1)[1].split()for line in PROC_MEMINFO.read_text().splitlines()if ':'in line}
+        total,available=(int(values[key][0])*1024 for key in ('MemTotal','MemAvailable'))
+        if any(values[key][1]!='kB'for key in ('MemTotal','MemAvailable')) or not 0<=available<=total or total<=0:raise ValueError()
+        return {'totalBytes':total,'availableBytes':available}
+    except (OSError,ValueError,KeyError,IndexError):raise RuntimeError('Mémoire disponible du serveur invérifiable.')from None
+
+
+def resource_config(profile, resources):
+    """Memory is allocated on demand; reservations are soft protections, never guarantees."""
+    result={'NanoCpus':resources['cpuMillicores']*1000000,'Memory':resources['memoryMiB']*1024**2,
+            'MemorySwap':resources['memoryMiB']*1024**2,'PidsLimit':resources['pids']}
+    if allocation_mode(profile.get('allocation'))=='adaptive':
+        count=len(profile['compose']['services'])if profile['kind']=='compose'else 1
+        result['CpuShares']=max(2,{'low':256,'normal':1024,'high':2048}[profile.get('priority','normal')]//count)
+        result['MemoryReservation']=max(1,profile['memoryRequestMiB']*resources['memoryMiB']//profile['resources']['memoryMiB'])*1024**2
+    return result
+
+
+def admission_memory(profile):
+    if allocation_mode(profile.get('allocation'))!='adaptive':return profile['resources']['memoryMiB']
+    if profile['kind']=='compose':return sum(resource_config(profile,item['resources'])['MemoryReservation']//1024**2 for item in profile['compose']['services'].values())
+    return profile['memoryRequestMiB']
+
+
+def admit(docker, memory_mib=0, cpu_millicores=0, build=False, mode=None):
+    mode=allocation_mode(mode)
+    constraints=effective_memory(); reserved=0; requested=0; cpu=0
     ids=docker(['ps','-q','--filter','label=pockethost.web=true']).split()
     if ids:
         for info in json.loads(docker(['inspect',*ids])):
             host=info.get('HostConfig') or {}
             memory=host.get('Memory',0); nano=host.get('NanoCpus',0)
-            if not memory or not nano: raise RuntimeError('Admission refusée : un conteneur web n’a pas de quota explicite.')
-            reserved+=memory; cpu+=nano//1000000
+            if type(memory)is not int or memory<=0 or type(nano)is not int or nano<=0:
+                raise RuntimeError('Admission refusée : un conteneur web n’a pas de quota explicite.')
+            reservation=host.get('MemoryReservation')or memory
+            if type(reservation)is not int or not 0<reservation<=memory:raise RuntimeError('Réservation mémoire du service invalide.')
+            reserved+=memory;requested+=reservation;cpu+=nano//1000000
     build_mib,build_millicores=build_reservation() if build else (0,0)
     extra=(memory_mib+build_mib)*1024**2
-    if any(reserved+extra+RESERVE>row['limitBytes']or row['workingSetBytes']+extra+RESERVE>row['limitBytes']for row in constraints)or cpu+cpu_millicores+build_millicores>effective_cpu_millicores():
-        raise RuntimeError('Admission suspendue : capacité insuffisante dans le budget web. Arrêtez un site ou réessayez après la construction en cours.')
+    if mode=='fixed' and cpu_millicores+build_millicores>effective_cpu_millicores():
+        raise RuntimeError('Le plafond CPU demandé dépasse la capacité du groupe web.')
+    if mode=='fixed':
+        if any(reserved+extra+RESERVE>row['limitBytes']or row['workingSetBytes']+extra+RESERVE>row['limitBytes']for row in constraints)or cpu+cpu_millicores+build_millicores>effective_cpu_millicores():
+            raise RuntimeError('Admission suspendue : capacité insuffisante dans le budget web. Arrêtez un site ou réessayez après la construction en cours.')
+    else:
+        host=host_memory()
+        if host['availableBytes']<extra+max(1024**3,host['totalBytes']//10):
+            raise ResourcePressure('Admission différée : mémoire disponible du serveur insuffisante ; priorité aux services et aux bases de données.')
+        # Requests constrain admission; limits constrain peaks. Existing fixed
+        # containers retain their full commitment until explicitly redeployed.
+        if any(max(row['workingSetBytes'],requested)+extra+max(RESERVE,row['limitBytes']//10)>row['limitBytes']for row in constraints):
+            raise ResourcePressure('Admission différée : mémoire disponible insuffisante ; les sites publiés restent actifs.')
+        if extra and memory_pressure(constraints):
+            raise ResourcePressure('Admission différée : pression mémoire élevée ; attente avant de démarrer la nouvelle charge.')
     tightest=min(constraints,key=lambda row:row['limitBytes']-row['workingSetBytes'])
-    return {**tightest,'reservedBytes':reserved,'candidateBytes':extra,'constraints':constraints}
+    return {**tightest,'reservedBytes':reserved,'candidateBytes':extra,'requestedBytes':requested,'constraints':constraints,'allocation':mode}
 
 
 def loopback_port(root):
@@ -415,7 +494,7 @@ class RuntimeEngine:
         order=profile['compose']['order'] if profile['kind']=='compose' else ['web']
         public=profile['kind']!='worker'
         quota={key:sum(item['resources'][key] for item in services.values()) for key in ('cpuMillicores','memoryMiB','pids')}
-        admit(self.docker,quota['memoryMiB'],quota['cpuMillicores'])
+        admit(self.docker,admission_memory(profile),quota['cpuMillicores'],mode=profile['allocation'])
         tooling=prepare_tooling(self.docker)
         network=self.request('POST','/networks/create',{'Name':self.network,'Driver':'bridge','Internal':False,'Labels':{'pockethost.web':'true','pockethost.web.app':self.job.app,'pockethost.web.deployment':self.job.id}})['Id']
         result={'runtimeKind':profile['kind'],'public':public,'services':[],'images':{},'network':self.network,'storage':storage,'target':''}
@@ -446,8 +525,8 @@ class RuntimeEngine:
             from web_app_project_limits import admit as admit_project
             admit_project(self.root,self.job,self.docker,resources['memoryMiB'],resources['cpuMillicores'])
             config={'Image':current_image,'User':'10001:10001','Env':[key+'='+value for key,value in values.items()],
-                'Labels':{'pockethost.web':'true','pockethost.web.app':self.job.app,'pockethost.web.deployment':self.job.id,'pockethost.web.private-db':'false','pockethost.web.private-db.wait':'false','pockethost.web.service':name,'pockethost.web.front':str(is_front).lower(),'pockethost.web.tooling':tooling,'pockethost.web.healthpath':self.job.snapshot.get('config',{}).get('healthPath','/')},
-                'HostConfig':{'NetworkMode':self.network,'NanoCpus':resources['cpuMillicores']*1000000,'Memory':resources['memoryMiB']*1024**2,'MemorySwap':resources['memoryMiB']*1024**2,'PidsLimit':resources['pids'],
+                'Labels':{'pockethost.web':'true','pockethost.web.app':self.job.app,'pockethost.web.deployment':self.job.id,'pockethost.web.private-db':'false','pockethost.web.private-db.wait':'false','pockethost.web.service':name,'pockethost.web.front':str(is_front).lower(),'pockethost.web.allocation':allocation_mode(profile['allocation']),'pockethost.web.priority':profile['priority'],'pockethost.web.tooling':tooling,'pockethost.web.healthpath':self.job.snapshot.get('config',{}).get('healthPath','/')},
+                'HostConfig':{'NetworkMode':self.network,**resource_config(profile,resources),
                     'SecurityOpt':['no-new-privileges'],'CapDrop':['ALL'],'ReadonlyRootfs':True,'Mounts':mounts,'Tmpfs':{'/tmp':'rw,noexec,nosuid,size=128m,uid=10001,gid=10001'},'RestartPolicy':{'Name':'unless-stopped'},'LogConfig':{'Type':'json-file','Config':{'max-size':'10m','max-file':'3'}}},
                 'NetworkingConfig':{'EndpointsConfig':{self.network:{'Aliases':[name]}}}}
             if next_directory:config['HostConfig']['Tmpfs'][next_directory+'/cache']='rw,nosuid,uid=10001,gid=10001,size=128m'

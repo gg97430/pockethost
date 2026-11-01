@@ -17,6 +17,7 @@ DIGEST='ghcr.io/owner/site@sha256:'+'c'*64
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
+        self.policy=patch.dict(os.environ,{'WEB_APPS_ALLOCATION_MODE':'fixed'});self.policy.start();self.addCleanup(self.policy.stop)
         self.temp=tempfile.TemporaryDirectory();self.root=pathlib.Path(self.temp.name).resolve()
     def tearDown(self):self.temp.cleanup()
     def memory(self,current,inactive=0,maximum=5120,scope='web'):

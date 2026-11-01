@@ -14,6 +14,9 @@
     command: string[]
     entrypoint: string[]
     resources: Resources
+    memoryRequestMiB?: number
+    allocation?: 'adaptive' | 'fixed'
+    priority?: 'low' | 'normal' | 'high'
     buildTarget?: string
     startCommand?: string
     buildCommand?: string
@@ -24,7 +27,13 @@
     profile: Profile
     revision: string
     registry: { server: string; username: string; hasPassword: boolean }
-    capabilities: { maxCpuMillicores: number; maxMemoryMiB: number; maxPids: number; railpackAvailable?: boolean }
+    capabilities: {
+      maxCpuMillicores: number
+      maxMemoryMiB: number
+      maxPids: number
+      railpackAvailable?: boolean
+      allocationMode?: string
+    }
   }
   type Preview = {
     profile: Profile
@@ -40,6 +49,9 @@
     message = '',
     disposed = false,
     dirty = false
+  let allocation: 'adaptive' | 'fixed' = 'adaptive'
+  let priority: 'low' | 'normal' | 'high' = 'normal'
+  let memoryRequest = 256
   let kind = 'nextjs',
     port = 3000,
     dockerfile = 'Dockerfile',
@@ -76,7 +88,10 @@
     image: 'Image',
     command: 'Commande',
     entrypoint: 'Entrypoint',
-    resources: 'Quotas',
+    resources: 'Plafonds de sécurité',
+    allocation: 'Allocation des ressources',
+    memoryRequestMiB: 'Mémoire habituelle',
+    priority: 'Priorité CPU',
     compose: 'Services',
     buildTarget: 'Étape de construction',
     startCommand: 'Commande de démarrage',
@@ -113,6 +128,9 @@
     startCommand = profile.startCommand || ''
     buildCommand = profile.buildCommand || ''
     pruneDependencies = !!profile.pruneDependencies
+    allocation = profile.allocation || 'adaptive'
+    priority = profile.priority || 'normal'
+    memoryRequest = profile.memoryRequestMiB ?? Math.min(256, Math.floor(profile.resources.memoryMiB / 2))
     cpu = profile.resources.cpuMillicores
     memory = profile.resources.memoryMiB
     pids = profile.resources.pids
@@ -150,6 +168,9 @@
     image: kind === 'worker' && workerSource === 'dockerfile' ? '' : image,
     command: kind === 'auto' ? [] : argumentsOf(commandText),
     entrypoint: kind === 'auto' ? [] : argumentsOf(entrypointText),
+    allocation,
+    priority,
+    ...(allocation === 'adaptive' ? { memoryRequestMiB: Number(memoryRequest) } : {}),
     resources: { cpuMillicores: Number(cpu), memoryMiB: Number(memory), pids: Number(pids) },
     ...(buildTarget && kind !== 'auto' ? { buildTarget } : {}),
     ...(kind === 'auto' && startCommand.trim() ? { startCommand: startCommand.trim() } : {}),
@@ -390,23 +411,69 @@
               ></textarea></label
             >
           </div>{/if}
+        {#if allocation === 'adaptive' && value.capabilities.allocationMode === 'fixed'}<div class="web-alert">
+            Le serveur impose actuellement l’admission fixe. Les plafonds complets seront comptés tant que
+            l’administrateur maintient ce réglage.
+          </div>{/if}
+        {#if allocation === 'adaptive' && value.capabilities.allocationMode === 'unknown'}<div class="web-alert">
+            Le worker doit être mis à jour pour confirmer la prise en charge de l’allocation adaptative.
+          </div>{/if}
+        <div class="profile-note">
+          <div class="web-form-grid">
+            <label class="web-field"
+              ><span>Allocation des ressources</span><select bind:value={allocation} disabled={!!busy}>
+                <option value="adaptive">Adaptative · partage selon les besoins</option>
+                <option value="fixed">Fixe · admission sur la somme des plafonds</option>
+              </select></label
+            >
+            {#if allocation === 'adaptive'}<label class="web-field"
+                ><span>Priorité CPU en cas de concurrence</span><select bind:value={priority} disabled={!!busy}>
+                  <option value="low">Basse</option><option value="normal">Normale</option><option value="high"
+                    >Haute</option
+                  >
+                </select></label
+              >
+              <label class="web-field"
+                ><span>Mémoire habituelle · Mio</span><input
+                  type="number"
+                  bind:value={memoryRequest}
+                  min="32"
+                  max={kind === 'compose' ? 8192 : memory}
+                  step="1"
+                  required
+                  disabled={!!busy}
+                /><span class="web-help"
+                  >Base utilisée pour l’admission, distincte du plafond de pointe. Pour des services groupés, elle
+                  couvre l’ensemble des services.</span
+                ></label
+              >{/if}
+          </div>
+          <p class="web-help">
+            {allocation === 'adaptive'
+              ? 'Le projet peut dépasser sa mémoire habituelle si de la capacité est disponible, jusqu’à son plafond de pointe. La mémoire habituelle sert à l’admission ; elle ne garantit pas une allocation physique. Les constructions patientent jusqu’à 120 secondes en cas de pression mémoire. Augmentez le plafond si votre projet en a besoin ; des pics simultanés peuvent toujours saturer le budget global.'
+              : 'Le serveur compte les plafonds des services avant d’accepter une nouvelle charge. Une capacité inutilisée peut donc bloquer un déploiement.'}
+          </p>
+          <p class="web-help">
+            Un nouveau déploiement est nécessaire pour appliquer le mode et la priorité aux conteneurs.
+          </p>
+        </div>
         {#if kind !== 'compose'}<fieldset class="profile-quota">
-            <legend>Ressources de cette application</legend><label class="web-field"
-              ><span>CPU · millicœurs</span><input
+            <legend>Plafonds de sécurité de cette application</legend><label class="web-field"
+              ><span>CPU maximum · millicœurs</span><input
                 type="number"
                 bind:value={cpu}
                 min="50"
-                max={value.capabilities.maxCpuMillicores}
+                max={allocation === 'fixed' ? 1000 : value.capabilities.maxCpuMillicores}
                 step="50"
                 required
                 disabled={!!busy}
               /><span class="web-help">1 000 millicœurs = un cœur.</span></label
             ><label class="web-field"
-              ><span>Mémoire · Mio</span><input
+              ><span>RAM maximale · Mio</span><input
                 type="number"
                 bind:value={memory}
                 min="64"
-                max={value.capabilities.maxMemoryMiB}
+                max={allocation === 'fixed' ? 1536 : value.capabilities.maxMemoryMiB}
                 step="1"
                 required
                 disabled={!!busy}

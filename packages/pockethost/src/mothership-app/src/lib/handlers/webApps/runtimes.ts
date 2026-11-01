@@ -39,7 +39,7 @@ const text = (value: any) => {
     throw new BadRequestError('Commande de démarrage ou de construction invalide (une ligne, 1000 caractères maximum).')
   return value
 }
-const quota = (value: any = {}, compose = false) => {
+const quota = (value: any = {}, compose = false, adaptive = false) => {
   if (
     !value ||
     typeof value !== 'object' ||
@@ -48,8 +48,8 @@ const quota = (value: any = {}, compose = false) => {
   )
     throw new BadRequestError('Quotas invalides.')
   return {
-    cpuMillicores: integer(value.cpuMillicores ?? 500, 50, compose ? composeLimits.cpuMillicores : 1000),
-    memoryMiB: integer(value.memoryMiB ?? 768, 64, compose ? composeLimits.memoryMiB : 1536),
+    cpuMillicores: integer(value.cpuMillicores ?? 500, 50, compose || adaptive ? composeLimits.cpuMillicores : 1000),
+    memoryMiB: integer(value.memoryMiB ?? 768, 64, compose || adaptive ? composeLimits.memoryMiB : 1536),
     pids: integer(value.pids ?? 256, 16, 512),
   }
 }
@@ -69,6 +69,9 @@ export const validateRuntimeProfile = (input: any = {}) => {
           'entrypoint',
           'compose',
           'resources',
+          'allocation',
+          'memoryRequestMiB',
+          'priority',
           'buildTarget',
           'startCommand',
           'buildCommand',
@@ -79,14 +82,20 @@ export const validateRuntimeProfile = (input: any = {}) => {
     throw new BadRequestError('Profil de runtime invalide.')
   const kind = input.kind || 'nextjs'
   if (!kinds.includes(kind)) throw new BadRequestError('Runtime inconnu.')
+  const allocation = input.allocation === undefined ? 'adaptive' : input.allocation,
+    priority = input.priority === undefined ? 'normal' : input.priority
+  if (!['adaptive', 'fixed'].includes(allocation) || !['low', 'normal', 'high'].includes(priority))
+    throw new BadRequestError('Politique d’allocation invalide.')
   const profile: any = {
     kind,
+    allocation,
+    priority,
     port: kind === 'worker' ? null : integer(input.port ?? 3000, 1, 65535),
     dockerfile: relative(input.dockerfile || 'Dockerfile'),
     image: ['image', 'worker'].includes(kind) ? input.image || '' : '',
     command: command(input.command),
     entrypoint: command(input.entrypoint),
-    resources: quota(input.resources, kind === 'compose'),
+    resources: quota(input.resources, kind === 'compose', allocation === 'adaptive'),
   }
   if ((kind === 'image' || kind === 'worker') && profile.image && !webImageDigestValid(profile.image))
     throw new BadRequestError('Image attendue avec @sha256 et un digest complet.')
@@ -263,6 +272,16 @@ export const validateRuntimeProfile = (input: any = {}) => {
       ])
     )
   }
+  if (allocation === 'adaptive')
+    profile.memoryRequestMiB = integer(
+      input.memoryRequestMiB === undefined
+        ? Math.min(256, Math.floor(profile.resources.memoryMiB / 2))
+        : input.memoryRequestMiB,
+      32,
+      profile.resources.memoryMiB
+    )
+  else if (input.memoryRequestMiB !== undefined && input.memoryRequestMiB !== null)
+    throw new BadRequestError('Demande mémoire réservée au mode adaptatif.')
   return profile
 }
 const rowOf = (app: core.Record, store: any = $app) =>
@@ -292,11 +311,12 @@ const view = (app: core.Record, canConfigure: boolean) => {
     capabilities: {
       kinds,
       maxServices: 4,
-      maxCpuMillicores: profile.kind === 'compose' ? composeLimits.cpuMillicores : 1000,
-      maxMemoryMiB: profile.kind === 'compose' ? composeLimits.memoryMiB : 1536,
+      maxCpuMillicores: composeLimits.cpuMillicores,
+      maxMemoryMiB: composeLimits.memoryMiB,
       maxPids: 512,
       hostBindings: false,
       railpackAvailable: webAppsCapability().railpackAvailable,
+      allocationMode: webAppsCapability().allocationMode,
     },
   }
 }
@@ -395,6 +415,11 @@ export const HandleWebRuntimePreview = (e: core.RequestEvent) => {
     strategy,
     resources,
     warnings: [
+      ...(profile.allocation === 'adaptive'
+        ? [
+            'Les ressources sont partagées à la demande, dans les plafonds indiqués. Ces plafonds ne sont pas des réservations garanties ; des pics simultanés peuvent provoquer une saturation.',
+          ]
+        : []),
       ...(strategy === 'recreate'
         ? [
             'Les volumes en écriture imposent une pause des services au démarrage de la nouvelle version. Le code précédent ne restaure pas automatiquement un ancien schéma de données.',

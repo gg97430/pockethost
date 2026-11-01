@@ -297,11 +297,10 @@ class ReadyTests(Base):
 
 class ConstantTests(unittest.TestCase):
  def test_10_install_script_matches_constants(self):
-  path=os.environ.get('RAILPACK_INSTALL_SCRIPT','')
-  if not path or not pathlib.Path(path).is_file():self.skipTest('RAILPACK_INSTALL_SCRIPT absent')
-  values=dict(re.findall(r'^([A-Z_0-9]+)=(\S+)$',pathlib.Path(path).read_text(),re.M))
-  self.assertEqual(values['RAILPACK_VERSION'],rp.RAILPACK['version']);self.assertEqual(values['RAILPACK_BIN_SHA256'],rp.RAILPACK['sha256'])
-  self.assertEqual(values['MISE_VERSION'],rp.RAILPACK['mise']);self.assertEqual(values['MISE_BIN_SHA256'],rp.RAILPACK['miseSha256']);self.assertEqual(values['FRONTEND_REF'],rp.RAILPACK['frontend'])
+  # The versioned installer imports the worker's pins: no duplicated constants.
+  path=pathlib.Path(__file__).with_name('install-railpack.py')
+  self.assertTrue(path.is_file())
+  self.assertIn('from web_app_railpack import RAILPACK',path.read_text())
   self.assertTrue(rp.RAILPACK['binary'].endswith('/bin/railpack'));self.assertTrue(rp.RAILPACK['miseBinary'].endswith('/mise-'+rp.RAILPACK['mise']))
 
 

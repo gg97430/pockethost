@@ -63,7 +63,7 @@ def builder_options():
  cpus=os.environ.get('WEB_APPS_BUILD_CPUS','1').strip();memory=os.environ.get('WEB_APPS_BUILD_MEMORY','3g').strip().lower()
  if not re.fullmatch(r'[0-9]{1,2}(\.[0-9])?',cpus) or not 0.5<=float(cpus)<=32:raise RuntimeError('WEB_APPS_BUILD_CPUS invalide (0.5 à 32).')
  if not re.fullmatch(r'[1-9][0-9]{0,4}[mg]',memory):raise RuntimeError('WEB_APPS_BUILD_MEMORY invalide (ex. 3g).')
- wanted={'memory':memory,'cpu-period':'100000','cpu-quota':str(int(float(cpus)*100000)),'network':BUILDER_NETWORK}
+ wanted={'memory':memory,'cpu-period':'100000','cpu-quota':str(int(float(cpus)*100000)),'cpu-shares':'128','memory-swap':memory,'network':BUILDER_NETWORK}
  image=os.environ.get('WEB_APPS_BUILDKIT_IMAGE','').strip()
  if image:
   if not re.fullmatch(r'moby/buildkit@sha256:[a-f0-9]{64}',image):raise RuntimeError('WEB_APPS_BUILDKIT_IMAGE invalide (digest officiel requis).')
@@ -88,6 +88,8 @@ def secure_builder_definition():
   node['Flags']=BUILDER_FLAGS.copy();atomic(path,value);path.chmod(0o600)
 
 def prerequisites():
+ from web_app_runtime import allocation_mode
+ allocation_mode()
  validate_socket(SOCKET)
  info=json.loads(docker(['info','--format','{{json .}}']))
  if not any('rootless' in x for x in info.get('SecurityOptions',[])):raise RuntimeError('Le moteur Docker doit être rootless.')
@@ -118,16 +120,16 @@ def prerequisites():
  if len(ids)!=1:raise RuntimeError('Builder isolé introuvable.')
  inspected=json.loads(docker(['inspect',ids[0]]))[0];config=inspected['HostConfig']
  memory=int(wanted['memory'][:-1])*1024**(3 if wanted['memory'].endswith('g') else 2)
- if config.get('Memory')!=memory or config.get('CpuQuota')!=int(wanted['cpu-quota']) or config.get('CpuPeriod')!=100000 or config.get('NetworkMode')!=BUILDER_NETWORK:raise RuntimeError('Les quotas ou le réseau du builder ne sont pas appliqués.')
+ if config.get('Memory')!=memory or config.get('CpuQuota')!=int(wanted['cpu-quota']) or config.get('CpuPeriod')!=100000 or config.get('CpuShares')!=128 or config.get('MemorySwap')!=memory or config.get('NetworkMode')!=BUILDER_NETWORK:raise RuntimeError('Les quotas ou le réseau du builder ne sont pas appliqués.')
  if inspected.get('Config',{}).get('Cmd')!=BUILDER_FLAGS:raise RuntimeError('Les permissions du builder ne sont pas restreintes.')
  if wanted.get('image'):
   expected=json.loads(docker(['image','inspect',wanted['image']]))[0]
   if inspected.get('Image')!=expected.get('Id'):raise RuntimeError("L’image du builder ne correspond pas au digest configuré.")
  return True
 
-def admit_resources(memory_mib=0,cpu_millicores=0,build=False):
+def admit_resources(memory_mib=0,cpu_millicores=0,build=False,mode=None):
  from web_app_runtime import admit
- return admit(docker,memory_mib,cpu_millicores,build)
+ return admit(docker,memory_mib,cpu_millicores,build,mode)
 
 def resources():
  admit_resources()
@@ -317,6 +319,17 @@ class Job:
   context=web_app_git.fetch_git(git,folder,log=self.log,run=run,commit=self.value.get('commit',''),root=ROOT)
   self.heartbeat(True);return context
 
+ def wait_resources(self,build=False,timeout=120):
+  from web_app_runtime import ResourcePressure
+  deadline=time.monotonic()+timeout;announced=False
+  while True:
+   try:return admit_resources(build=build)
+   except ResourcePressure:
+    self.heartbeat(True)  # Cancellation and lease renewal continue while waiting.
+    if time.monotonic()>=deadline:raise ResourcePressure('Capacité toujours insuffisante après 120 s d’attente. Réessayez plus tard ; les sites publiés sont conservés.')from None
+    if not announced:self.log('Attente de ressources : priorité aux sites publiés, contrôle toutes les 5 secondes (120 s maximum).\n');announced=True
+    time.sleep(5)
+
  def build(self,context,work):
   from web_app_runtime import RuntimeEngine,validate_profile
   profile=validate_profile(self.snapshot.get('runtime'))
@@ -326,12 +339,12 @@ class Job:
     images={}
     for name in profile['compose']['order']:
      item=profile['compose']['services'][name]
-     if not item.get('image'):admit_resources(build=True)
+     if not item.get('image'):self.wait_resources(build=True)
      images[name]=engine.build(context,work,{**item,'_service':name})
     return images
-   if not profile.get('image'):admit_resources(build=True)
+   if not profile.get('image'):self.wait_resources(build=True)
    return engine.build(context,work)
-  admit_resources(build=True)
+  self.wait_resources(build=True)
   cfg=self.snapshot['config'];relative=cfg.get('rootDirectory') or '.';app=context/relative
   if not app.resolve().is_relative_to(context.resolve()):raise RuntimeError('Dossier du projet invalide.')
   package=json.loads((app/'package.json').read_text())
@@ -397,7 +410,7 @@ class Job:
 
  def start(self,image):
   self.stage('start')
-  from web_app_runtime import RuntimeEngine,validate_profile,loopback_port
+  from web_app_runtime import RuntimeEngine,validate_profile,loopback_port,resource_config,admission_memory,allocation_mode
   profile=validate_profile(self.snapshot.get('runtime'))
   if profile['kind']!='nextjs':
    from web_app_project_limits import admit as admit_project
@@ -411,7 +424,7 @@ class Job:
       with self.blocking_heartbeat():ensure_backup_image(ROOT,ref,self.app,docker,max_seconds=max(1,1800-(time.monotonic()-self.started)))
    self.runtime_engine=RuntimeEngine(self,docker,docker_json,ROOT,SOCKET)
    with self.blocking_heartbeat():return self.runtime_engine.start(image,self.snapshot.get('storage',[]))
-  admit_resources(profile['resources']['memoryMiB'],profile['resources']['cpuMillicores'])
+  admit_resources(admission_memory(profile),profile['resources']['cpuMillicores'],mode=profile['allocation'])
   if self.value.get('action')=='restore-backup' or image.startswith('sha256:'):
    from web_app_backup_s3 import ensure_backup_image
    with self.blocking_heartbeat():ensure_backup_image(ROOT,image,self.app,docker,max_seconds=max(1,1800-(time.monotonic()-self.started)))
@@ -427,7 +440,7 @@ class Job:
   nextdir='/app/'+str(pathlib.PurePosixPath(serverdir)/'.next')
   volume='ph-web-next-'+self.app+'-'+self.id
   docker(['volume','create','--label','pockethost.web=true','--label','pockethost.web.app='+self.app,'--label','pockethost.web.deployment='+self.id,volume])
-  values={k:v['value']for k,v in self.snapshot.get('env',{}).items()if v.get('runtime')};values.update(NODE_ENV='production',HOSTNAME='0.0.0.0',PORT='3000',NODE_OPTIONS='--max-old-space-size='+str(max(32,min(512,profile['resources']['memoryMiB']*2//3))))
+  values={k:v['value']for k,v in self.snapshot.get('env',{}).items()if v.get('runtime')};values.update(NODE_ENV='production',HOSTNAME='0.0.0.0',PORT='3000',NODE_OPTIONS='--max-old-space-size='+str(max(32,min(4096,profile['resources']['memoryMiB']*2//3))))
   if any(not isinstance(v,str)or '\x00'in v for v in values.values()):raise RuntimeError('Valeur d’environnement invalide.')
   # Send an Env JSON array through the dedicated Unix socket. Newlines stay literal;
   # values never become host process environment, argv, temp files or image layers.
@@ -437,12 +450,13 @@ class Job:
   config={'Image':verified_image,'User':'10001:10001','Env':[k+'='+v for k,v in values.items()],
    'Labels':{'pockethost.web':'true','pockethost.web.app':self.app,'pockethost.web.deployment':self.id,'pockethost.web.private-db':'false','pockethost.web.private-db.wait':'false','pockethost.web.healthpath':self.snapshot['config'].get('healthPath','/')},
    'ExposedPorts':{'3000/tcp':{}},'HostConfig':{
-    'NetworkMode':network,'NanoCpus':profile['resources']['cpuMillicores']*1000000,'Memory':profile['resources']['memoryMiB']*1024**2,'MemorySwap':profile['resources']['memoryMiB']*1024**2,'PidsLimit':profile['resources']['pids'],
+    'NetworkMode':network,**resource_config(profile,profile['resources']),
     'SecurityOpt':['no-new-privileges'],'CapDrop':['ALL'],'ReadonlyRootfs':True,
     'Mounts':[{'Type':'volume','Source':volume,'Target':nextdir}],
     'Tmpfs':{'/tmp':'rw,noexec,nosuid,size=128m',cache:'rw,nosuid,uid=10001,gid=10001,size=128m'},
     'RestartPolicy':{'Name':'unless-stopped'},'LogConfig':{'Type':'json-file','Config':{'max-size':'10m','max-file':'3'}},
     'PortBindings':{'3000/tcp':[{'HostIp':'127.0.0.1','HostPort':host_port}]}}}
+  config['Labels'].update({'pockethost.web.allocation':allocation_mode(profile['allocation']),'pockethost.web.priority':profile['priority']})
   from web_app_storage import prepare_mounts
   config['HostConfig']['Mounts']+=prepare_mounts(ROOT,self.app,self.snapshot.get('storage',[]),None,docker)
   from web_app_private_db import prepare_app,attach_app
@@ -720,7 +734,7 @@ class Job:
    elif action in ['rollback','start','apply-runtime','restore-backup']:
     previous=self.snapshot.get('rollbackResult',{});result=self.start(previous.get('images')if profile['kind']=='compose'else previous.get('image',''))
    else:
-    resources();fingerprint=self.build_fingerprint(profile)
+    self.wait_resources();resources();fingerprint=self.build_fingerprint(profile)
     if self.snapshot.get('fullRebuild') is True:reused='';self.log('Reconstruction complète demandée : aucune image réutilisée, cache de construction ignoré.\n')
     else:reused=self.reusable_image(fingerprint)
     if reused:
@@ -819,6 +833,8 @@ def reconcile():
  (ROOT/'current-job.json').unlink(missing_ok=True)
 
 def main():
+ allocation_label=os.environ.get('WEB_APPS_ALLOCATION_MODE','adaptive')
+ if allocation_label not in ('adaptive','fixed'):allocation_label='unknown'
  if not re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{3,4}',CONTROL)or not 1024<=int(CONTROL.rsplit(':',1)[1])<=65535 or len(SECRET)<32:raise RuntimeError('Configuration locale du worker invalide.')
  if ROOT.resolve()!=ROOT:raise RuntimeError('Répertoire du worker symbolique refusé.')
  ROOT.mkdir(parents=True,exist_ok=True,mode=0o750)
@@ -860,7 +876,7 @@ def main():
     if 'backups'not in background:
      background['backups']=threading.Thread(target=backup_loop,name='web-backups',daemon=True);background['backups'].start()
    reconcile();warning=check_runtime_budgets();publish_runtime_stats()
-   atomic(ROOT/'worker-status.json',{'ready':ready,'rootless':ready,'checkedAt':stamp(),'error':warning,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS,'httpsReady':bool(re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',os.environ.get('WEB_APPS_CERT_EMAIL',''))and shutil.which('certbot'))})
+   atomic(ROOT/'worker-status.json',{'ready':ready,'rootless':ready,'allocationMode':allocation_label,'checkedAt':stamp(),'error':warning,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS,'httpsReady':bool(re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',os.environ.get('WEB_APPS_CERT_EMAIL',''))and shutil.which('certbot'))})
    try:
     from web_app_storage import tick as storage_tick
     if storage_tick(ROOT,api,docker):time.sleep(1);continue
@@ -913,7 +929,7 @@ def main():
     if acknowledged:continue
   except Exception as e:
    message=str(e) if isinstance(e,RuntimeError) else 'Worker indisponible : vérifiez le moteur dédié et la connexion locale.'
-   atomic(ROOT/'worker-status.json',{'ready':False,'rootless':ready,'checkedAt':stamp(),'error':message,'railpack':RAILPACK_TOOLS})
+   atomic(ROOT/'worker-status.json',{'ready':False,'rootless':ready,'allocationMode':allocation_label,'checkedAt':stamp(),'error':message,'railpack':RAILPACK_TOOLS})
   time.sleep(5)
 
 if __name__=='__main__':main()

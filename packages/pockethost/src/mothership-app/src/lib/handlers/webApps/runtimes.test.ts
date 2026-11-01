@@ -42,8 +42,12 @@ describe('bounded Compose service resources and dependencies', () => {
     expect(value.resources).toEqual({ cpuMillicores: 2500, memoryMiB: 2816, pids: 512 })
     expect(value.compose.services.app.depends_on).toEqual({ typesense: { condition: 'service_healthy' } })
     expect(value.compose.services.typesense.healthcheck.startPeriodSeconds).toBe(10)
-    expect(() => validateRuntimeProfile({ kind: 'dockerfile', resources: { cpuMillicores: 1001 } })).toThrow()
-    expect(() => validateRuntimeProfile({ kind: 'nextjs', resources: { memoryMiB: 1537 } })).toThrow()
+    expect(() =>
+      validateRuntimeProfile({ kind: 'dockerfile', allocation: 'fixed', resources: { cpuMillicores: 1001 } })
+    ).toThrow()
+    expect(() =>
+      validateRuntimeProfile({ kind: 'nextjs', allocation: 'fixed', resources: { memoryMiB: 1537 } })
+    ).toThrow()
   })
 
   it.each(['cpuMillicores', 'memoryMiB', 'pids'] as const)('rejects a sum above the group %s ceiling', (field) => {
@@ -87,6 +91,35 @@ describe('bounded Compose service resources and dependencies', () => {
       const source: any = compose()
       Object.assign(source.compose.services.typesense, extra)
       expect(() => validateRuntimeProfile(source)).toThrow()
+    }
+  })
+})
+
+describe('adaptive allocation profiles', () => {
+  it('defaults to adaptive without increasing existing safety ceilings', () => {
+    const profile = validateRuntimeProfile({ resources: { cpuMillicores: 500, memoryMiB: 768 } })
+    expect(profile.allocation).toBe('adaptive')
+    expect(profile.priority).toBe('normal')
+    expect(profile.resources).toEqual({ cpuMillicores: 500, memoryMiB: 768, pids: 256 })
+    expect(validateRuntimeProfile(profile)).toEqual(profile)
+  })
+  it('allows bounded larger peaks and rejects invalid policies', () => {
+    expect(
+      validateRuntimeProfile({
+        allocation: 'adaptive',
+        priority: 'high',
+        resources: { cpuMillicores: 4000, memoryMiB: 8192 },
+      }).resources.memoryMiB
+    ).toBe(8192)
+    for (const profile of [
+      { allocation: 'unlimited' },
+      { allocation: false },
+      { priority: 'root' },
+      { priority: null },
+      { resources: { cpuMillicores: 4001 } },
+      { resources: { memoryMiB: 8193 } },
+    ]) {
+      expect(() => validateRuntimeProfile(profile)).toThrow()
     }
   })
 })

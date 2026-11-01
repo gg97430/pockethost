@@ -4752,15 +4752,15 @@ const text$1 = (value) => {
 	if (typeof value !== "string" || value.length > 1e3 || /[\0\r\n]/.test(value)) throw new BadRequestError("Commande de démarrage ou de construction invalide (une ligne, 1000 caractères maximum).");
 	return value;
 };
-const quota = (value = {}, compose = false) => {
+const quota = (value = {}, compose = false, adaptive = false) => {
 	if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((k) => ![
 		"cpuMillicores",
 		"memoryMiB",
 		"pids"
 	].includes(k))) throw new BadRequestError("Quotas invalides.");
 	return {
-		cpuMillicores: integer(value.cpuMillicores ?? 500, 50, compose ? composeLimits.cpuMillicores : 1e3),
-		memoryMiB: integer(value.memoryMiB ?? 768, 64, compose ? composeLimits.memoryMiB : 1536),
+		cpuMillicores: integer(value.cpuMillicores ?? 500, 50, compose || adaptive ? composeLimits.cpuMillicores : 1e3),
+		memoryMiB: integer(value.memoryMiB ?? 768, 64, compose || adaptive ? composeLimits.memoryMiB : 1536),
 		pids: integer(value.pids ?? 256, 16, 512)
 	};
 };
@@ -4774,6 +4774,9 @@ const validateRuntimeProfile = (input = {}) => {
 		"entrypoint",
 		"compose",
 		"resources",
+		"allocation",
+		"memoryRequestMiB",
+		"priority",
 		"buildTarget",
 		"startCommand",
 		"buildCommand",
@@ -4781,14 +4784,22 @@ const validateRuntimeProfile = (input = {}) => {
 	].includes(k))) throw new BadRequestError("Profil de runtime invalide.");
 	const kind = input.kind || "nextjs";
 	if (!kinds.includes(kind)) throw new BadRequestError("Runtime inconnu.");
+	const allocation = input.allocation === void 0 ? "adaptive" : input.allocation, priority = input.priority === void 0 ? "normal" : input.priority;
+	if (!["adaptive", "fixed"].includes(allocation) || ![
+		"low",
+		"normal",
+		"high"
+	].includes(priority)) throw new BadRequestError("Politique d’allocation invalide.");
 	const profile = {
 		kind,
+		allocation,
+		priority,
 		port: kind === "worker" ? null : integer(input.port ?? 3e3, 1, 65535),
 		dockerfile: relative(input.dockerfile || "Dockerfile"),
 		image: ["image", "worker"].includes(kind) ? input.image || "" : "",
 		command: command$2(input.command),
 		entrypoint: command$2(input.entrypoint),
-		resources: quota(input.resources, kind === "compose")
+		resources: quota(input.resources, kind === "compose", allocation === "adaptive")
 	};
 	if ((kind === "image" || kind === "worker") && profile.image && !webImageDigestValid(profile.image)) throw new BadRequestError("Image attendue avec @sha256 et un digest complet.");
 	if (kind === "image" && !profile.image) throw new BadRequestError("Image immuable requise.");
@@ -4881,6 +4892,8 @@ const validateRuntimeProfile = (input = {}) => {
 		};
 		profile.resources = Object.fromEntries(Object.keys(composeLimits).map((key) => [key, Object.values(services).reduce((total, service) => total + service.resources[key], 0)]));
 	}
+	if (allocation === "adaptive") profile.memoryRequestMiB = integer(input.memoryRequestMiB === void 0 ? Math.min(256, Math.floor(profile.resources.memoryMiB / 2)) : input.memoryRequestMiB, 32, profile.resources.memoryMiB);
+	else if (input.memoryRequestMiB !== void 0 && input.memoryRequestMiB !== null) throw new BadRequestError("Demande mémoire réservée au mode adaptatif.");
 	return profile;
 };
 const rowOf = (app, store = $app) => store.findRecordsByFilter(COLLECTION$6, "appId={:id}", "", 1, 0, { id: app.id })[0];
@@ -4897,9 +4910,9 @@ const runtimeWorkerSnapshot = (app, store = $app) => {
 };
 /** Serveur et compte du registre : app.configure seulement (mêmes champs vides pour les autres rôles). */
 const view$1 = (app, canConfigure) => {
-	const row = rowOf(app), registry = canConfigure && row?.getString("registryEncrypted") ? decryptWebValue(row.getString("registryEncrypted")) : {}, profile = runtimeProfile(app);
+	const row = rowOf(app), registry = canConfigure && row?.getString("registryEncrypted") ? decryptWebValue(row.getString("registryEncrypted")) : {};
 	return {
-		profile,
+		profile: runtimeProfile(app),
 		revision: row?.getString("revision") || "",
 		registry: {
 			server: registry.server || "",
@@ -4909,11 +4922,12 @@ const view$1 = (app, canConfigure) => {
 		capabilities: {
 			kinds,
 			maxServices: 4,
-			maxCpuMillicores: profile.kind === "compose" ? composeLimits.cpuMillicores : 1e3,
-			maxMemoryMiB: profile.kind === "compose" ? composeLimits.memoryMiB : 1536,
+			maxCpuMillicores: composeLimits.cpuMillicores,
+			maxMemoryMiB: composeLimits.memoryMiB,
 			maxPids: 512,
 			hostBindings: false,
-			railpackAvailable: webAppsCapability().railpackAvailable
+			railpackAvailable: webAppsCapability().railpackAvailable,
+			allocationMode: webAppsCapability().allocationMode
 		}
 	};
 };
@@ -4987,6 +5001,7 @@ const HandleWebRuntimePreview = (e) => {
 		strategy,
 		resources,
 		warnings: [
+			...profile.allocation === "adaptive" ? ["Les ressources sont partagées à la demande, dans les plafonds indiqués. Ces plafonds ne sont pas des réservations garanties ; des pics simultanés peuvent provoquer une saturation."] : [],
 			...strategy === "recreate" ? ["Les volumes en écriture imposent une pause des services au démarrage de la nouvelle version. Le code précédent ne restaure pas automatiquement un ancien schéma de données."] : [],
 			...profile.kind === "worker" ? ["Ce profil ne publie pas de route HTTP."] : [],
 			...profile.kind === "auto" ? [
@@ -11120,6 +11135,7 @@ const capability = () => {
 		...webGithubCapability(),
 		gitAvailable: worker.git === true,
 		railpackAvailable: worker.railpack === true,
+		allocationMode: ["adaptive", "fixed"].includes(worker.allocationMode) ? worker.allocationMode : "unknown",
 		error: age < 6e4 ? worker.error || "" : "Worker non démarré.",
 		buildCpu: 1,
 		buildMemoryMiB: 3072,

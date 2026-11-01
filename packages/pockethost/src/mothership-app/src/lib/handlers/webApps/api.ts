@@ -261,6 +261,7 @@ const capability = () => {
     gitAvailable: worker.git === true,
     // Railpack (binaire, mise et frontend vérifiés) présent sur le worker.
     railpackAvailable: worker.railpack === true,
+    allocationMode: ['adaptive', 'fixed'].includes(worker.allocationMode) ? worker.allocationMode : 'unknown',
     error: age < 60000 ? worker.error || '' : 'Worker non démarré.',
     buildCpu: 1,
     buildMemoryMiB: 3072,

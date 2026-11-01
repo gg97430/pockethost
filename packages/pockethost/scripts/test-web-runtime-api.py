@@ -116,6 +116,14 @@ try:
     request(auto,token,{'profile':{**wanted,'pruneDependencies':False}},'PATCH');assert 'pruneDependencies' not in request(auto,token)['profile']
     for bad in [{'kind':'auto','command':['npm','start']},{'kind':'auto','entrypoint':['sh']},{'kind':'auto','buildTarget':'build'},{'kind':'auto','startCommand':'a\nb'},{'kind':'auto','startCommand':'x'*1001},{'kind':'dockerfile','startCommand':'npm start'},{'kind':'image','image':digest,'buildCommand':'make'},{'kind':'auto','pruneDependencies':'true'},{'kind':'dockerfile','pruneDependencies':True}]:
         request(auto,token,{'profile':bad},'PATCH',400);request(auto+'/preview',token,{'profile':bad},status=400)
+    adaptive={**wanted,'allocation':'adaptive','priority':'high','memoryRequestMiB':512,'resources':{'cpuMillicores':4000,'memoryMiB':4096,'pids':256}}
+    allocation=request(auto,token,{'profile':adaptive},'PATCH')['profile']
+    assert allocation['allocation']=='adaptive'and allocation['priority']=='high'and allocation['memoryRequestMiB']==512 and allocation['resources']['memoryMiB']==4096
+    for bad in [{**adaptive,'memoryRequestMiB':4097},{**adaptive,'allocation':'unlimited'},{**adaptive,'priority':'root'},{**adaptive,'allocation':'fixed'}]:
+        request(auto,token,{'profile':bad},'PATCH',400)
+    assert request(auto,token)['profile']['priority']=='high'
+    request(auto,token,{'profile':wanted},'PATCH')
+    checks.append('adaptive-allocation-profile-and-request-ceiling-validation')
     warnings=request(auto+'/preview',token,{'profile':wanted})['warnings']
     assert any('PORT=8000' in item for item in warnings) and any('RAILPACK_' in item for item in warnings) and any('Railpack n’est pas installé' in item for item in warnings)
     assert any('composer:latest' in item and 'non épinglés' in item for item in warnings)

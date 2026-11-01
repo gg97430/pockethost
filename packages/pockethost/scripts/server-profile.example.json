@@ -1,0 +1,17 @@
+{
+  "webUser": "pockethost-web",
+  "nodeBinary": "/opt/node/bin/node",
+  "workerEnv": "/home/pockethost-web/web-apps.env",
+  "installedScripts": "/opt/pockethost-web",
+  "webCpu": 9,
+  "webMemoryGiB": 16,
+  "buildCpu": 4,
+  "buildMemoryGiB": 8,
+  "siteCpu": 0.5,
+  "siteMemoryGiB": 0.25,
+  "reserveCpu": 0.5,
+  "reserveMemoryGiB": 1,
+  "allocationMode": "adaptive",
+  "controllerPort": 8091,
+  "dashboardPort": 5174
+}

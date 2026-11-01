@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import unittest,tempfile,pathlib,importlib.util,json,unittest.mock as mock,io,tarfile,subprocess,time,sys,threading,types,os,http.server,socketserver
+from web_app_runtime import ResourcePressure
 SOURCE=pathlib.Path(__file__).with_name('web-app-worker.py')
 spec=importlib.util.spec_from_file_location('worker',SOURCE);w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w)
 class WorkerTests(unittest.TestCase):
@@ -357,7 +358,7 @@ class WorkerTests(unittest.TestCase):
   with mock.patch.object(w,'resources'),mock.patch.object(w,'SECRET','s'*32),mock.patch.object(job,'reusable_image',return_value=ident),mock.patch.object(job,'fetch_source',side_effect=AssertionError('fetch')),mock.patch.object(job,'build',side_effect=AssertionError('build')),\
    mock.patch.object(job,'start',side_effect=lambda image:started.append(image) or {'image':'ph-web/x','imageId':ident,'container':'c','target':'http://127.0.0.1:1','serverDirectory':'.'}),mock.patch.object(job,'health'),mock.patch.object(job,'stage',side_effect=stage),\
    mock.patch.object(job,'cache_assets'),mock.patch.object(job,'checkpoint'),mock.patch.object(job,'routes'),mock.patch.object(job,'remember_image') as remember,mock.patch.object(w,'api',return_value={'desiredCommit':self.value['commit']}),mock.patch.object(job,'heartbeat'),\
-   mock.patch.dict(sys.modules,{'web_app_runtime':types.SimpleNamespace(validate_profile=lambda value:{'kind':'nextjs','resources':{}},RuntimeEngine=None)}):
+   mock.patch.dict(sys.modules,{'web_app_runtime':types.SimpleNamespace(validate_profile=lambda value:{'kind':'nextjs','resources':{}},RuntimeEngine=None,ResourcePressure=ResourcePressure)}):
    job.execute()
   self.assertEqual(started,[ident]);self.assertEqual(stages[:2],['build','publish']);self.assertNotIn('fetch',stages);remember.assert_called_once()
   self.assertIn('Image réutilisée',job.logpath.read_text())
@@ -366,7 +367,7 @@ class WorkerTests(unittest.TestCase):
   with mock.patch.object(w,'resources'),mock.patch.object(w,'SECRET','s'*32),mock.patch.object(job,'reusable_image',side_effect=AssertionError('reuse')),mock.patch.object(job,'fetch_source',return_value=self.root),mock.patch.object(job,'build',side_effect=lambda context,work:built.append(1) or 'ph-web/x:y'),\
    mock.patch.object(job,'start',return_value={'image':'ph-web/x','imageId':'sha256:'+'e'*64,'container':'c','target':'http://127.0.0.1:1','serverDirectory':'.'}),mock.patch.object(job,'health'),mock.patch.object(job,'stage',return_value={'desiredCommit':self.value['commit']}),\
    mock.patch.object(job,'cache_assets'),mock.patch.object(job,'checkpoint'),mock.patch.object(job,'routes'),mock.patch.object(job,'remember_image') as remember,mock.patch.object(w,'api',return_value={'desiredCommit':self.value['commit']}),mock.patch.object(job,'heartbeat'),\
-   mock.patch.dict(sys.modules,{'web_app_runtime':types.SimpleNamespace(validate_profile=lambda value:{'kind':'nextjs','resources':{}},RuntimeEngine=None)}):
+   mock.patch.dict(sys.modules,{'web_app_runtime':types.SimpleNamespace(validate_profile=lambda value:{'kind':'nextjs','resources':{}},RuntimeEngine=None,ResourcePressure=ResourcePressure)}):
    job.execute()
   self.assertEqual(built,[1]);remember.assert_called_once();self.assertIn('Reconstruction complète demandée',job.logpath.read_text())
  def test_failed_health_keeps_masked_site_logs_in_deployment_log(self):
@@ -425,14 +426,14 @@ class WorkerTests(unittest.TestCase):
  def test_builder_quotas_come_from_environment_and_recreate_only_on_change(self):
   with mock.patch.dict(os.environ,{},clear=False):
    for key in ['WEB_APPS_BUILD_CPUS','WEB_APPS_BUILD_MEMORY','WEB_APPS_BUILD_CACHE','WEB_APPS_BUILDKIT_IMAGE']:os.environ.pop(key,None)
-   self.assertEqual(w.builder_options(),{'memory':'3g','cpu-period':'100000','cpu-quota':'100000','network':w.BUILDER_NETWORK});self.assertEqual(w.build_cache_limit(),'2gb')
+   self.assertEqual(w.builder_options(),{'memory':'3g','cpu-period':'100000','cpu-quota':'100000','cpu-shares':'128','memory-swap':'3g','network':w.BUILDER_NETWORK});self.assertEqual(w.build_cache_limit(),'2gb')
    os.environ.update(WEB_APPS_BUILD_CPUS='4',WEB_APPS_BUILD_MEMORY='8G',WEB_APPS_BUILD_CACHE='20gb')
    self.assertEqual(w.builder_options()['cpu-quota'],'400000');self.assertEqual(w.builder_options()['memory'],'8g');self.assertEqual(w.build_cache_limit(),'20gb')
    for key,bad in [('WEB_APPS_BUILD_CPUS','0'),('WEB_APPS_BUILD_CPUS','64'),('WEB_APPS_BUILD_CPUS','1;rm'),('WEB_APPS_BUILD_MEMORY','8gb'),('WEB_APPS_BUILD_MEMORY','0g')]:
     with mock.patch.dict(os.environ,{key:bad}),self.assertRaises(RuntimeError):w.builder_options()
    with mock.patch.dict(os.environ,{'WEB_APPS_BUILD_CACHE':'--all'}):self.assertEqual(w.build_cache_limit(),'2gb')
    info=json.dumps({'SecurityOptions':['name=rootless'],'CgroupVersion':'2','CgroupDriver':'systemd'})
-   for listed,expected in [('memory="8g" network="ph-web-build-network" cpu-period="100000" cpu-quota="400000"',[]),('memory="3g" network="bridge" cpu-period="100000" cpu-quota="100000"',['rm','create'])]:
+   for listed,expected in [('cpu-shares="128" memory-swap="8g" memory="8g" network="ph-web-build-network" cpu-period="100000" cpu-quota="400000"',[]),('memory="3g" network="bridge" cpu-period="100000" cpu-quota="100000"',['rm','create'])]:
     calls=[]
     def docker(args,**kwargs):
      calls.append(args)
@@ -440,7 +441,7 @@ class WorkerTests(unittest.TestCase):
      if args[:2]==['network','inspect']:return json.dumps([{'Driver':'bridge','Labels':{'pockethost.web.builder':'true'}}])
      if args[:2]==['buildx','inspect'] and len(args)==3:return 'Name: ph-web-builder\nDriver: docker-container\n Driver Options: '+listed+'\nBuildKit daemon flags: --oci-worker-net=bridge\n'
      if args[:2]==['ps','-aq']:return 'abc\n'
-     if args[0]=='inspect':return json.dumps([{'HostConfig':{'Memory':8*1024**3,'CpuQuota':400000,'CpuPeriod':100000,'NetworkMode':w.BUILDER_NETWORK},'Config':{'Cmd':w.BUILDER_FLAGS}}])
+     if args[0]=='inspect':return json.dumps([{'HostConfig':{'Memory':8*1024**3,'CpuQuota':400000,'CpuPeriod':100000,'CpuShares':128,'MemorySwap':8*1024**3,'NetworkMode':w.BUILDER_NETWORK},'Config':{'Cmd':w.BUILDER_FLAGS}}])
      return ''
     with mock.patch.object(w,'secure_builder_definition'),mock.patch.object(w,'validate_socket'),mock.patch.object(w,'docker',side_effect=docker),mock.patch.dict(sys.modules,{'web_app_railpack':types.SimpleNamespace(railpack_ready=lambda d:False)}):
      # Le contrôle final compare le conteneur BuildKit aux quotas configurés (et non plus à 3 Go / 1 CPU figés).
@@ -463,7 +464,7 @@ class WorkerTests(unittest.TestCase):
    if args[:2]==['buildx','inspect']and len(args)==3:raise subprocess.CalledProcessError(1,args)
    if args[:2]==['ps','-aq']:return 'abc\n'
    if args[:2]==['image','inspect']:return json.dumps([{'Id':'sha256:'+'b'*64}])
-   if args[0]=='inspect':return json.dumps([{'Image':actual_image,'HostConfig':{'Memory':3*1024**3,'CpuQuota':100000,'CpuPeriod':100000,'NetworkMode':w.BUILDER_NETWORK},'Config':{'Cmd':w.BUILDER_FLAGS}}])
+   if args[0]=='inspect':return json.dumps([{'Image':actual_image,'HostConfig':{'Memory':3*1024**3,'CpuQuota':100000,'CpuPeriod':100000,'CpuShares':128,'MemorySwap':3*1024**3,'NetworkMode':w.BUILDER_NETWORK},'Config':{'Cmd':w.BUILDER_FLAGS}}])
    return ''
   with mock.patch.dict(os.environ,{'WEB_APPS_BUILDKIT_IMAGE':image,'WEB_APPS_BUILD_CPUS':'1','WEB_APPS_BUILD_MEMORY':'3g'}),mock.patch.object(w,'secure_builder_definition'),mock.patch.object(w,'validate_socket'),mock.patch.object(w,'docker',side_effect=docker),mock.patch.dict(sys.modules,{'web_app_railpack':types.SimpleNamespace(railpack_ready=lambda d:False)}):self.assertTrue(w.prerequisites())
   self.assertTrue(any(args[:2]==['buildx','create']and'image='+image in args for args in calls))
@@ -506,7 +507,7 @@ class WorkerTests(unittest.TestCase):
     if args[0]=='info':return json.dumps({'SecurityOptions':['name=rootless'],'CgroupVersion':'2','CgroupDriver':'systemd'})
     if args[:2]==['network','inspect']:return json.dumps([{'Driver':'bridge','Labels':{'pockethost.web.builder':'true'}}])
     if args[0]=='ps':return 'builder-id'
-    if args[0]=='inspect':return json.dumps([{'HostConfig':{'Memory':3*1024**3,'CpuQuota':100000,'CpuPeriod':100000,'NetworkMode':w.BUILDER_NETWORK},'Config':{'Cmd':w.BUILDER_FLAGS}}])
+    if args[0]=='inspect':return json.dumps([{'HostConfig':{'Memory':3*1024**3,'CpuQuota':100000,'CpuPeriod':100000,'CpuShares':128,'MemorySwap':3*1024**3,'NetworkMode':w.BUILDER_NETWORK},'Config':{'Cmd':w.BUILDER_FLAGS}}])
     return ''
    other.RAILPACK_TOOLS=True
    with mock.patch.object(other,'secure_builder_definition'),mock.patch.object(other,'validate_socket'),mock.patch.object(other,'docker',side_effect=docker):self.assertTrue(other.prerequisites())

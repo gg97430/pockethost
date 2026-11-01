@@ -8,24 +8,48 @@ if [[ ! -f /sys/fs/cgroup/cgroup.controllers ]]; then echo 'cgroup v2 is require
 for required in docker dockerd-rootless-setuptool.sh rootlesskit; do
   command -v "$required" >/dev/null || { echo "Missing $required. Install Docker rootless extras separately." >&2; exit 1; }
 done
-# Install only missing prerequisites. Do not upgrade Docker or restart running services.
-packages=()
-command -v newuidmap >/dev/null || packages+=(uidmap)
-command -v slirp4netns >/dev/null || packages+=(slirp4netns)
-command -v certbot >/dev/null || packages+=(certbot)
-# Deploy-key Git sources: worker fetch (git + ssh) and controller key scan/ls-remote (ssh-keyscan, ssh-keygen).
-command -v git >/dev/null || packages+=(git)
-{ command -v ssh && command -v ssh-keyscan && command -v ssh-keygen; } >/dev/null || packages+=(openssh-client)
-python3 -c 'import boto3, cryptography' >/dev/null 2>&1 || packages+=(python3-boto3 python3-cryptography)
-if ((${#packages[@]})); then
-  export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
-  apt-get update -qq
-  apt-get install -y --no-install-recommends "${packages[@]}"
+# Validate the host profile before package installation or any configuration write.
+: "${WEB_APPS_MEMORY_MAX:?Set WEB_APPS_MEMORY_MAX explicitly (whole GiB, e.g. 16G).}"
+: "${WEB_APPS_CPU_QUOTA:?Set WEB_APPS_CPU_QUOTA explicitly (percent, e.g. 900%).}"
+WEB_OPERATOR=ubuntu
+WEB_NODE_BINARY=${WEB_NODE_BINARY:-/usr/bin/node}
+[[ "$WEB_APPS_MEMORY_MAX" =~ ^[1-9][0-9]*G$ ]] || { echo 'Invalid memory budget.' >&2; exit 1; }
+[[ "$WEB_APPS_CPU_QUOTA" =~ ^[1-9][0-9]*%$ ]] || { echo 'Invalid CPU quota.' >&2; exit 1; }
+[[ "$(id -u "$WEB_OPERATOR")" == 1000 && "$(id -g "$WEB_OPERATOR")" == 1000 ]] || { echo 'The private DB bridge requires ubuntu=1000:1000.' >&2; exit 1; }
+for database in passwd group; do
+  entry=$(getent "$database" 1001 || true)
+  if [[ -n "$entry" && "${entry%%:*}" != "$WEB_USER" ]]; then echo 'UID/GID 1001 is occupied: use a reviewed identity migration, not automatic renumbering.' >&2; exit 1; fi
+done
+if id "$WEB_USER" >/dev/null 2>&1; then
+  [[ "$(id -u "$WEB_USER")" == 1001 && "$(id -g "$WEB_USER")" == 1001 && "$(getent passwd "$WEB_USER" | cut -d: -f6)" == "$WEB_HOME" ]] || { echo 'Existing web account does not match the supported profile.' >&2; exit 1; }
 fi
-if ! id "$WEB_USER" >/dev/null 2>&1; then useradd --create-home --user-group --shell /bin/bash "$WEB_USER"; fi
+[[ "$WEB_NODE_BINARY" =~ ^/[A-Za-z0-9_./-]+$ && -x "$WEB_NODE_BINARY" ]] || { echo 'Provide an absolute WEB_NODE_BINARY path.' >&2; exit 1; }
+"$WEB_NODE_BINARY" -e 'if(Number(process.versions.node.split(".")[0]) < 24) process.exit(1)' || { echo 'Node >=24 required.' >&2; exit 1; }
+python3 - "$WEB_APPS_MEMORY_MAX" "$WEB_APPS_CPU_QUOTA" <<'PROFILE'
+import os, pathlib, sys
+memory = int(sys.argv[1][:-1]) * 1024**3
+host = int(next(line.split()[1] for line in pathlib.Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemTotal:'))) * 1024
+if memory > host - 1024**3 or int(sys.argv[2][:-1]) > (os.cpu_count() or 1) * 100:
+    sys.exit('Budgets exceed the host capacity (keep at least 1 GiB outside web hosting).')
+PROFILE
+# Reconfiguration of an active host must be planned, never silently change live quotas/units.
+for unit in pockethost-web-worker.service pockethost-web-terminal.service; do
+  if systemctl is-active --quiet "$unit"; then echo "$unit is active: use the documented update procedure." >&2; exit 1; fi
+done
+if [[ "${INSTALL_RAILPACK:-0}" == 1 && ! -x "$(dirname "$0")/install-railpack.sh" ]]; then
+  echo 'Railpack installer missing: provision the pinned tools from the guide before continuing.' >&2; exit 1
+fi
+if [[ "${INSTALL_RAILPACK:-0}" == 1 ]]; then
+  : "${RAILPACK_BINARY_SOURCE:?Provide the pinned Railpack binary.}"
+  : "${MISE_BINARY_SOURCE:?Provide the pinned mise binary.}"
+fi
+bash "$(dirname "$0")/install-server-prerequisites.sh"
+if ! id "$WEB_USER" >/dev/null 2>&1; then
+  getent group "$WEB_USER" >/dev/null || groupadd --gid 1001 "$WEB_USER"
+  [[ "$(getent group "$WEB_USER" | cut -d: -f3)" == 1001 ]] || { echo 'Web group must use GID 1001.' >&2; exit 1; }
+  useradd --uid 1001 --gid "$WEB_USER" --home-dir "$WEB_HOME" --create-home --shell /bin/bash "$WEB_USER"
+fi
 web_uid=$(id -u "$WEB_USER")
-WEB_APPS_MEMORY_MAX=${WEB_APPS_MEMORY_MAX:-5G}
-if [[ ! "$WEB_APPS_MEMORY_MAX" =~ ^[1-9][0-9]*G$ ]]; then echo "WEB_APPS_MEMORY_MAX must use whole GiB, for example 5G." >&2; exit 1; fi
 if ! awk -F: -v name="$WEB_USER" '$1==name && $3>=65536 {found=1} END {exit !found}' /etc/subuid; then
   echo 'Missing subordinate UID range for pockethost-web; provision a non-overlapping range first.' >&2; exit 1
 fi
@@ -41,7 +65,7 @@ Delegate=cpu cpuset io memory pids
 UNIT
 cat > "/etc/systemd/system/user-${web_uid}.slice.d/web-limits.conf" <<UNIT
 [Slice]
-CPUQuota=200%
+CPUQuota=${WEB_APPS_CPU_QUOTA}
 MemoryMax=${WEB_APPS_MEMORY_MAX}
 MemorySwapMax=0
 TasksMax=2048
@@ -58,12 +82,14 @@ systemctl daemon-reload
 loginctl enable-linger "$WEB_USER"
 systemctl start "user@${web_uid}.service"
 # The socket/context belongs only to the dedicated web user.
-runuser -u "$WEB_USER" -- env HOME="$WEB_HOME" XDG_RUNTIME_DIR="/run/user/${web_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${web_uid}/bus" \
-  dockerd-rootless-setuptool.sh install --force
+if [[ ! -f "$WEB_HOME/.config/systemd/user/docker.service" ]]; then
+  runuser -u "$WEB_USER" -- env HOME="$WEB_HOME" XDG_RUNTIME_DIR="/run/user/${web_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${web_uid}/bus" \
+    dockerd-rootless-setuptool.sh install
+fi
 runuser -u "$WEB_USER" -- env HOME="$WEB_HOME" XDG_RUNTIME_DIR="/run/user/${web_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${web_uid}/bus" \
   systemctl --user enable --now docker
 # Allow the existing firewall process to read only the routing/TLS files through a group.
-usermod -a -G "$WEB_USER" ubuntu
+usermod -a -G "$WEB_USER" "$WEB_OPERATOR"
 runuser -u "$WEB_USER" -- env HOME="$WEB_HOME" DOCKER_HOST="unix:///run/user/${web_uid}/docker.sock" \
   docker info --format '{{json .SecurityOptions}} {{.CgroupVersion}} {{.CgroupDriver}}'
 echo "Rootless web engine prepared for UID ${web_uid}; existing PocketBase services were not restarted."
@@ -109,7 +135,7 @@ Slice=user-${web_uid}.slice
 WorkingDirectory=${WEB_HOME}/data
 EnvironmentFile=${WEB_HOME}/web-apps.env
 UnsetEnvironment=WEB_APPS_TERMINAL_PORT WEB_BACKUPS_S3_ENDPOINT WEB_BACKUPS_S3_BUCKET WEB_BACKUPS_S3_REGION WEB_BACKUPS_S3_PREFIX WEB_BACKUPS_S3_ACCESS_KEY_ID WEB_BACKUPS_S3_SECRET_ACCESS_KEY WEB_BACKUPS_S3_IMAGE_KEY
-ExecStart=/usr/bin/node /opt/pockethost-web/terminal-broker.cjs
+ExecStart=${WEB_NODE_BINARY} /opt/pockethost-web/terminal-broker.cjs
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
@@ -126,4 +152,4 @@ systemctl daemon-reload
 echo 'Worker and terminal units installed, not started. Enable after configuration and pilot verification.'
 # Construction automatique (Railpack), facultative : binaires root:root vérifiés par empreinte (voir WEB_HOSTING.md).
 if [[ "${INSTALL_RAILPACK:-0}" == 1 && -x "$(dirname "$0")/install-railpack.sh" ]]; then "$(dirname "$0")/install-railpack.sh"
-else echo 'Construction automatique : exécuter install-railpack.sh pour activer Railpack, puis redémarrer le worker.'; fi
+else echo 'Construction automatique : installer les binaires épinglés avec install-railpack.sh avant la recette.'; fi

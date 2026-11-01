@@ -1,74 +1,12 @@
-#!/bin/bash
-
-# Update the package list and upgrade all packages
-apt-get update -y
-apt-get upgrade -y
-
-for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do apt-get remove $pkg; done
-
-# Add Docker's official GPG key:
-apt-get update
-apt-get install ca-certificates curl
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-chmod a+r /etc/apt/keyrings/docker.asc
-
-# Add the repository to Apt sources:
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt-get update
-
-apt-get -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-certbot certonly \
-  --dns-cloudflare \
-  --dns-cloudflare-credentials ~/certbot-creds.ini \
-  -d *.sfo-2.pockethost.io \
-  --agree-tos \
-  --no-eff-email \
-  --email xxx@xxxx.com
-
-
-# Create user pockethost with no password
-adduser --disabled-password --gecos "" pockethost
-
-# Grant passwordless sudo privileges to pockethost
-echo "pockethost ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/pockethost
-
-# Update configurations
-ufw allow OpenSSH
-ufw allow https
-ufw allow http
-ufw allow ftp
-ufw allow 2222/tcp
-echo "y" | ufw enable
-
-# Copy root's authorized_keys to pockethost
-mkdir -p /home/pockethost/.ssh
-cp /root/.ssh/authorized_keys /home/pockethost/.ssh/authorized_keys
-chown -R pockethost:pockethost /home/pockethost/.ssh
-chmod 700 /home/pockethost/.ssh
-chmod 600 /home/pockethost/.ssh/authorized_keys
-
-# Add GitHub to known hosts to prevent interactive prompt
-su - pockethost -c "ssh-keyscan github.com >> ~/.ssh/known_hosts"
-
-
-#####
-# As pockethost user
-#####
-
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-git clone git@github.com:pockethost/pockethost.git
-cd pockethost
-nvm install
-npm i -g pnpm pm2
-pm2 install pm2-logrotate
-pm2 set pm2-logrotate:max_size 10M
-pm2 set pm2-logrotate:retain 7
-pm2 set pm2-logrotate:compress true
-pm2 set pm2-logrotate:workerInterval 30
-pm2 set pm2-logrotate:rotateInterval '0 0 * * *'
-pnpm i
+#!/usr/bin/env bash
+# Historical installer retired: never upgrade/remove Docker or provision old domains.
+set -euo pipefail
+cat >&2 <<'MESSAGE'
+L'ancien installateur Kolab a été retiré : il ne correspond plus à la plateforme.
+Aucune modification n'a été effectuée.
+Suivre docs/hosting/nouveau-serveur-kolab.md depuis une révision Git identifiée.
+Prérequis : sudo bash packages/pockethost/scripts/install-server-prerequisites.sh
+Préparation hébergement : packages/pockethost/scripts/setup-web-hosting.sh
+Réception bloquante : packages/pockethost/scripts/check-server-readiness.py --help
+MESSAGE
+exit 1

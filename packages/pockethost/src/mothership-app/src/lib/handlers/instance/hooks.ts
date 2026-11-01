@@ -1,4 +1,39 @@
+routerAdd(
+  'GET',
+  '/api/instance/{id}/litestream/status',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceLitestreamTelemetry(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/litestream/verify',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceLitestreamVerify(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/diagnostics',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceDiagnostics(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/performance',
+  (e) => require(`${__hooks}/mothership`).HandleInstancePerformance(e),
+  $apis.requireAuth('users')
+)
 const DEFAULT_BACKUP_IMPORT_LIMIT_BYTES = 12 * 1024 * 1024 * 1024
+routerAdd('GET', '/api/instance/{id}/console', (e) => require(`${__hooks}/mothership`).HandleInstanceConsoleInfo(e))
+routerAdd(
+  'POST',
+  '/api/instance/{id}/console',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceConsoleTicket(e),
+  $apis.requireAuth('users')
+)
+routerAdd('POST', '/api/instance/{id}/console/consume', (e) =>
+  require(`${__hooks}/mothership`).HandleInstanceConsoleConsume(e)
+)
+cronAdd('console_ticket_cleanup', '*/5 * * * *', () => require(`${__hooks}/mothership`).PruneInstanceConsoleTickets())
 const DEFAULT_BACKUP_IMPORT_CHUNK_LIMIT_BYTES = 64 * 1024 * 1024
 
 const backupImportBodyLimitBytes = () => {
@@ -121,6 +156,77 @@ routerAdd(
   },
   $apis.requireAuth()
 )
+routerAdd(
+  'POST',
+  '/api/instance/{id}/transfers',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceTransferCreate(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'GET',
+  '/api/instance-transfers',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceTransfersList(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance-transfers/inspect',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceTransferInspect(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance-transfers/import',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceTransferImport(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance-transfers/{transferId}/cancel',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceTransferCancel(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance-transfers/{transferId}/retry',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceTransferRetry(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd(
+  'POST',
+  '/api/instance-transfers/{transferId}/link',
+  (e) => {
+    return require(`${__hooks}/mothership`).HandleInstanceTransferRenewLink(e)
+  },
+  $apis.requireAuth()
+)
+routerAdd('GET', '/api/instance-transfers/{transferId}/metadata', (e) => {
+  return require(`${__hooks}/mothership`).HandleInstanceTransferMetadata(e)
+})
+routerAdd('POST', '/api/instance-transfers/{transferId}/claim', (e) => {
+  return require(`${__hooks}/mothership`).HandleInstanceTransferClaim(e)
+})
+routerAdd('GET', '/api/instance-transfers/{transferId}/archive', (e) => {
+  return require(`${__hooks}/mothership`).HandleInstanceTransferArchive(e)
+})
+routerAdd('POST', '/api/instance-transfers/{transferId}/complete', (e) => {
+  return require(`${__hooks}/mothership`).HandleInstanceTransferComplete(e)
+})
+routerAdd('POST', '/api/instance-transfers/{transferId}/progress', (e) => {
+  return require(`${__hooks}/mothership`).HandleInstanceTransferProgress(e)
+})
 routerAdd(
   'POST',
   '/api/instance/{id}/backups',
@@ -273,8 +379,20 @@ onRecordCreate((e) => {
   e.next()
 }, 'instances')
 
+/** Protect instances while a transfer is running and clean its private workspace after deletion. */
+onRecordDelete((e) => {
+  require(`${__hooks}/mothership`).BeforeDelete_instanceTransfer(e)
+  e.next()
+}, 'instances')
+
+onRecordAfterDeleteSuccess((e) => {
+  require(`${__hooks}/mothership`).AfterDelete_instanceTransfer(e)
+  e.next()
+}, 'instance_transfers')
+
 /** Validate instance version */
 onRecordUpdate((e) => {
+  require(`${__hooks}/mothership`).BeforeUpdate_instanceTransferPower(e)
   require(`${__hooks}/mothership`).BeforeUpdate_version(e)
   e.next()
 }, 'instances')
@@ -318,6 +436,14 @@ cronAdd('instance-backup-policy-dispatcher', '* * * * *', () => {
   require(`${__hooks}/mothership`).HandleInstanceBackupPolicyCronDispatcher()
 })
 
+onBootstrap((e) => {
+  e.next()
+  require(`${__hooks}/mothership`).HandleInstanceTransferBootstrap()
+})
+cronAdd('instance-transfer-dispatcher', '* * * * *', () => {
+  require(`${__hooks}/mothership`).HandleInstanceTransferDispatcher()
+})
+
 /** Persist metrics and evaluate opt-in monitoring with a shared Docker snapshot. */
 cronAdd('instance-resource-metrics-sampler', '* * * * *', () => {
   require(`${__hooks}/mothership`).CollectInstanceMetricsAndMonitoring()
@@ -338,3 +464,64 @@ onBootstrap((e) => {
   e.next()
   return require(`${__hooks}/mothership`).HandleInstanceLitestreamBootstrap(e)
 })
+
+routerUse((e) => require(`${__hooks}/mothership`).AuditInstanceRequest(e))
+routerAdd(
+  'GET',
+  '/api/instance/{id}/actions',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceActionLog(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/backup-checks',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceBackupChecksGet(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/backup-checks',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceBackupCheckCreate(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'PUT',
+  '/api/instance/{id}/backup-checks/policy',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceBackupCheckPolicy(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'GET',
+  '/api/instance/{id}/service-accounts',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceServiceAccounts(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'POST',
+  '/api/instance/{id}/service-accounts',
+  (e) => require(`${__hooks}/mothership`).HandleInstanceServiceAccounts(e),
+  $apis.requireAuth('users')
+)
+routerAdd('POST', '/api/instance/{id}/operations/consume', (e) =>
+  require(`${__hooks}/mothership`).HandleInstanceOperationConsume(e)
+)
+onBootstrap((e) => {
+  e.next()
+  require(`${__hooks}/mothership`).BackupCheckBootstrap()
+})
+cronAdd('instance-backup-integrity-checks', '*/1 * * * *', () =>
+  require(`${__hooks}/mothership`).BackupCheckDispatcher()
+)
+
+routerAdd(
+  'GET',
+  '/api/actions',
+  (e) => require(`${__hooks}/mothership`).HandleAccountActionLog(e),
+  $apis.requireAuth('users')
+)
+
+// Native collection endpoints must not bypass the platform-only migration-address controls.
+onRecordCreateRequest((e) => require(`${__hooks}/mothership`).GuardInstanceHostnamesRequest(e), 'instances')
+onRecordUpdateRequest((e) => require(`${__hooks}/mothership`).GuardInstanceHostnamesRequest(e), 'instances')
+onRecordCreate((e) => require(`${__hooks}/mothership`).ValidateInstanceHostnames(e), 'instances')
+onRecordUpdate((e) => require(`${__hooks}/mothership`).ValidateInstanceHostnames(e), 'instances')

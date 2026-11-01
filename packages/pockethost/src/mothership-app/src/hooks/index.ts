@@ -14,3 +14,5 @@ import '../lib/handlers/sshKeys/hooks'
 import '../lib/handlers/stats/hooks'
 import '../lib/handlers/user/hooks'
 import '../lib/handlers/versions/hooks'
+
+import '../lib/handlers/webApps/hooks'

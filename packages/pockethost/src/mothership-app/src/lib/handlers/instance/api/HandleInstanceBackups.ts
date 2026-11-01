@@ -1,4 +1,5 @@
 import { mkLog } from '$util/Logger'
+import { canManageInstance } from '../../../security/instanceAccess'
 import { DEFAULT_SERVER_TIMEZONE, readOperatorSettings } from '../../operatorAdmin/operatorSettings'
 
 const BACKUP_FORMAT = 'gestion-pocketbase-instance-backup-v1'
@@ -42,7 +43,7 @@ const BACKUP_POLICY_CRON_MACROS = [
   '@weekends',
 ]
 
-type BackupKind = 'manual' | 'pre-restore' | 'import' | 'scheduled'
+type BackupKind = 'manual' | 'pre-restore' | 'import' | 'scheduled' | 'transfer'
 type ArchiveFormat = 'tar.gz' | 'zip'
 type ManagedPower = {
   shouldRestart: boolean
@@ -118,6 +119,7 @@ type BackupStorageOptions = {
 }
 type BackupCreationOptions = BackupStorageOptions & {
   name?: string
+  onCreated?: (backup: core.Record) => void
 }
 type ImportedArchive = {
   filename: string
@@ -621,7 +623,7 @@ const requireAuthRecord = (authRecord?: core.Record) => {
 }
 
 const assertInstanceAccess = (instance: core.Record, authRecord: core.Record) => {
-  if (instance.getString('uid') !== authRecord.id && !authRecord.getBool('superAdmin')) {
+  if (!canManageInstance(instance, authRecord)) {
     throw new BadRequestError('Non autorise.')
   }
 }
@@ -1081,6 +1083,9 @@ const createArchive = (instance: core.Record, backup: core.Record, kind: BackupK
   const resourceSettings = backupResourceSettings()
 
   assertSafeBackupFilename(filename)
+  // Publish the path before compression so transfer polling can measure the growing archive.
+  backup.set('filename', filename)
+  $app.save(backup)
   $os.mkdirAll(dir, DIR_MODE)
   $os.removeAll(stagingDir)
   $os.mkdirAll(stagingDir, PRIVATE_DIR_MODE)
@@ -1241,6 +1246,7 @@ const createBackupForInstance = (
   let power: ManagedPower = { shouldRestart: false }
 
   try {
+    options.onCreated?.(backup)
     if (managePower) {
       updateBackupOperation(backup, 'stopping', {
         label: instance.getBool('power') ? "Arret de l'instance avant sauvegarde" : "Verification de l'instance",
@@ -2449,7 +2455,11 @@ const buildLitestreamConfig = (policies: core.Record[]) => {
     DEFAULT_LITESTREAM_VALIDATION_INTERVAL
   )
 
+  const metricsPort = Number($os.getenv('LITESTREAM_METRICS_PORT') || '9199')
+  if (!Number.isInteger(metricsPort) || metricsPort < 1024 || metricsPort > 65535)
+    throw new BadRequestError('Port de supervision Litestream invalide.')
   const lines = [
+    `addr: 127.0.0.1:${metricsPort}`,
     'logging:',
     '  level: info',
     '  type: text',
@@ -2522,15 +2532,22 @@ const reconcileLitestreamService = () => {
     throw new Error('Aucune base data.db valide pour Litestream.')
   }
 
-  $os.writeFile(litestreamConfigPath(), config, PRIVATE_FILE_MODE)
-  startOrRestartLitestreamService(litestreamConfigPath())
+  let currentConfig = ''
+  try {
+    currentConfig = toString($os.readFile(litestreamConfigPath()))
+  } catch {}
+  const needsRestart = currentConfig !== config || litestreamPm2Status() !== 'online'
+  if (needsRestart) {
+    $os.writeFile(litestreamConfigPath(), config, PRIVATE_FILE_MODE)
+    startOrRestartLitestreamService(litestreamConfigPath())
+  }
 
   const now = new Date().toISOString()
   const pm2Status = litestreamPm2Status()
   const status: LitestreamStatus = pm2Status === 'online' ? 'running' : pm2Status ? 'failed' : 'configured'
   for (const policy of validPolicies) {
     updateLitestreamPolicyState(policy, status, {
-      lastStartedAt: now,
+      lastStartedAt: needsRestart ? now : policy.getString('lastStartedAt'),
       lastError: status === 'failed' ? `PM2 status: ${pm2Status}` : '',
     })
   }
@@ -3489,6 +3506,17 @@ export const HandleInstanceBackupDelete = (e: core.RequestEvent) => {
   assertInstanceAccess(instance, authRecord)
 
   const backup = getBackupRecord(instance, pathValue(e, 'backupId'))
+  if (backup.getString('kind') === 'transfer') {
+    const active = $app.findRecordsByFilter(
+      'instance_transfers',
+      'backup = {:id} && (status = "queued" || status = "preparing" || status = "ready" || status = "downloading" || status = "restoring" || status = "failed")',
+      '',
+      1,
+      0,
+      { id: backup.id }
+    )
+    if (active.length) throw new BadRequestError('Terminez ou annulez le transfert avant de supprimer son archive.')
+  }
   const filename = backup.getString('filename')
   if (filename) {
     assertSafeBackupFilename(filename)
@@ -3607,4 +3635,86 @@ export const HandleInstanceBackupRestoreNew = (e: core.RequestEvent) => {
   log(`restored ${backup.id} from ${instance.id} into new instance ${target.id}`)
 
   return e.json(200, { instance: target })
+}
+
+/** Shared archive operations for the background server-to-server transfer worker. */
+export const instanceTransferBackupTools = {
+  latestReady: (instanceId: string) => {
+    const rows: core.Record[] = []
+    for (let offset = 0; offset < 10000; offset += 500) {
+      const batch = $app
+        .findRecordsByFilter('instance_backups', 'instance = {:id} && status = "ready"', '', 500, offset, {
+          id: instanceId,
+        })
+        .filter((r): r is core.Record => !!r)
+      rows.push(...batch)
+      if (batch.length < 500) return sortBackupsNewestFirst(rows)[0]
+    }
+    throw new BadRequestError('Trop de sauvegardes : sélectionnez explicitement une archive.')
+  },
+  dataRoot,
+  assertNoRunningOperation,
+  checksum: sha256,
+  progress: (backup: core.Record) => {
+    const manifest = JSON.parse(backup.getString('manifest') || '{}')
+    const filename = backup.getString('filename')
+    let compressedBytes = Number(backup.get('compressedBytes')) || 0
+    if (filename) {
+      assertSafeBackupFilename(filename)
+      const path = backupPath(backup.getString('instance'), filename)
+      compressedBytes = pathExists(path) ? fileSize(path) : pathExists(`${path}.tmp`) ? fileSize(`${path}.tmp`) : 0
+    }
+    return {
+      phase: manifest.operation?.phase || '',
+      compressedBytes,
+      sourceBytes:
+        Number(manifest.operation?.sourceSizeBytes || manifest.sourceSizeBytes || backup.get('sizeBytes')) || 0,
+    }
+  },
+  create: (instance: core.Record, auth: core.Record, transferId: string, onCreated: (backup: core.Record) => void) =>
+    createBackupForInstance(instance, auth, 'transfer', false, false, {
+      name: `Transfert ${transferId}`,
+      uploadRemote: false,
+      onCreated,
+    }),
+  archivePath: ensureLocalArchive,
+  receive: (
+    instance: core.Record,
+    auth: core.Record,
+    archivePath: string,
+    metadata: {
+      checksum: string
+      sizeBytes: number
+      compressedBytes: number
+    }
+  ) => {
+    const backup = createBackupRecord(instance, auth, 'transfer', 'Transfert depuis un autre serveur')
+    try {
+      const filename = createBackupFilename(instance, 'transfer')
+      const localPath = backupPath(instance.id, filename)
+      $os.mkdirAll(backupDir(instance.id), PRIVATE_DIR_MODE)
+      runCommand('mv', archivePath, localPath)
+      markBackupReady(
+        backup,
+        {
+          filename,
+          localPath,
+          checksum: metadata.checksum,
+          sizeBytes: metadata.sizeBytes,
+          compressedBytes: metadata.compressedBytes,
+          manifest: { format: BACKUP_FORMAT, transfer: true, sourceSizeBytes: metadata.sizeBytes },
+        },
+        { uploadRemote: false }
+      )
+      return backup
+    } catch (error) {
+      markBackupFailed(backup, error)
+      throw error
+    }
+  },
+  restore: (instance: core.Record, backup: core.Record) => {
+    assertNoRunningOperation(instance.id)
+    waitUntilIdle(instance.id)
+    restoreArchive(instance, backup)
+  },
 }

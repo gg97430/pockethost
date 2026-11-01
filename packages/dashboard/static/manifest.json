@@ -1,7 +1,7 @@
 {
-  "name": "Gestion PocketBase",
-  "short_name": "Gestion PB",
-  "description": "Interface interne de gestion PocketBase.",
+  "name": "Kolab Hosting",
+  "short_name": "Kolab Hosting",
+  "description": "Hébergement d’applications et de bases de données avec Kolab Hosting.",
   "theme_color": "#111111",
   "background_color": "#18161d",
   "display": "standalone",

@@ -6,7 +6,7 @@
 </script>
 
 <svelte:head>
-  <title>Compte - Gestion PocketBase</title>
+  <title>Compte - Kolab Hosting</title>
 </svelte:head>
 
 <FeatureTab title="Compte">

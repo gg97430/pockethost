@@ -3,10 +3,13 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "check:fresh": "tsdown && git diff --exit-code -- pb_hooks/"
+    "check:fresh": "tsdown && git diff --exit-code -- pb_hooks/ ../instance-app/v23/pb_hooks/_ph_totp.js"
   },
   "devDependencies": {
     "tsdown": "^0.22.2",
     "type-fest": "^5.7.0"
+  },
+  "dependencies": {
+    "qrcode-generator": "2.0.4"
   }
 }

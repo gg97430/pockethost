@@ -1,5 +1,33 @@
 routerAdd(
   'GET',
+  '/api/admin/monitoring/resources',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorResourceMetrics(e),
+  $apis.requireAuth('users')
+)
+
+routerAdd(
+  'GET',
+  '/api/admin/_monitoring/config',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorMonitoringDeliveryConfig(e),
+  $apis.requireAuth('_superusers')
+)
+
+routerAdd(
+  'PATCH',
+  '/api/admin/monitoring',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorMonitoringUpdate(e),
+  $apis.requireAuth('users')
+)
+
+routerAdd(
+  'GET',
+  '/api/admin/monitoring',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorMonitoring(e),
+  $apis.requireAuth('users')
+)
+
+routerAdd(
+  'GET',
   '/api/admin/overview',
   (e) => {
     return require(`${__hooks}/mothership`).HandleOperatorAdminOverview(e)

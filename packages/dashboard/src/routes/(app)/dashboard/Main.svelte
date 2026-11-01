@@ -8,27 +8,34 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard - Gestion PocketBase</title>
+  <title>Dashboard - Kolab Hosting</title>
 </svelte:head>
 
 <header class="dashboard-head">
   <div>
-    <h1 class="dashboard-title">Dashboard</h1>
+    <h1 class="dashboard-title">Mes bases</h1>
     <p class="dashboard-subtitle">
       {#if instanceCount === 0}
         Créez une instance PocketBase pour commencer.
       {:else}
-        {instanceCount} instance{instanceCount === 1 ? '' : 's'}. Les offres seront limitées par le stockage, pas par le nombre d'instances.
+        {instanceCount} instance{instanceCount === 1 ? '' : 's'} · Ressources, activité et sauvegardes de vos bases.
       {/if}
     </p>
   </div>
 
-  {#if canCreate}
-    <wa-button href="/instances/new" variant="brand" class="dashboard-new-btn">
-      <wa-icon slot="start" name="plus"></wa-icon>
-      Nouvelle instance
-    </wa-button>
-  {/if}
+  <div class="flex flex-wrap gap-2">
+    {#if $userStore?.superAdmin}
+      <wa-button href="/instances/import" variant="neutral">
+        <wa-icon slot="start" name="arrow-right-arrow-left"></wa-icon>Importer un transfert
+      </wa-button>
+    {/if}
+    {#if canCreate}
+      <wa-button href="/instances/new" variant="brand" class="dashboard-new-btn">
+        <wa-icon slot="start" name="plus"></wa-icon>
+        Nouvelle instance
+      </wa-button>
+    {/if}
+  </div>
 </header>
 
 <DashboardMetrics />
@@ -42,7 +49,9 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 1.75rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--app-border);
   }
 
   .dashboard-title {
@@ -54,7 +63,7 @@
 
   @media (min-width: 768px) {
     .dashboard-title {
-      font-size: 1.875rem;
+      font-size: 1.5rem;
     }
   }
 

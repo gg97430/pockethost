@@ -183,7 +183,22 @@ const tryUserSubscribe = (() => {
       .client.collection('users')
       .subscribe<UserFields>(id, (data) => {
         debugLog('User subscribed update', data)
-        client().client.collection('users').authRefresh().catch(console.error)
+        const previous = client().getAuthStoreProps().model as unknown as UserFields | undefined
+        const accessChanged =
+          previous?.superAdmin !== data.record.superAdmin ||
+          previous?.suspension !== data.record.suspension ||
+          JSON.stringify(previous?.managedInstances || []) !== JSON.stringify(data.record.managedInstances || [])
+        client()
+          .client.collection('users')
+          .authRefresh()
+          .then(async () => {
+            if (accessChanged) {
+              // Remove revoked bases immediately, then fetch newly granted ones using the refreshed session.
+              globalInstancesStore.set({})
+              globalInstancesStore.set(await client().getAllInstancesById())
+            }
+          })
+          .catch(console.error)
       })
       .then((u) => {
         debugLog('Subscribed to user', id)

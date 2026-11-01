@@ -1,4 +1,5 @@
 import { mkLog } from '$util/Logger'
+import { canManageInstance } from '../../../security/instanceAccess'
 
 const COPY_DIRS = ['pb_data', 'pb_migrations', 'pb_public', 'pb_hooks']
 
@@ -10,7 +11,7 @@ const dataRoot = () => {
   const inferred = appDataDir.replace(/\/mothership\/pb_data\/?$/, '')
   if (inferred !== appDataDir) return inferred
 
-  throw new Error("Impossible de trouver le dossier de donnees des instances.")
+  throw new Error('Impossible de trouver le dossier de donnees des instances.')
 }
 
 const assertSafeInstanceId = (id: string) => {
@@ -101,7 +102,7 @@ export const HandleInstanceDuplicate = (e: core.RequestEvent) => {
   const source = $app.findRecordById('instances', sourceId)
   if (!source) throw new BadRequestError(`Instance ${sourceId} introuvable.`)
 
-  if (source.get('uid') !== authRecord.id && !authRecord.getBool('superAdmin')) {
+  if (!canManageInstance(source, authRecord)) {
     throw new BadRequestError(`Non autorise`)
   }
 

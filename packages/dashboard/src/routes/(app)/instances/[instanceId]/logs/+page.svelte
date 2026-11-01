@@ -9,7 +9,7 @@
 </script>
 
 <svelte:head>
-  <title>Logs de {subdomain} - Gestion PocketBase</title>
+  <title>Logs de {subdomain} - Kolab Hosting</title>
 </svelte:head>
 
 <FeatureTab title="Logs" documentation="/docs/logs">

@@ -189,22 +189,22 @@ wa-button.wa-plain::part(base):hover {
 }
 
 wa-button[variant='brand']:not([appearance='plain'])::part(base) {
-  border-color: #1eb854;
-  background-color: #1eb854;
+  border-color: var(--app-accent);
+  background-color: var(--app-accent);
   color: #fff;
-  box-shadow: 0 2px 10px rgb(30 184 84 / 0.3);
+  box-shadow: none;
 }
 
 wa-button[variant='brand']:not([appearance='plain'])::part(base):hover {
-  border-color: #1db990;
-  background-color: #1db990;
+  border-color: var(--app-accent-hover);
+  background-color: var(--app-accent-hover);
   color: #fff;
 }
 
 wa-button[variant='brand'][appearance='outline']::part(base) {
-  border-color: #1eb854;
+  border-color: var(--app-accent);
   background-color: transparent;
-  color: #1eb854;
+  color: var(--app-accent-text);
   box-shadow: none;
 }
 
@@ -682,7 +682,8 @@ html[data-theme='light'] wa-button[variant='neutral']:not([appearance='plain'], 
   color: var(--app-text-strong);
 }
 
-html[data-theme='light'] wa-button[variant='neutral']:not([appearance='plain'], [appearance='outline'])::part(base):hover,
+html[data-theme='light']
+  wa-button[variant='neutral']:not([appearance='plain'], [appearance='outline'])::part(base):hover,
 html[data-theme='light'] wa-button[variant='neutral'][appearance='outline']::part(base):hover {
   border-color: var(--app-border-strong);
   background-color: var(--app-surface-hover);
@@ -1271,4 +1272,290 @@ html[data-theme='light'] .account-btn--outline:hover {
   border-color: var(--app-border-strong);
   background-color: var(--app-surface-hover);
   color: var(--app-text-strong);
+}
+
+/* Compact workspace theme: these shared parts also cover older feature pages. */
+wa-card,
+html[data-theme='light'] wa-card,
+.account-card {
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  box-shadow: none;
+}
+wa-card.wa-card-flat {
+  border-color: transparent;
+  background: transparent;
+}
+wa-card.wa-card-active,
+html[data-theme='light'] wa-card.wa-card-active {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+}
+.wa-card-body,
+.account-card-body {
+  padding: 18px;
+}
+.wa-card-header {
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
+}
+wa-button::part(base) {
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: none;
+}
+wa-button[size='s']::part(base),
+wa-button[size='small']::part(base) {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 11px;
+}
+wa-button[variant='neutral']:not([appearance='plain'])::part(base),
+html[data-theme='light'] wa-button[variant='neutral']:not([appearance='plain'])::part(base) {
+  border-color: var(--app-border);
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+}
+wa-button[variant='neutral']:not([appearance='plain'])::part(base):hover {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-hover);
+}
+wa-button[appearance='plain']::part(base),
+wa-button.wa-plain::part(base) {
+  color: var(--app-text-muted);
+}
+wa-button[appearance='plain']::part(base):hover {
+  background: var(--app-surface-hover);
+  color: var(--app-text-strong);
+}
+wa-button[variant='brand'][appearance='outline']::part(base) {
+  border-color: var(--app-accent-border);
+  background: transparent;
+  color: var(--app-accent-text);
+}
+wa-button[variant='brand'][appearance='outline']::part(base):hover {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+}
+wa-input::part(base),
+wa-select::part(combobox),
+wa-textarea::part(base),
+html[data-theme='light'] wa-input::part(base),
+html[data-theme='light'] wa-select::part(combobox) {
+  border: 1px solid var(--app-border);
+  border-radius: 5px;
+  background: var(--app-bg);
+  color: var(--app-text);
+  box-shadow: none;
+}
+wa-input::part(base),
+wa-select::part(combobox) {
+  min-height: 34px;
+}
+wa-input::part(input),
+wa-select::part(display-input),
+wa-textarea::part(textarea) {
+  color: var(--app-text);
+  font-size: 12px;
+}
+wa-input::part(input) {
+  height: 32px;
+  line-height: 32px;
+}
+wa-input::part(input)::placeholder,
+wa-textarea::part(textarea)::placeholder {
+  color: var(--app-text-faint);
+}
+wa-input::part(base):focus-within,
+wa-select::part(combobox):focus-within,
+wa-textarea::part(base):focus-within {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-soft);
+}
+wa-select::part(listbox),
+wa-dropdown::part(menu),
+html[data-theme='light'] wa-dropdown::part(menu) {
+  border-color: var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface-strong);
+  box-shadow: var(--app-shadow);
+}
+wa-option,
+wa-dropdown-item {
+  color: var(--app-text);
+  font-size: 12px;
+}
+wa-option:hover:not([disabled]),
+wa-dropdown-item:hover {
+  background: var(--app-surface-hover);
+}
+wa-option[aria-selected='true'],
+html[data-theme='light'] wa-option[aria-selected='true'] {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+}
+wa-dropdown-item a,
+wa-dropdown-item button {
+  padding: 7px 12px;
+}
+wa-progress-bar::part(base) {
+  height: 4px;
+  background: var(--app-border);
+}
+wa-progress-bar::part(indicator) {
+  background: var(--app-accent);
+}
+wa-badge {
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 4px;
+}
+wa-badge[variant='brand'] {
+  background: var(--app-accent-soft);
+  border-color: var(--app-accent-border);
+  color: var(--app-accent-text);
+}
+wa-badge[variant='neutral'] {
+  background: var(--app-surface-soft);
+  border-color: var(--app-border);
+  color: var(--app-text-muted);
+}
+wa-callout {
+  border-radius: 6px;
+  font-size: 12px;
+  box-shadow: none;
+}
+wa-callout[variant='neutral']:not(.wa-callout-subtle-border, .wa-callout-reference),
+wa-callout.wa-callout-reference,
+wa-callout.wa-callout-help {
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
+  color: var(--app-text-muted);
+}
+wa-callout[variant='brand']:not(.wa-callout-brand-accent),
+wa-callout.wa-callout-brand-accent {
+  border: 1px solid var(--app-accent-border);
+  background: var(--app-accent-soft);
+  color: var(--app-text);
+}
+wa-callout[variant='brand'] wa-icon[slot='icon'] {
+  color: var(--app-accent-text);
+}
+.dashboard-page-header {
+  margin-bottom: 16px;
+}
+.dashboard-page-title {
+  color: var(--app-text-strong);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.dashboard-page-summary {
+  margin-bottom: 18px;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.dashboard-page-cta,
+.dashboard-page-alerts {
+  margin-bottom: 18px;
+}
+.dashboard-page-reference {
+  margin-top: 24px;
+}
+.table {
+  font-size: 12px;
+}
+.table :is(th, td) {
+  padding: 10px 14px;
+}
+.table thead th {
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface-soft);
+  color: var(--app-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.table tbody tr {
+  border-bottom-color: var(--app-border);
+}
+.account-page-title {
+  margin-bottom: 18px;
+  color: var(--app-text-strong);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.account-stats-grid {
+  gap: 12px;
+}
+.account-stat {
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
+  border-radius: 5px;
+}
+.account-stat dt {
+  color: var(--app-text-faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.account-stat dd {
+  color: var(--app-text-strong);
+  font-size: 12px;
+}
+.account-stat-value--plan,
+.account-stat-link {
+  color: var(--app-accent-text);
+}
+.account-stat-muted {
+  color: var(--app-text-faint);
+}
+.account-btn {
+  min-height: 32px;
+  border-radius: 5px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.account-btn--outline {
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+.account-btn--brand-outline {
+  border-color: var(--app-accent-border);
+  color: var(--app-accent-text);
+}
+.account-btn--brand-outline:hover {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+}
+.account-actions {
+  border-color: var(--app-border);
+}
+.ph-power-toggle-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+.ph-power-toggle-track {
+  width: 32px;
+  height: 18px;
+}
+.ph-power-toggle-thumb {
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+}
+.ph-power-toggle--on .ph-power-toggle-thumb {
+  transform: translateX(14px);
+}
+.ph-power-toggle:focus-visible .ph-power-toggle-track {
+  outline-color: var(--app-accent);
 }

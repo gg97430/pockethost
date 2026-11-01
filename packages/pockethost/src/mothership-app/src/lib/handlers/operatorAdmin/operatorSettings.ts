@@ -1,3 +1,4 @@
+import { validateS3Configuration, validateSMTPConfiguration } from './settingsValidation'
 export type OperatorSettings = {
   publicSignupEnabled: boolean
   autoVerifyUsers: boolean
@@ -63,6 +64,7 @@ const envBoolean = (name: string, fallback: boolean) => {
 }
 
 const envNumber = (name: string, fallback: number) => {
+  if (!envString(name).trim()) return fallback
   const value = Number(envString(name))
   if (!Number.isFinite(value) || value < 0) return fallback
   return value
@@ -108,6 +110,7 @@ const normalizeSMTPAuthMethod = (value: unknown): OperatorSMTPSettings['authMeth
 }
 
 const normalizeSMTPPort = (value: unknown, fallback = 587) => {
+  if (value === undefined || value === null || `${value}`.trim() === '') return fallback
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return fallback
   return Math.max(1, Math.min(65535, Math.floor(numeric)))
@@ -133,7 +136,7 @@ export const normalizeBackupS3Settings = (value?: Partial<OperatorBackupS3Settin
     prefix: normalizeBackupS3Prefix(value?.prefix, defaults.prefix),
     region: normalizeText(value?.region, defaults.region, 64) || DEFAULT_BACKUP_S3_REGION,
     accessKeyId: normalizeText(value?.accessKeyId, defaults.accessKeyId, 255),
-    secretAccessKey: normalizeText(value?.secretAccessKey, defaults.secretAccessKey, 1024),
+    secretAccessKey: value?.secretAccessKey === undefined ? defaults.secretAccessKey : `${value.secretAccessKey}`,
   }
 }
 
@@ -148,7 +151,7 @@ const defaultSMTPSettings = (): OperatorSMTPSettings => {
     host: normalizeText(envString('SMTP_HOST', smtp?.host || ''), '', 255),
     port: normalizeSMTPPort(envString('SMTP_PORT'), smtp?.port || 587),
     username: normalizeText(envString('SMTP_USERNAME', smtp?.username || ''), '', 255),
-    password: normalizeText(envString('SMTP_PASSWORD', smtp?.password || ''), '', 1024),
+    password: envString('SMTP_PASSWORD', smtp?.password || ''),
     authMethod: normalizeSMTPAuthMethod(envString('SMTP_AUTH_METHOD', smtp?.authMethod || 'PLAIN')),
     tls: envBoolean('SMTP_TLS', smtp?.tls ?? false),
     localName: normalizeText(envString('SMTP_LOCAL_NAME', smtp?.localName || ''), '', 255),
@@ -165,7 +168,7 @@ export const normalizeSMTPSettings = (value?: Partial<OperatorSMTPSettings>): Op
     host: normalizeText(value?.host, defaults.host, 255),
     port: normalizeSMTPPort(value?.port, defaults.port),
     username: normalizeText(value?.username, defaults.username, 255),
-    password: normalizeText(value?.password, defaults.password, 1024),
+    password: value?.password === undefined ? defaults.password : `${value.password}`,
     authMethod: normalizeSMTPAuthMethod(value?.authMethod || defaults.authMethod),
     tls: !!(value?.tls ?? defaults.tls),
     localName: normalizeText(value?.localName, defaults.localName, 255),
@@ -237,46 +240,34 @@ export const readOperatorSettings = (app: core.App = $app): OperatorSettings => 
   }
 }
 
-export const writeOperatorSettings = (settings: OperatorSettings, app: core.App = $app) => {
-  const collection = app.findCollectionByNameOrId('settings')
+export const writeOperatorSettings = (settings: OperatorSettings, app = $app) => {
   const normalized = normalizeOperatorSettings(settings)
-  const record = (() => {
+  validateSMTPConfiguration(normalized.smtp)
+  validateS3Configuration(normalized.backupS3)
+  app.runInTransaction((tx) => {
+    const collection = tx.findCollectionByNameOrId('settings')
+    let record: core.Record
     try {
-      return app.findFirstRecordByData('settings', 'name', OPERATOR_SETTINGS_NAME)
+      record = tx.findFirstRecordByData('settings', 'name', OPERATOR_SETTINGS_NAME)
     } catch {
-      const newRecord = new Record(collection)
-      newRecord.set('name', OPERATOR_SETTINGS_NAME)
-      return newRecord
+      record = new Record(collection)
+      record.set('name', OPERATOR_SETTINGS_NAME)
     }
-  })()
-
-  record.set('value', JSON.stringify(normalized))
-  app.save(record)
-  applyOperatorMailSettings(normalized, app)
+    record.set('value', JSON.stringify(normalized))
+    tx.save(record)
+    applyOperatorMailSettings(normalized, tx)
+  })
   return normalized
 }
 
-export const applyOperatorMailSettings = (settings: OperatorSettings, app: core.App = $app) => {
-  const normalized = normalizeOperatorSettings(settings)
-  const appSettings = app.settings()
-
-  appSettings.smtp = {
-    ...appSettings.smtp,
-    enabled: normalized.smtp.enabled,
-    host: normalized.smtp.host,
-    port: normalized.smtp.port,
-    username: normalized.smtp.username,
-    password: normalized.smtp.password,
-    authMethod: normalized.smtp.authMethod,
-    tls: normalized.smtp.tls,
-    localName: normalized.smtp.localName,
-  }
-  appSettings.meta = {
-    ...appSettings.meta,
-    senderName: normalized.smtp.senderName || appSettings.meta.senderName,
-    senderAddress: normalized.smtp.senderAddress || appSettings.meta.senderAddress,
-  }
-
+export const applyOperatorMailSettings = (settings: OperatorSettings, app: any = $app) => {
+  validateSMTPConfiguration(settings.smtp)
+  // Never mutate the live settings cache before validation and commit.
+  const appSettings = app.settings().clone()
+  for (const key of ['enabled', 'host', 'port', 'username', 'password', 'authMethod', 'tls', 'localName'])
+    appSettings.smtp[key] = settings.smtp[key as keyof OperatorSMTPSettings]
+  if (settings.smtp.senderName) appSettings.meta.senderName = settings.smtp.senderName
+  if (settings.smtp.senderAddress) appSettings.meta.senderAddress = settings.smtp.senderAddress
   app.save(appSettings)
 }
 

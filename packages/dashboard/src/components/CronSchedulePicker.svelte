@@ -60,7 +60,13 @@
 </script>
 
 <div class="flex flex-col gap-2">
-  <wa-select {id} class="w-full" value={presetId} oninput={handlePresetChange} placeholder="Planification ({timezoneLabel})">
+  <wa-select
+    {id}
+    class="w-full"
+    value={presetId}
+    oninput={handlePresetChange}
+    placeholder="Planification ({timezoneLabel})"
+  >
     <wa-option value="" disabled>Choisir une planification</wa-option>
     {#each CRON_PRESETS as preset}
       <wa-option value={preset.id}>{preset.label}</wa-option>

@@ -26,13 +26,13 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    width: 2.25rem;
-    height: 2.25rem;
-    border: 1px solid var(--app-border);
-    border-radius: 0.5rem;
-    background: var(--app-surface-soft);
+    width: 1.875rem;
+    height: 1.875rem;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    background: transparent;
     color: var(--app-text-muted);
-    box-shadow: var(--app-shadow-sm);
+    box-shadow: none;
     cursor: pointer;
     transition:
       background-color 150ms ease,
@@ -52,7 +52,7 @@
   }
 
   .theme-toggle:focus-visible {
-    outline: 2px solid rgb(30 184 84 / 0.72);
+    outline: 2px solid var(--app-accent);
     outline-offset: 2px;
   }
 

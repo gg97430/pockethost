@@ -1,0 +1,36 @@
+[Unit]
+Description=Kolab private PocketBase database bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=pockethost-web
+SupplementaryGroups=ubuntu
+EnvironmentFile=/etc/kolab-db-bridge.env
+ExecStart=/usr/bin/python3 /opt/pockethost-web/web_private_db_broker.py
+Restart=always
+RestartSec=3
+UMask=0077
+StateDirectory=kolab-db-bridge
+StateDirectoryMode=0710
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+InaccessiblePaths=-/var/run/docker.sock -/run/docker.sock -/run/user/1001/docker.sock
+ReadWritePaths=/var/lib/kolab-db-bridge /run/kolab-db-targets
+MemoryMax=256M
+TasksMax=32
+CPUQuota=100%
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

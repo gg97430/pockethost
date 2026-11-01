@@ -87,17 +87,53 @@
           items: [
             { href: base, label: "Vue d'ensemble", icon: 'gauge-high', isActive: isOverviewActive },
             {
+              href: `${base}/usage`,
+              label: 'Utilisation',
+              icon: 'code',
+              isActive: sectionActive('usage'),
+            },
+            {
               href: `${base}/backups`,
               label: 'Sauvegardes',
               icon: 'box-archive',
               isActive: sectionActive('backups'),
             },
+            {
+              href: `${base}/litestream`,
+              label: 'Litestream',
+              icon: 'database',
+              isActive: sectionActive('litestream'),
+            },
+            {
+              href: `${base}/backup-checks`,
+              label: 'Vérification sauvegardes',
+              icon: 'shield-halved',
+              isActive: sectionActive('backup-checks'),
+            },
+            {
+              href: `${base}/actions`,
+              label: 'Journal des actions',
+              icon: 'list-check',
+              isActive: sectionActive('actions'),
+            },
             { href: `${base}/logs`, label: 'Logs', icon: 'scroll', isActive: sectionActive('logs') },
+            {
+              href: `${base}/performance`,
+              label: 'Performances',
+              icon: 'stopwatch',
+              isActive: sectionActive('performance'),
+            },
             {
               href: `${base}/monitoring`,
               label: 'Surveillance',
               icon: 'heart-pulse',
               isActive: sectionActive('monitoring'),
+            },
+            {
+              href: `${base}/diagnostics`,
+              label: 'Diagnostic',
+              icon: 'stethoscope',
+              isActive: sectionActive('diagnostics'),
             },
             { href: `${base}/ftp`, label: 'SFTP', icon: 'folder-open', isActive: sectionActive('ftp') },
             {
@@ -111,6 +147,12 @@
         {
           title: 'Configuration',
           items: [
+            {
+              href: `${base}/service-accounts`,
+              label: 'Comptes techniques',
+              icon: 'key',
+              isActive: sectionActive('service-accounts'),
+            },
             {
               href: `${base}/secrets`,
               label: 'Secrets',
@@ -168,7 +210,7 @@
 </script>
 
 <svelte:head>
-  <title>{isReady ? $instance.subdomain : 'Instance'} - Gestion PocketBase</title>
+  <title>{isReady ? $instance.subdomain : 'Instance'} - Kolab Hosting</title>
 </svelte:head>
 
 {#if isReady}

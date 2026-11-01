@@ -12,6 +12,8 @@ const host = process.env.HOST || '127.0.0.1'
 const port = Number(process.env.PORT || '5174')
 const mothershipProxyTarget =
   process.env.MOTHERSHIP_PROXY_TARGET || process.env.MOTHERSHIP_URL || 'http://127.0.0.1:8091'
+const noStore = 'no-cache, no-store, must-revalidate'
+const immutableCache = 'public, max-age=31536000, immutable'
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -34,6 +36,23 @@ const mimeTypes = {
 const isInsideRoot = (filePath) => {
   const relative = path.relative(root, filePath)
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+const staticCacheControl = async (resolved, method) => {
+  if (resolved.status !== 200 || !['GET', 'HEAD'].includes(method)) return noStore
+  try {
+    const [canonicalRoot, canonicalFile] = await Promise.all([fs.realpath(root), fs.realpath(resolved.filePath)])
+    const relative = path.relative(path.join(canonicalRoot, '_app', 'immutable'), canonicalFile)
+    if (
+      relative &&
+      relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative) &&
+      !['.html', '.htm'].includes(path.extname(canonicalFile).toLowerCase())
+    )
+      return immutableCache
+  } catch {}
+  return noStore
 }
 
 const statFile = async (filePath) => {
@@ -70,6 +89,8 @@ const resolveRequest = async (pathname) => {
   const fallback = path.join(root, '404.html')
   const stat = await statFile(fallback)
   const isAppRoute =
+    pathname === '/applications' ||
+    pathname.startsWith('/applications/') ||
     pathname === '/dashboard' ||
     pathname.startsWith('/dashboard/') ||
     pathname === '/instances' ||
@@ -84,6 +105,22 @@ const resolveRequest = async (pathname) => {
   if (stat) return { filePath: fallback, stat, status: 404 }
 
   return null
+}
+
+// Routes du worker et des services locaux du contrôleur : jamais relayées (chemin décodé et normalisé comme PocketBase).
+const isWorkerOnlyPath = (rawUrl) => {
+  let value = String(rawUrl || '').split(/[?#]/, 1)[0]
+  for (let round = 0; round < 3; round++) {
+    let next = value
+    try {
+      next = decodeURIComponent(value)
+    } catch {
+      break
+    }
+    if (next === value) break
+    value = next
+  }
+  return /^\/api\/web-apps\/_/i.test(path.posix.normalize('/' + value.replace(/\\/g, '/')))
 }
 
 const shouldProxyToMothership = (pathname) => {
@@ -186,6 +223,9 @@ const proxyToMothership = (req, res) => {
   const headers = {
     ...req.headers,
     host: target.host,
+    'x-forwarded-for': [req.headers['x-forwarded-for'], req.socket.remoteAddress || 'unknown']
+      .filter(Boolean)
+      .join(', '),
     'x-forwarded-host': req.headers.host || '',
     'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https',
   }
@@ -222,6 +262,17 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || `${host}:${port}`}`)
 
+    if (url.pathname.startsWith('/applications/settings/github/')) {
+      res.setHeader('Referrer-Policy', 'no-referrer')
+      res.setHeader('X-Frame-Options', 'DENY')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+    }
+
+    if (isWorkerOnlyPath(req.url)) {
+      sendJson(res, 404, { code: 404, message: 'Not found', data: {} })
+      return
+    }
+
     if (url.pathname === '/api/internal/system-metrics') {
       sendJson(res, 200, await getSystemMetrics())
       return
@@ -235,14 +286,14 @@ const server = http.createServer(async (req, res) => {
     const resolved = await resolveRequest(url.pathname)
 
     if (!resolved) {
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.writeHead(404, { 'cache-control': noStore, 'content-type': 'text/plain; charset=utf-8' })
       res.end('Not found')
       return
     }
 
     const ext = path.extname(resolved.filePath)
     res.writeHead(resolved.status, {
-      'cache-control': 'no-cache, no-store, must-revalidate',
+      'cache-control': await staticCacheControl(resolved, req.method),
       'content-length': resolved.stat.size,
       'content-type': mimeTypes[ext] || 'application/octet-stream',
     })
@@ -254,7 +305,7 @@ const server = http.createServer(async (req, res) => {
 
     createReadStream(resolved.filePath).pipe(res)
   } catch (error) {
-    res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+    res.writeHead(500, { 'cache-control': noStore, 'content-type': 'text/plain; charset=utf-8' })
     res.end(error instanceof Error ? error.message : String(error))
   }
 })

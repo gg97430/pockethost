@@ -74,6 +74,10 @@
     memoryEnabled: value.memoryEnabled,
     memoryThresholdPercent: value.memoryThresholdPercent,
     memorySustainMinutes: value.memorySustainMinutes,
+    diskEnabled: value.diskEnabled,
+    diskThreshold: value.diskThreshold,
+    latencyEnabled: value.latencyEnabled,
+    latencyThreshold: value.latencyThreshold,
     backupAlertsEnabled: value.backupAlertsEnabled,
     emailEnabled: value.emailEnabled,
     discordEnabled: value.discordEnabled,
@@ -117,6 +121,9 @@
 
   const incidentLabel = (type: InstanceMonitoringIncident['type']) => {
     if (type === 'health') return 'Disponibilité'
+    if (type === 'disk') return 'Disque serveur'
+    if (type === 'latency') return 'Latence HTTP'
+    if (type === 'backup-check') return 'Contrôle de sauvegarde'
     if (type === 'cpu') return 'CPU'
     if (type === 'memory') return 'Mémoire'
     return 'Sauvegarde'
@@ -574,6 +581,38 @@
         </article>
       </section>
 
+      <section class="monitor-panel monitor-extra-signals">
+        <h3>Disque et temps de réponse</h3>
+        <p>
+          Une alerte après 3 contrôles consécutifs au-dessus du seuil, puis un rétablissement après 3 contrôles normaux.
+          Le disque est partagé avec les autres instances du serveur. La latence mesure la sonde HTTP, pas toutes les
+          routes de votre application.
+        </p>
+        <label><input type="checkbox" bind:checked={draft.diskEnabled} /> Surveiller le disque du serveur</label>
+        <label
+          >Seuil disque (%) <input
+            aria-label="Seuil disque en pourcentage"
+            type="number"
+            min="1"
+            max="99"
+            bind:value={draft.diskThreshold}
+          /></label
+        >
+        <p>Dernière occupation : {policy.diskLastValue ?? '—'} %</p>
+        <label
+          ><input type="checkbox" bind:checked={draft.latencyEnabled} /> Surveiller la latence HTTP (sonde activée requise)</label
+        >
+        <label
+          >Seuil latence (ms) <input
+            aria-label="Seuil de latence en millisecondes"
+            type="number"
+            min="1"
+            max="60000"
+            bind:value={draft.latencyThreshold}
+          /></label
+        >
+        <p>Dernière latence : {policy.latencyLastValue ?? '—'} ms</p>
+      </section>
       <section class="monitor-panel channels-panel">
         <header class="monitor-panel__header">
           <div>
@@ -708,7 +747,26 @@
     --monitor-muted: rgb(255 255 255 / 0.52);
     --monitor-surface: #101411;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
     gap: 1rem;
+  }
+
+  .monitor-panel {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .monitor-extra-signals {
+    padding: 1rem;
+    display: grid;
+    gap: 0.8rem;
+  }
+  .monitor-extra-signals label {
+    white-space: normal;
+  }
+  .monitor-extra-signals input[type='number'] {
+    max-width: 100%;
+    width: 9rem;
   }
 
   .monitor-loading {

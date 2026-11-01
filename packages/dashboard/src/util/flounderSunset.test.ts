@@ -19,8 +19,8 @@ describe('flounderSunset', () => {
   })
 
   it('formats day labels', () => {
-    expect(flounderDaysLeftLabel(15)).toBe('15 days left')
-    expect(flounderDaysLeftLabel(1)).toBe('1 day left')
-    expect(flounderDaysLeftLabel(0)).toBe('Sales ended')
+    expect(flounderDaysLeftLabel(15)).toBe('15 jours restants')
+    expect(flounderDaysLeftLabel(1)).toBe('1 jour restant')
+    expect(flounderDaysLeftLabel(0)).toBe('Ventes terminées')
   })
 })

@@ -4,7 +4,7 @@
 </script>
 
 <svelte:head>
-  <title>{$page.status} - Gestion PocketBase</title>
+  <title>{$page.status} - Kolab Hosting</title>
 </svelte:head>
 
 <main class="relative grid min-h-full place-items-center px-6 py-24 sm:py-32 lg:px-8 z-10">

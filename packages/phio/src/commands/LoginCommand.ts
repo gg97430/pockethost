@@ -1,5 +1,6 @@
 import { input, password } from '@inquirer/prompts'
 import { Command } from 'commander'
+import { ClientResponseError } from 'pocketbase'
 import { config } from '../lib/config'
 import { PHIO_USERNAME } from '../lib/constants'
 import { login } from './../lib/getClient'
@@ -32,7 +33,20 @@ export const loginWithUserInput = async () => {
     config(`email`, email)
 
     try {
-      const authStore = await login(email, pw)
+      let authStore
+      try {
+        authStore = await login(email, pw)
+      } catch (error) {
+        if (
+          !(error instanceof ClientResponseError) ||
+          !error.response?.data?.totpRequired
+        )
+          throw error
+        const code = await input({
+          message: 'Authenticator code or recovery code',
+        })
+        authStore = await login(email, pw, code)
+      }
 
       config(`pb_auth`, authStore.exportToCookie())
     } catch (e) {

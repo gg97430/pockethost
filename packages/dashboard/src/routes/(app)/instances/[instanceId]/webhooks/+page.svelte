@@ -32,7 +32,7 @@
 </script>
 
 <svelte:head>
-  <title>Webhooks de {subdomain} - Gestion PocketBase</title>
+  <title>Webhooks de {subdomain} - Kolab Hosting</title>
 </svelte:head>
 
 <FeatureTab title="Webhooks" documentation="/docs/webhooks/">

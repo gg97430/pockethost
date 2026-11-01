@@ -73,8 +73,9 @@
     <svelte:fragment slot="summary">
       {#if instanceKeys.length === 0}
         <p>
-          Aucune clé SSH de votre compte ne peut encore accéder à <strong>{$instance.subdomain}</strong>. Générez une clé
-          sur votre machine, ajoutez-en une avec accès à cette instance, puis connectez-vous avec la commande ci-dessous.
+          Aucune clé SSH de votre compte ne peut encore accéder à <strong>{$instance.subdomain}</strong>. Générez une
+          clé sur votre machine, ajoutez-en une avec accès à cette instance, puis connectez-vous avec la commande
+          ci-dessous.
         </p>
       {:else}
         <p>

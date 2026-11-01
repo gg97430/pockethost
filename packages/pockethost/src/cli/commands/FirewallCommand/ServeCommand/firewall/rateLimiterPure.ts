@@ -1,4 +1,3 @@
-import type express from 'express'
 import { isIPv4, isIPv6 } from 'node:net'
 
 export const WEIGHT_DEN = 10
@@ -12,21 +11,32 @@ export const toProxyCidrString = (entry: string): string => {
   return entry
 }
 
-export const getConnectingIp = (req: express.Request): string | undefined => {
-  const cf = req.headers['cf-connecting-ip'] || req.headers['true-client-ip']
-  if (cf) return Array.isArray(cf) ? cf[0] : cf
+/** Clé d'hôte des limiteurs : `Exemple.com.` et `exemple.com` ne font qu'un seau. */
+export const normalizedRateLimitHost = (hostname: string | undefined): string | undefined => {
+  const host = hostname?.trim().toLowerCase().replace(/\.+$/, '')
+  return host && host.length <= 253 ? host : undefined
+}
 
-  const xff = req.headers['x-forwarded-for']
-  const xffStr = Array.isArray(xff) ? xff.join(',') : xff
-  if (typeof xffStr === 'string') {
-    const ip = xffStr.split(',')?.[0]?.trim()
-    if (ip) return ip
+/**
+ * Requêtes en cours par clé. Une clé n'existe que tant qu'une requête est en vol : contrairement à un limiteur à
+ * `duration: 0`, qui ne purge jamais ses clés, la mémoire reste bornée par le trafic simultané.
+ */
+export const createConcurrencyLimiter = (maxPoints: number) => {
+  const inFlight = new Map<string, number>()
+  return {
+    tryAcquire(key: string, weight: number) {
+      const used = inFlight.get(key) || 0
+      if (used + weight > maxPoints) return false
+      inFlight.set(key, used + weight)
+      return true
+    },
+    release(key: string, weight: number) {
+      const left = (inFlight.get(key) || 0) - weight
+      if (left > 0) inFlight.set(key, left)
+      else inFlight.delete(key)
+    },
+    size: () => inFlight.size,
   }
-
-  const xri = req.headers['x-real-ip']
-  if (xri) return Array.isArray(xri) ? xri[0] : xri
-
-  return req.ip || req.socket?.remoteAddress
 }
 
 export const isPocketBaseFilesPath = (path: string): boolean => path === '/api/files' || path.startsWith('/api/files/')

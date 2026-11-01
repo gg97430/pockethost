@@ -71,9 +71,7 @@ function rangeLabel(days: number[]) {
   if (days.length === 7) return 'tous les jours'
   if (days.join(',') === '1,2,3,4,5') return 'du lundi au vendredi'
   if (days.join(',') === '0,6') return 'le week-end'
-  return days
-    .map((day) => WEEK_DAYS.find((entry) => entry.cron === day)?.name || `${day}`)
-    .join(', ')
+  return days.map((day) => WEEK_DAYS.find((entry) => entry.cron === day)?.name || `${day}`).join(', ')
 }
 
 function parseTime(text: string): ParsedTime | null {
@@ -113,7 +111,7 @@ function localToUtc(hour: number, minute: number, timezoneOffsetMinutes: number)
 }
 
 function shiftWeekDay(day: number, offset: number) {
-  return ((day + offset) % 7 + 7) % 7
+  return (((day + offset) % 7) + 7) % 7
 }
 
 function shiftWeekDays(days: number[], offset: number) {
@@ -196,7 +194,8 @@ export function parseNaturalCron(input: string, options: NaturalCronOptions = {}
   if (/\b(demain|aujourd hui|ce soir|date precise|une fois)\b/.test(text)) {
     return {
       ok: false,
-      message: 'La sauvegarde automatique est récurrente. Utilisez plutôt "tous les jours à 2h" ou "chaque lundi à 3h".',
+      message:
+        'La sauvegarde automatique est récurrente. Utilisez plutôt "tous les jours à 2h" ou "chaque lundi à 3h".',
       timezoneLabel: label,
     }
   }
@@ -206,8 +205,7 @@ export function parseNaturalCron(input: string, options: NaturalCronOptions = {}
     return {
       ok: true,
       cron: intervalHours === 1 ? '0 * * * *' : `0 */${intervalHours} * * *`,
-      localDescription:
-        intervalHours === 1 ? 'Toutes les heures' : `Toutes les ${intervalHours} heures, à la minute 0`,
+      localDescription: intervalHours === 1 ? 'Toutes les heures' : `Toutes les ${intervalHours} heures, à la minute 0`,
       serverDescription: intervalHours === 1 ? '0 * * * *' : `0 */${intervalHours} * * *`,
       timezoneLabel: label,
     }
@@ -233,7 +231,8 @@ export function parseNaturalCron(input: string, options: NaturalCronOptions = {}
     if (serverDay === 32) {
       return {
         ok: false,
-        message: 'Cette heure décale la planification au mois suivant. Choisissez une heure plus tôt ou utilisez un cron personnalisé.',
+        message:
+          'Cette heure décale la planification au mois suivant. Choisissez une heure plus tôt ou utilisez un cron personnalisé.',
         timezoneLabel: label,
       }
     }

@@ -9,7 +9,7 @@ export const HandleMetaUpdateAtBoot = (_e: core.BootstrapEvent) => {
   const settings = $app.settings()
   settings.meta = {
     ...settings.meta,
-    appUrl: process.env.APP_URL || settings.meta.appUrl,
+    appURL: process.env.APP_URL || settings.meta.appURL,
     verificationTemplate: {
       ...settings.meta.verificationTemplate,
       actionUrl: `{APP_URL}/login/confirm-account/{TOKEN}`,

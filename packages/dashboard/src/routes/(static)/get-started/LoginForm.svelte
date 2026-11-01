@@ -1,6 +1,7 @@
 <script lang="ts">
   import { client } from '$src/pocketbase-client'
   import AlertBar from '$components/AlertBar.svelte'
+  import { isTotpRequiredError } from 'pockethost/common'
 
   const { authViaEmail } = client()
 
@@ -11,6 +12,8 @@
   let password: string = ''
   let formError: string = ''
   let showPassword: boolean = false
+  let needsTotp = false
+  let totpCode = ''
 
   $: isFormButtonDisabled = email.length === 0 || password.length === 0
 
@@ -28,9 +31,10 @@
     formError = ''
     showPassword = false
     try {
-      await authViaEmail(email, password)
+      await authViaEmail(email, password, totpCode)
       window.location.href = '/dashboard'
     } catch (error) {
+      if (isTotpRequiredError(error)) needsTotp = true
       const e = error as Error
       formError = `Une erreur est survenue pendant la connexion. ${e.message}`
     }
@@ -87,6 +91,22 @@
   </div>
 
   <AlertBar message={formError} type="error" />
+
+  {#if needsTotp}
+    <div class="auth-field-group">
+      <label class="auth-label" for="totp-code">Code d’authentification ou code de secours</label>
+      <input
+        id="totp-code"
+        class="auth-field"
+        type="text"
+        autocomplete="one-time-code"
+        maxlength="80"
+        bind:value={totpCode}
+        required
+        placeholder="Code de votre application"
+      />
+    </div>
+  {/if}
 
   <button type="submit" class="auth-submit" disabled={isFormButtonDisabled || isButtonLoading}>
     {#if isButtonLoading}

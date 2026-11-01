@@ -18,7 +18,8 @@
     {
       icon: 'lock',
       title: 'Auth',
-      description: "Les options d'authentification email et OAuth fonctionnent immédiatement pour les utilisateurs de votre app.",
+      description:
+        "Les options d'authentification email et OAuth fonctionnent immédiatement pour les utilisateurs de votre app.",
     },
     {
       icon: 'cloud',
@@ -42,7 +43,7 @@
       icon: 'bolt',
       title: 'Zéro config',
       description:
-        "Avec PocketHost, tout est inclus : base de données, SSL, authentification, fonctions cloud, accès SFTP et forte concurrence au même endroit.",
+        'Avec PocketHost, tout est inclus : base de données, SSL, authentification, fonctions cloud, accès SFTP et forte concurrence au même endroit.',
     },
   ]
 

@@ -31,8 +31,10 @@
       <wa-icon slot="icon" name="shield-halved"></wa-icon>
       <div class="flex w-full flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-sm leading-snug text-white/90">
-          Gestion PocketBase utilise des cookies d'analyse pour améliorer le produit.
-          <a href="/privacy" class="text-primary hover:text-secondary underline underline-offset-2">Politique de confidentialité</a>
+          Kolab Hosting utilise des cookies d'analyse pour améliorer le produit.
+          <a href="/privacy" class="text-primary hover:text-secondary underline underline-offset-2"
+            >Politique de confidentialité</a
+          >
         </p>
         <wa-button type="button" variant="brand" size="s" class="shrink-0" onclick={accept}>Accepter</wa-button>
       </div>

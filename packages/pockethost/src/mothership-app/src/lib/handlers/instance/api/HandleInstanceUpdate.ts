@@ -1,6 +1,9 @@
 import { type InstanceWebhookCollection } from '$common'
 import { mkLog, StringKvLookup } from '$util/Logger'
 import { removeEmptyKeys } from '$util/removeEmptyKeys'
+import { canManageInstance } from '../../../security/instanceAccess'
+import { assertNoWebDomainConflict } from '../../webApps/domains'
+import { assertInstanceHostnameOperator } from '../hostnames'
 
 // Helper function to make Cloudflare API calls
 const callCloudflareAPI = (endpoint: string, method: string, body?: any, log?: any) => {
@@ -128,8 +131,23 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
   if (!authRecord) {
     throw new Error(`Session utilisateur attendue`)
   }
-  if (record.get('uid') !== authRecord.id) {
+  if (!canManageInstance(record, authRecord)) {
     throw new BadRequestError(`Non autorisé`)
+  }
+
+  if (subdomain !== null && subdomain !== record.getString('subdomain')) {
+    if ($os.getenv('WEB_APPS_ENABLED') === 'true' && subdomain.trim().toLowerCase().startsWith('web-'))
+      throw new BadRequestError('Le préfixe web- est réservé aux applications web.')
+    assertNoWebDomainConflict(`${subdomain.trim().toLowerCase()}.${$os.getenv('APEX_DOMAIN') || 'monappli.re'}`)
+  }
+  if (cname !== null) assertNoWebDomainConflict(cname.trim().toLowerCase())
+
+  const hostnameFields = JSON.parse(JSON.stringify(e.requestInfo().body || {})).fields || {}
+  for (const name of ['publicHostname', 'legacyHostnames']) {
+    if (Object.prototype.hasOwnProperty.call(hostnameFields, name)) {
+      assertInstanceHostnameOperator(authRecord)
+      record.set(name, hostnameFields[name])
+    }
   }
 
   // Check if CNAME changed and handle Cloudflare

@@ -77,7 +77,11 @@ export const getInstanceBySubdomainCnameOrId = async (search: string) => {
     )
 }
 
-const unsafeLogin = async (username: string, password: string) => {
+const unsafeLogin = async (
+  username: string,
+  password: string,
+  totpCode = process.env.PHIO_TOTP_CODE || ''
+) => {
   if (!client) {
     throw new Error('No client found')
   }
@@ -90,16 +94,22 @@ const unsafeLogin = async (username: string, password: string) => {
         }
         const res = await client
           .collection('users')
-          .authWithPassword(username, password)
+          .authWithPassword(username, password, {
+            body: { identity: username, password, totpCode },
+          })
       },
     },
   ])
   return client.authStore
 }
 
-export const login = async (username: string, password: string) => {
+export const login = async (
+  username: string,
+  password: string,
+  totpCode = ''
+) => {
   const client = await getClient()
-  await unsafeLogin(username, password)
+  await unsafeLogin(username, password, totpCode)
   await ensureDeployKey(client)
   return client.authStore
 }

@@ -12,6 +12,7 @@ import {
   UserFields,
   UserId,
 } from '@'
+import { instanceRoutingHostnames, normalizeInstanceRequestHost } from '../../common/instanceHostnames'
 
 export type MirrorLiveInstance = {
   id: InstanceId
@@ -51,47 +52,28 @@ export const MothershipMirrorService = mkSingleton(async (config: MothershipMirr
   const mirror: {
     users: { [_: UserId]: UserFields }
     instancesById: { [_: InstanceId]: InstanceFields }
-    instancesByCanonicalId: { [_: string]: InstanceFields }
-    instancesByCanonicalSubdomain: { [_: string]: InstanceFields }
-    instancesBySubdomain: { [_: string]: InstanceFields }
-    instancesByCname: { [_: string]: InstanceFields }
-  } = {
-    users: {},
-    instancesById: {},
-    instancesByCanonicalId: {},
-    instancesByCanonicalSubdomain: {},
-    instancesBySubdomain: {},
-    instancesByCname: {},
-  }
+    instancesByHost: { [_: string]: InstanceFields }
+  } = { users: {}, instancesById: {}, instancesByHost: {} }
 
   const upsertInstance = (record: InstanceFields) => {
     dbg(`upsertInstance ${record.id}`)
-    deleteInstance(record.id)
-    const canonicalId = `${record.id}.${EDGE_APEX_DOMAIN()}`
-    const canonicalSubdomain = `${record.subdomain}.${EDGE_APEX_DOMAIN()}`
-    mirror.instancesById[record.id] = record
-    mirror.instancesBySubdomain[record.subdomain] = record
-    mirror.instancesByCanonicalId[canonicalId] = record
-    mirror.instancesByCanonicalSubdomain[canonicalSubdomain] = record
-    if (record.cname) {
-      mirror.instancesByCname[record.cname] = record
+    const hosts = instanceRoutingHostnames(record, EDGE_APEX_DOMAIN())
+    for (const host of hosts) {
+      const previous = mirror.instancesByHost[host]
+      if (previous && previous.id !== record.id) throw new Error(`Conflicting instance hostname: ${host}`)
     }
+    deleteInstance(record.id)
+    mirror.instancesById[record.id] = record
+    for (const host of hosts) mirror.instancesByHost[host] = record
     ensureInstanceDirectoryStructure(record.id, logger)
   }
 
   const deleteInstance = (id: InstanceId) => {
     const oldInstance = mirror.instancesById[id]
     if (!oldInstance) return
-
-    const canonicalId = `${oldInstance.id}.${EDGE_APEX_DOMAIN()}`
-    const canonicalSubdomain = `${oldInstance.subdomain}.${EDGE_APEX_DOMAIN()}`
-
     delete mirror.instancesById[id]
-    delete mirror.instancesBySubdomain[oldInstance.subdomain]
-    delete mirror.instancesByCanonicalId[canonicalId]
-    delete mirror.instancesByCanonicalSubdomain[canonicalSubdomain]
-    if (oldInstance.cname) {
-      delete mirror.instancesByCname[oldInstance.cname]
+    for (const host of instanceRoutingHostnames(oldInstance, EDGE_APEX_DOMAIN())) {
+      if (mirror.instancesByHost[host]?.id === id) delete mirror.instancesByHost[host]
     }
   }
 
@@ -202,11 +184,8 @@ export const MothershipMirrorService = mkSingleton(async (config: MothershipMirr
       return mirror.instancesById[id]
     },
     async getInstanceByHost(host: string) {
-      return (
-        mirror.instancesByCname[host] ||
-        mirror.instancesByCanonicalSubdomain[host] ||
-        mirror.instancesByCanonicalId[host]
-      )
+      const normalized = normalizeInstanceRequestHost(host)
+      return normalized ? mirror.instancesByHost[normalized] : undefined
     },
     async getUser(id: UserId) {
       return mirror.users[id]

@@ -1,4 +1,5 @@
 import { type InstanceFields, parseBoolean } from 'pockethost/common'
+import { instanceGeneratedHostname, instancePublicHostname } from '../../../pockethost/src/common/instanceHostnames'
 
 /**
  * These environment variables default to pointing to the production build so frontend development is easy. If they are
@@ -16,6 +17,9 @@ export const PUBLIC_HTTP_PROTOCOL = import.meta.env.PUBLIC_HTTP_PROTOCOL || `htt
 // The complete URL to the mothership
 export const PUBLIC_MOTHERSHIP_URL = import.meta.env.PUBLIC_MOTHERSHIP_URL || PUBLIC_APP_URL
 
+// Origin address configured per server, including when the dashboard uses a CDN.
+export const PUBLIC_SERVER_IP = import.meta.env.PUBLIC_SERVER_IP || ''
+
 // Whether browser debug logs are enabled.
 export const PUBLIC_DEBUG = parseBoolean(import.meta.env.PUBLIC_DEBUG || 'false')
 
@@ -28,11 +32,11 @@ export const APP_URL = (...paths: string[]) => {
 }
 
 export const INSTANCE_BARE_HOST = (instance: InstanceFields) => {
-  return `${instance.subdomain}.${PUBLIC_APEX_DOMAIN}`
+  return instanceGeneratedHostname(instance, PUBLIC_APEX_DOMAIN)
 }
 
 export const INSTANCE_HOST = (instance: InstanceFields) => {
-  return instance.cname || INSTANCE_BARE_HOST(instance)
+  return instancePublicHostname(instance, PUBLIC_APEX_DOMAIN)
 }
 
 /** In the browser, follow the page protocol so HTTPS dashboard pages can reach instance workers. */
@@ -66,7 +70,9 @@ export const INSTANCE_URL = (instance: InstanceFields, ...paths: string[]) => {
  * @param {string} name This is the unique instance name
  */
 export const INSTANCE_ADMIN_URL = (instance: InstanceFields) => {
-  return INSTANCE_URL(instance, `_/`)
+  const version = instance.version.match(/^(\d+)\.(\d+)/)
+  const modern = version && (Number(version[1]) > 0 || Number(version[2]) >= 23)
+  return modern ? APP_URL('console', instance.id) : INSTANCE_URL(instance, '_/')
 }
 
 export const FTP_HOST = `ftp.${PUBLIC_APEX_DOMAIN}`

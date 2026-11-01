@@ -52,7 +52,8 @@
   <div class="blog-discord-cta">
     <h3 class="blog-discord-title">Restez informé</h3>
     <p class="blog-discord-lead">
-      Rejoignez notre communauté Discord pour recevoir les dernières nouvelles et échanger avec d'autres utilisateurs PocketHost.
+      Rejoignez notre communauté Discord pour recevoir les dernières nouvelles et échanger avec d'autres utilisateurs
+      PocketHost.
     </p>
     <a href="https://discord.gg/nVTxCMEcGT" target="_blank" rel="noopener noreferrer" class="blog-discord-button">
       Rejoindre la communauté Discord

@@ -20,8 +20,8 @@ describe('InstanceFileAccess guards', () => {
   })
 
   it('blocks arbitrary files at instance root', () => {
-    expect(() => assertNotInstanceRootMutation(['evil.txt'], instance)).toThrow('not allowed')
-    expect(() => assertNotInstanceRootDelete(['evil.txt'], instance)).toThrow('Cannot remove')
+    expect(() => assertNotInstanceRootMutation(['evil.txt'], instance)).toThrow("n'est pas autorisé")
+    expect(() => assertNotInstanceRootDelete(['evil.txt'], instance)).toThrow('Impossible de supprimer')
   })
 
   it('treats pb_data as powered-off-only', () => {
@@ -39,6 +39,6 @@ describe('InstanceFileAccess guards', () => {
   })
 
   it('blocks mkdir for custom top-level folders', () => {
-    expect(() => assertNotInstanceRootMkdir(['custom'], instance)).toThrow('Cannot create directories')
+    expect(() => assertNotInstanceRootMkdir(['custom'], instance)).toThrow('Impossible de créer des dossiers')
   })
 })

@@ -91,3 +91,27 @@ describe('instance monitoring input validation', () => {
     )
   })
 })
+
+describe('additional operational alerts', () => {
+  it.each(['disk', 'latency', 'backup-check'])('accepts %s notification deliveries', (type) => {
+    const payload = {
+      title: 'Incident',
+      message: 'Check',
+      instanceId: 'aaaaaaaaaaaaaaa',
+      instanceName: 'test',
+      type,
+      phase: 'opened',
+      occurredAt: new Date().toISOString(),
+    }
+    expect(normalizeMonitoringNotificationPayload(JSON.stringify(payload)).type).toBe(type)
+  })
+  it('uses a relative latency recovery margin and requires three healthy samples', () => {
+    let state = { highStreak: 0, normalStreak: 0, incidentOpen: false }
+    for (let i = 0; i < 3; i++) state = evaluateThresholdSignal(state, 1200, 1000, 3, 3, 100).state
+    expect(state.incidentOpen).toBe(true)
+    state = evaluateThresholdSignal(state, 950, 1000, 3, 3, 100).state
+    expect(state.normalStreak).toBe(0)
+    for (let i = 0; i < 3; i++) state = evaluateThresholdSignal(state, 850, 1000, 3, 3, 100).state
+    expect(state.incidentOpen).toBe(false)
+  })
+})

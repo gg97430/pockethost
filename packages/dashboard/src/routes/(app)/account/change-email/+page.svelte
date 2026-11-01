@@ -39,7 +39,7 @@
 </script>
 
 <svelte:head>
-  <title>Changer l'email - Gestion PocketBase</title>
+  <title>Changer l'email - Kolab Hosting</title>
 </svelte:head>
 
 <FeatureTab title="Changer l'email">

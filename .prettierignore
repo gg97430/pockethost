@@ -10,4 +10,5 @@ _site
 forks
 
 packages/pockethost/src/mothership-app/pb_hooks
+packages/pockethost/src/instance-app/v23/pb_hooks/_ph_totp.js
 **/types.d.ts

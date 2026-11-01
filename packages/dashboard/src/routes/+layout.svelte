@@ -33,7 +33,7 @@
 <Meta />
 
 <svelte:head>
-  <title>Gestion PocketBase</title>
+  <title>Kolab Hosting</title>
   {@html a11yDark}
 </svelte:head>
 
@@ -44,23 +44,39 @@
     </div>
   {/if}
 
-  {#if !isAuthOnlyPage && !isBlockedPublicPage}
-    <MothershipStatus />
-    <Navbar />
-
-    <div class="px-4 md:px-20">
-      <VerifyAccountBar />
-    </div>
-  {/if}
+  {#if !isAuthOnlyPage && !isBlockedPublicPage}<Navbar />{/if}
 
   {#if !isBlockedPublicPage}
-    <div class="w-full" use:proseCodeBlocks>
+    <div class="w-full" class:workspace-main={!isAuthOnlyPage} use:proseCodeBlocks>
+      {#if !isAuthOnlyPage}
+        <MothershipStatus />
+        <div class="workspace-notices"><VerifyAccountBar /></div>
+      {/if}
       <slot />
     </div>
   {/if}
 </div>
 
 <style>
+  .workspace-main {
+    min-width: 0;
+    min-height: 100vh;
+    margin-left: 224px;
+    padding-top: 56px;
+    width: calc(100% - 224px);
+  }
+  .workspace-notices {
+    padding: 0 24px;
+  }
+  @media (max-width: 767px) {
+    .workspace-main {
+      margin-left: 0;
+      width: 100%;
+    }
+    .workspace-notices {
+      padding: 0 16px;
+    }
+  }
   .auth-theme-toggle {
     position: fixed;
     top: 1rem;

@@ -1,4 +1,4 @@
-const SAFE_INSTANCE_ID = /^[a-z0-9]+$/
+const SAFE_INSTANCE_ID = /^[a-z0-9]{15}$/
 
 export type DiskCleanupKind = 'instance-data' | 'backup-data' | 'import-data'
 
@@ -14,6 +14,7 @@ export type DiskCleanupEntry = {
 }
 
 export type DiskCleanupResult = {
+  snapshot: string
   scannedAt: string
   dataRoot: string
   orphanCount: number
@@ -88,7 +89,7 @@ const dockerContainerNames = () => {
         .filter(Boolean)
     )
   } catch {
-    return new Set<string>()
+    throw new BadRequestError('Docker est inaccessible. Aucun dossier ne sera supprimé.')
   }
 }
 
@@ -158,17 +159,45 @@ const scanRoot = (
   return entries
 }
 
-export const scanOrphanInstanceStorage = (remove = false): DiskCleanupResult => {
+export const scanOrphanInstanceStorage = (remove = false, expectedSnapshot = ''): DiskCleanupResult => {
   const recordIds = listInstanceRecordIds()
   const containers = dockerContainerNames()
   const entries = [
-    ...scanRoot(`${dataRoot()}/instances`, 'instance-data', recordIds, containers, remove, true),
-    ...scanRoot(backupRoot(), 'backup-data', recordIds, containers, remove),
-    ...scanRoot(`${importRoot()}/assembled`, 'import-data', recordIds, containers, remove),
-    ...scanRoot(`${importRoot()}/.chunked`, 'import-data', recordIds, containers, remove),
+    ...scanRoot(`${dataRoot()}/instances`, 'instance-data', recordIds, containers, false, true),
+    ...scanRoot(backupRoot(), 'backup-data', recordIds, containers, false),
+    ...scanRoot(`${importRoot()}/assembled`, 'import-data', recordIds, containers, false),
+    ...scanRoot(`${importRoot()}/.chunked`, 'import-data', recordIds, containers, false),
   ]
 
+  const snapshot = $security.sha256(
+    JSON.stringify(
+      entries.map((e) => [e.kind, e.id, e.sizeBytes]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    )
+  )
+  if (remove) {
+    if (!expectedSnapshot || expectedSnapshot !== snapshot)
+      throw new BadRequestError(
+        'La liste des dossiers a changé ou n’a pas été confirmée. Relancez l’analyse avant de nettoyer.'
+      )
+    for (const entry of entries) {
+      // Recheck immediately before deletion; fail closed on database or Docker errors.
+      if ($app.countRecords('instances', $dbx.exp('[[id]] = {:id}', { id: entry.id }))) {
+        entry.error = 'Une instance utilise désormais ce dossier.'
+        continue
+      }
+      if (dockerContainerNames().has(entry.id)) {
+        entry.error = 'Un conteneur utilise désormais ce dossier.'
+        continue
+      }
+      try {
+        entry.removed = removeDirectory(entry.path)
+      } catch {
+        entry.error = 'Suppression impossible.'
+      }
+    }
+  }
   return {
+    snapshot,
     scannedAt: new Date().toISOString(),
     dataRoot: dataRoot(),
     orphanCount: entries.length,

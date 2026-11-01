@@ -26,7 +26,7 @@
 </script>
 
 <svelte:head>
-  <title>Confirmation de votre compte - Gestion PocketBase</title>
+  <title>Confirmation de votre compte - Kolab Hosting</title>
 </svelte:head>
 
 <div class="min-h-screen flex items-center justify-center">

@@ -5,7 +5,11 @@ export const requireOperatorAdmin = (e: core.RequestEvent): models.Record => {
     throw new UnauthorizedError('Authentification requise.')
   }
 
-  if (!authRecord.getBool('superAdmin')) {
+  if (
+    authRecord.collection().name !== 'users' ||
+    authRecord.getString('suspension') ||
+    !authRecord.getBool('superAdmin')
+  ) {
     throw new ForbiddenError('Acces superadmin requis.')
   }
 

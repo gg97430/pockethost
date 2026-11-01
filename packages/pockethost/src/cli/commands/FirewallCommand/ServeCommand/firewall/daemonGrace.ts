@@ -17,6 +17,42 @@ const isDaemonReady = async (url: string, timeoutMs: number) => {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Une seule sonde pour toutes les requêtes retenues : N requêtes en attente ne font pas N boucles vers le démon. Chaque
+ * requête garde sa propre échéance ; la boucle s'arrête dès qu'il n'y a plus personne à servir.
+ */
+export const createDaemonWaiter = (
+  probe: (timeoutMs: number) => Promise<boolean>,
+  retryMs: () => number,
+  onProbeFailed: () => void = () => undefined
+) => {
+  const waiting = new Set<(ready: boolean) => void>()
+  let polling = false
+  const poll = async () => {
+    polling = true
+    while (waiting.size) {
+      if (await probe(retryMs())) {
+        for (const settle of [...waiting]) settle(true)
+        break
+      }
+      onProbeFailed()
+      await sleep(retryMs())
+    }
+    polling = false
+  }
+  return (timeoutMs: number) =>
+    new Promise<boolean>((resolve) => {
+      const settle = (ready: boolean) => {
+        clearTimeout(deadline)
+        waiting.delete(settle)
+        resolve(ready)
+      }
+      const deadline = setTimeout(settle, timeoutMs, false)
+      waiting.add(settle)
+      if (!polling) void poll()
+    })
+}
+
 export const isDaemonUnreachableError = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : `${err}`
   const code = err && typeof err === 'object' && 'code' in err ? `${(err as { code?: string }).code}` : ''
@@ -34,41 +70,32 @@ export const sendDaemonUnavailable = (res: Response) => {
 export const createDaemonGraceMiddleware = (logger: Logger): RequestHandler => {
   const { dbg, info } = logger.create(`firewall:daemon-grace`)
   let lastOutageLogAt = 0
+  const waitForDaemon = createDaemonWaiter(
+    (timeoutMs) => isDaemonReady(daemonHealthUrl(), timeoutMs),
+    PH_FIREWALL_DAEMON_GRACE_RETRY_MS,
+    () => {
+      if (Date.now() - lastOutageLogAt > 5000) {
+        info(
+          `Daemon unavailable — holding traffic up to ${PH_FIREWALL_DAEMON_GRACE_MS()}ms (PH_FIREWALL_DAEMON_GRACE_MS)`
+        )
+        lastOutageLogAt = Date.now()
+      }
+      dbg(`Daemon health check failed, retrying in ${PH_FIREWALL_DAEMON_GRACE_RETRY_MS()}ms`)
+    }
+  )
 
   return async (req, res, next) => {
     const graceMs = PH_FIREWALL_DAEMON_GRACE_MS()
-    const retryMs = PH_FIREWALL_DAEMON_GRACE_RETRY_MS()
 
     if (graceMs <= 0 || isHealthProbePath(req.path)) {
       next()
       return
     }
 
-    const deadline = Date.now() + graceMs
-
-    while (Date.now() < deadline) {
-      if (req.aborted || res.writableEnded || res.headersSent) return
-
-      const remaining = deadline - Date.now()
-      if (remaining <= 0) break
-
-      if (await isDaemonReady(daemonHealthUrl(), Math.min(retryMs, remaining))) {
-        next()
-        return
-      }
-
-      if (Date.now() - lastOutageLogAt > 5000) {
-        info(`Daemon unavailable — holding traffic up to ${graceMs}ms (PH_FIREWALL_DAEMON_GRACE_MS)`)
-        lastOutageLogAt = Date.now()
-      }
-
-      dbg(`Daemon health check failed, retrying in ${retryMs}ms`)
-      await sleep(Math.min(retryMs, deadline - Date.now()))
-    }
-
-    if (!res.headersSent && !res.writableEnded) {
-      sendDaemonUnavailable(res)
-    }
+    const ready = await waitForDaemon(graceMs)
+    if (req.aborted || res.writableEnded || res.headersSent) return
+    if (ready) next()
+    else sendDaemonUnavailable(res)
   }
 }
 
@@ -86,7 +113,8 @@ export const createDaemonProxyErrorHandler = (logger: Logger): ErrorRequestHandl
       return
     }
 
+    // Le détail (chemins, adresses internes) reste dans les journaux.
     error(err)
-    res.status(502).send(err instanceof Error ? err.message : String(err))
+    res.status(502).send('PocketHost edge could not complete this request.')
   }
 }

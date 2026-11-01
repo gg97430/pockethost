@@ -13,7 +13,7 @@
 </script>
 
 <svelte:head>
-  <title>Nouvelle instance - Gestion PocketBase</title>
+  <title>Nouvelle instance - Kolab Hosting</title>
 </svelte:head>
 
 <div class="flex items-center justify-center pt-14">

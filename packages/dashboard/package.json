@@ -25,8 +25,8 @@
     "@types/node": "^24.13.2",
     "highlight.js": "11.11.1",
     "mdsvex": "^0.12.7",
-    "pockethost": "workspace:^",
     "pocketbase": "^0.27.0",
+    "pockethost": "workspace:^",
     "svelte": "^5.56.3",
     "svelte-check": "^4.6.0",
     "svelte-highlight": "^7.11.0",
@@ -37,6 +37,8 @@
     "wrangler": "^4.100.0"
   },
   "dependencies": {
-    "@noble/hashes": "^2.2.0"
+    "@noble/hashes": "^2.2.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0"
   }
 }

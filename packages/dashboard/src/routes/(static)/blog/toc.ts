@@ -11,7 +11,7 @@ export const toc: BlogTocEntry[] = [
     title: 'Aperçu de PocketHost 3.0 : Flounder s’arrête le 1 juillet',
     path: '/blog/pockethost-30-preview',
     description:
-      "À savoir avant le 1 juillet : fin des ventes Flounder à vie, nouvelles formules Free/Pro/Agency uniquement pour les nouvelles inscriptions, comptes existants conservés.",
+      'À savoir avant le 1 juillet : fin des ventes Flounder à vie, nouvelles formules Free/Pro/Agency uniquement pour les nouvelles inscriptions, comptes existants conservés.',
     date: '20 juin 2026',
     author: 'capn',
   },
@@ -35,7 +35,7 @@ export const toc: BlogTocEntry[] = [
     title: 'Mothership est sur PocketBase 0.39',
     path: '/blog/mothership-pocketbase-v039',
     description:
-      "Le plan de contrôle a enfin franchi la bascule JSVM v0.22 -> v0.23. Point de non-retour, fichiers SQLite plus petits et déploiement surveillé tant que les instances continuent de tourner.",
+      'Le plan de contrôle a enfin franchi la bascule JSVM v0.22 -> v0.23. Point de non-retour, fichiers SQLite plus petits et déploiement surveillé tant que les instances continuent de tourner.',
     date: '14 juin 2026',
     author: 'capn',
   },
@@ -43,7 +43,7 @@ export const toc: BlogTocEntry[] = [
     title: 'Préparation plateforme pré-v0.39 : tests, CI et dépendances',
     path: '/blog/pre-39-platform-deps-refresh',
     description:
-      "Avant la bascule Mothership v0.39 : suite Vitest, garde-fous CI, mise à jour progressive des dépendances, SDK PocketBase 0.27, double auth admin pour Mothership 0.22.",
+      'Avant la bascule Mothership v0.39 : suite Vitest, garde-fous CI, mise à jour progressive des dépendances, SDK PocketBase 0.27, double auth admin pour Mothership 0.22.',
     date: '14 juin 2026',
     author: 'capn',
   },
@@ -59,7 +59,7 @@ export const toc: BlogTocEntry[] = [
     title: 'phio 0.4 : déployer via SFTP',
     path: '/blog/phio-sftp-deploy',
     description:
-      "phio dev et deploy synchronisent maintenant via SFTP sur le port 2222 avec une clé de déploiement créée automatiquement. Le lien projet passe à .phioconfig.",
+      'phio dev et deploy synchronisent maintenant via SFTP sur le port 2222 avec une clé de déploiement créée automatiquement. Le lien projet passe à .phioconfig.',
     date: '14 juin 2026',
     author: 'capn',
   },
@@ -72,10 +72,10 @@ export const toc: BlogTocEntry[] = [
     author: 'capn',
   },
   {
-    title: "Dernier appel pour l’accès à vie Flounder",
+    title: 'Dernier appel pour l’accès à vie Flounder',
     path: '/blog/flounder-lifetime-sunset',
     description:
-      "Les ventes Flounder à vie se terminent le 1 juillet 2026. Les comptes existants auront 30 jours après la fin pour acheter. Email envoyé à tous les utilisateurs.",
+      'Les ventes Flounder à vie se terminent le 1 juillet 2026. Les comptes existants auront 30 jours après la fin pour acheter. Email envoyé à tous les utilisateurs.',
     date: '13 juin 2026',
     author: 'capn',
   },
@@ -83,7 +83,7 @@ export const toc: BlogTocEntry[] = [
     title: 'FTPS disparaît : passez à SFTP',
     path: '/blog/ftps-sunset',
     description:
-      "FTPS sur le port 21 est en fin de vie. SFTP sur 2222 avec clés SSH est la voie à suivre. phio deploy et dev utilisent déjà SFTP.",
+      'FTPS sur le port 21 est en fin de vie. SFTP sur 2222 avec clés SSH est la voie à suivre. phio deploy et dev utilisent déjà SFTP.',
     date: '13 juin 2026',
     author: 'capn',
   },
@@ -115,7 +115,7 @@ export const toc: BlogTocEntry[] = [
     title: 'Limites de débit plus intelligentes entre API et fichiers',
     path: '/blog/weighted-rate-limiting',
     description:
-      "Les limites firewall pondèrent maintenant les routes /api/files 10x moins cher que les appels REST API. Plus de marge pour uploads et downloads sans relâcher la protection contre les abus API.",
+      'Les limites firewall pondèrent maintenant les routes /api/files 10x moins cher que les appels REST API. Plus de marge pour uploads et downloads sans relâcher la protection contre les abus API.',
     date: '13 juin 2026',
     author: 'capn',
   },
@@ -171,7 +171,7 @@ export const toc: BlogTocEntry[] = [
     title: 'Interface dashboard : migration Web Awesome',
     path: '/blog/web-awesome-migration',
     description:
-      "Le dashboard tourne maintenant sur Web Awesome : composants plus propres, docs lisibles et stack frontend plus simple.",
+      'Le dashboard tourne maintenant sur Web Awesome : composants plus propres, docs lisibles et stack frontend plus simple.',
     date: '12 juin 2026',
     author: 'capn',
   },
@@ -194,21 +194,24 @@ export const toc: BlogTocEntry[] = [
   {
     title: 'Les webhooks sont disponibles',
     path: '/blog/webhooks-launch',
-    description: 'Automatisez vos workflows PocketBase avec notre nouvelle fonctionnalité de webhooks, plus fiable que les tâches cron.',
+    description:
+      'Automatisez vos workflows PocketBase avec notre nouvelle fonctionnalité de webhooks, plus fiable que les tâches cron.',
     date: '22 juillet 2025',
     author: 'capn',
   },
   {
     title: 'Synchronisation de données améliorée avec MothershipMirrorService',
     path: '/blog/mothership-mirror-service',
-    description: 'Infrastructure améliorée pour une meilleure synchronisation des données et de meilleures performances du dashboard.',
+    description:
+      'Infrastructure améliorée pour une meilleure synchronisation des données et de meilleures performances du dashboard.',
     date: '21 juillet 2025',
     author: 'capn',
   },
   {
     title: 'Domaines personnalisés automatisés avec Cloudflare',
     path: '/blog/custom-domains-automation',
-    description: 'Configuration entièrement automatisée des domaines personnalisés avec intégration Cloudflare et certificats SSL.',
+    description:
+      'Configuration entièrement automatisée des domaines personnalisés avec intégration Cloudflare et certificats SSL.',
     date: '19 juillet 2025',
     author: 'capn',
   },
@@ -222,7 +225,8 @@ export const toc: BlogTocEntry[] = [
   {
     title: 'Le paywall strict est actif',
     path: '/blog/hard-paywall-is-live',
-    description: 'Le paywall strict est maintenant actif pour les nouveaux utilisateurs, avec maintien des droits pour les utilisateurs existants.',
+    description:
+      'Le paywall strict est maintenant actif pour les nouveaux utilisateurs, avec maintien des droits pour les utilisateurs existants.',
     date: '10 janvier 2025',
     author: 'capn',
   },
@@ -243,7 +247,8 @@ export const toc: BlogTocEntry[] = [
   {
     title: 'Pourquoi pas de SLA ?',
     path: '/blog/why-no-sla',
-    description: "Pourquoi PocketHost ne propose pas de SLA formel et ce que cela signifie pour les attentes de fiabilité.",
+    description:
+      'Pourquoi PocketHost ne propose pas de SLA formel et ce que cela signifie pour les attentes de fiabilité.',
     date: '1 janvier 2025',
     author: 'capn',
   },

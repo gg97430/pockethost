@@ -166,7 +166,8 @@
       {/if}
     </div>
 
-    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}>Mettre à jour le domaine</wa-button
+    <wa-button type="submit" variant="danger" disabled={!isFullyOff || isButtonDisabled}
+      >Mettre à jour le domaine</wa-button
     >
   </form>
 

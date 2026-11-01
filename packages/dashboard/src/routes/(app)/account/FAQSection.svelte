@@ -33,12 +33,12 @@
     <FAQItem question="Politique d'utilisation raisonnable">
       <p class="mb-4">
         Quand nous disons "illimité", nous l'entendons au sens d'une utilisation raisonnable. Évidemment, tout a des
-        limites. En étudiant les usages de la plateforme, nous avons constaté que même les instances les plus
-        actives sollicitent rarement fortement notre système.
+        limites. En étudiant les usages de la plateforme, nous avons constaté que même les instances les plus actives
+        sollicitent rarement fortement notre système.
       </p>
       <p class="mb-4">
-        Gestion PocketBase est conçu pour les développeurs qui veulent lancer et itérer rapidement sur des idées sans se soucier
-        de la facturation à l'usage ni de l'infrastructure.
+        Kolab Hosting est conçu pour les développeurs qui veulent lancer et itérer rapidement sur des idées sans se
+        soucier de la facturation à l'usage ni de l'infrastructure.
       </p>
       <p class="mb-4">
         Si votre application grossit et commence à affecter le système, nous discuterons d'une offre entreprise ou d'une

@@ -1,21 +1,14 @@
-import type express from 'express'
 import { describe, expect, it } from 'vitest'
 import {
   consumeWeightForPath,
-  getConnectingIp,
+  createConcurrencyLimiter,
   isHealthProbePath,
   isPocketBaseFilesPath,
+  normalizedRateLimitHost,
   toMicroPointLimit,
   toProxyCidrString,
   WEIGHT_DEN,
 } from './rateLimiterPure'
-
-const mockReq = (headers: Record<string, string | string[]>, ip = '127.0.0.1'): express.Request =>
-  ({
-    headers,
-    ip,
-    socket: { remoteAddress: ip },
-  }) as express.Request
 
 describe('rateLimiterPure', () => {
   it('normalizes proxy CIDR strings', () => {
@@ -23,10 +16,29 @@ describe('rateLimiterPure', () => {
     expect(toProxyCidrString('10.0.0.0/8')).toBe('10.0.0.0/8')
   })
 
-  it('getConnectingIp prefers Cloudflare headers', () => {
-    expect(getConnectingIp(mockReq({ 'cf-connecting-ip': '1.2.3.4' }))).toBe('1.2.3.4')
-    expect(getConnectingIp(mockReq({ 'x-forwarded-for': '5.6.7.8, 9.9.9.9' }))).toBe('5.6.7.8')
-    expect(getConnectingIp(mockReq({ 'x-real-ip': '8.8.8.8' }))).toBe('8.8.8.8')
+  it('normalizes hostnames used as limiter keys', () => {
+    expect(normalizedRateLimitHost('Example.COM.')).toBe('example.com')
+    expect(normalizedRateLimitHost('example.com')).toBe('example.com')
+    expect(normalizedRateLimitHost(undefined)).toBeUndefined()
+    expect(normalizedRateLimitHost('.')).toBeUndefined()
+    expect(normalizedRateLimitHost('a'.repeat(254))).toBeUndefined()
+  })
+
+  it('tracks in-flight weight and forgets a key once it is idle', () => {
+    const limiter = createConcurrencyLimiter(20)
+    expect(limiter.tryAcquire('k', 10)).toBe(true)
+    expect(limiter.tryAcquire('k', 10)).toBe(true)
+    expect(limiter.tryAcquire('k', 1)).toBe(false)
+    limiter.release('k', 10)
+    expect(limiter.tryAcquire('k', 1)).toBe(true)
+    limiter.release('k', 10)
+    limiter.release('k', 1)
+    expect(limiter.size()).toBe(0)
+    for (let i = 0; i < 1000; i++) {
+      limiter.tryAcquire(`host-${i}`, 10)
+      limiter.release(`host-${i}`, 10)
+    }
+    expect(limiter.size()).toBe(0)
   })
 
   it('classifies health probe paths', () => {

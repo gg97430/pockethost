@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation'
   import { page } from '$app/stores'
   import { isAuthStateInitialized, isUserLoggedIn } from '$util/stores'
+  import Logo from '../../Navbar/Logo.svelte'
   import LoginForm from '../get-started/LoginForm.svelte'
 
   $: emailChanged = browser && $page.url.searchParams.get('emailChanged') === '1'
@@ -12,6 +13,7 @@
 </script>
 
 <div class="w-full min-h-screen flex flex-col items-center justify-center px-4 py-8">
+  <Logo large className="mb-6" />
   {#if emailChanged}
     <div class="w-full max-w-md mb-4">
       <wa-callout variant="success" class="wa-callout-padded">

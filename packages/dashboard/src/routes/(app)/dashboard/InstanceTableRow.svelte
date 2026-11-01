@@ -99,7 +99,7 @@
   }
 
   .instance-table-row:focus-visible {
-    box-shadow: inset 0 0 0 2px rgb(30 184 84 / 0.32);
+    box-shadow: inset 0 0 0 2px var(--app-accent, #3b7cff);
   }
 
   .instance-table-name {

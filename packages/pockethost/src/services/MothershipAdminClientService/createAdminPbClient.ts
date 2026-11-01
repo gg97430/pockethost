@@ -8,8 +8,8 @@ import {
   RestMethods,
   adminAuthWithPassword,
   createFirstAdmin as createFirstAdminRecord,
-  createRestHelper,
 } from '@'
+import Ajv from 'ajv'
 import { MixinContext } from '.'
 import { createInstanceMixin } from './InstanceMIxin'
 
@@ -31,14 +31,16 @@ export const createAdminPbClient = (url: string, logger: Logger) => {
   const context: MixinContext = { client, logger: _clientLogger }
   const instanceApi = createInstanceMixin(context)
 
-  const restHelper = createRestHelper({ client })
-  const { mkRest } = restHelper
-
-  const getUserTokenInfo = mkRest<GetUserTokenPayload, GetUserTokenResult>(
-    RestCommands.UserToken,
-    RestMethods.Get,
-    GetUserTokenPayloadSchema
-  )
+  const validateUserTokenPayload = new Ajv().compile(GetUserTokenPayloadSchema)
+  // The generic GET helper drops extra payload fields and logs responses. This
+  // private response contains password hashes/token keys, so send it directly.
+  const getUserTokenInfo = async (payload: GetUserTokenPayload): Promise<GetUserTokenResult> => {
+    if (!validateUserTokenPayload(payload)) throw new Error('Invalid admin identity request')
+    return client.send(`/api/${RestCommands.UserToken}/${encodeURIComponent(payload.id)}`, {
+      method: RestMethods.Get,
+      query: payload.instanceId ? { instanceId: payload.instanceId } : undefined,
+    })
+  }
 
   const api = {
     client,

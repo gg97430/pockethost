@@ -230,15 +230,15 @@
     border-radius: 0.5rem;
     border: 1px solid var(--app-border);
     background: var(--app-surface);
-    box-shadow: var(--app-shadow-sm);
+    box-shadow: none;
     transition:
       border-color 120ms ease,
       box-shadow 120ms ease;
   }
 
   .instance-list-search:focus-within {
-    border-color: #1eb854;
-    box-shadow: 0 0 0 3px rgb(30 184 84 / 0.14);
+    border-color: var(--app-accent, #3b7cff);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent, #3b7cff) 20%, transparent);
   }
 
   .instance-list-search-icon {
@@ -272,7 +272,7 @@
     border: 1px solid var(--app-border);
     border-radius: 0.375rem;
     background: var(--app-surface);
-    box-shadow: var(--app-shadow-sm);
+    box-shadow: none;
     overflow: hidden;
   }
 
@@ -301,8 +301,8 @@
   }
 
   .instance-list-view-btn--active {
-    background: rgb(30 184 84 / 0.12);
-    color: #15803d;
+    background: color-mix(in srgb, var(--app-accent, #3b7cff) 12%, transparent);
+    color: var(--app-accent, #3b7cff);
   }
 
   .instance-list-empty {
@@ -315,9 +315,9 @@
   .instance-table-wrap {
     overflow: hidden;
     border: 1px solid var(--app-border);
-    border-radius: 0.75rem;
+    border-radius: 0.375rem;
     background: var(--app-surface);
-    box-shadow: var(--app-shadow);
+    box-shadow: none;
   }
 
   .instance-table {
@@ -409,9 +409,9 @@
     .instance-table :global(tr) {
       margin-bottom: 0.75rem;
       border: 1px solid var(--app-border);
-      border-radius: 0.75rem;
+      border-radius: 0.375rem;
       background: var(--app-surface);
-      box-shadow: var(--app-shadow-sm);
+      box-shadow: none;
       overflow: hidden;
     }
 

@@ -4,6 +4,7 @@ export const WEB_NOTIFICATION_EVENTS = [
   'health_degraded',
   'health_recovered',
   'deployment_failed',
+  'deployment_succeeded',
   'backup_failed',
   'runtime_stopped',
   'task_failed',
@@ -28,6 +29,7 @@ export const WEB_PLATFORM_EVENTS = [
   'backup_cleanup_failed',
   'runtime_stopped',
   'app_deployment_failed',
+  'app_deployment_succeeded',
   'app_backup_failed',
   'app_health_degraded',
 ] as const
@@ -55,6 +57,11 @@ export const WEB_NOTIFICATION_LABELS: Record<WebNotificationEvent, { title: stri
   deployment_failed: {
     title: 'Échec de déploiement',
     sentence: 'Un déploiement a échoué ; la version publiée précédente est conservée si elle existe.',
+    tab: 'deployments',
+  },
+  deployment_succeeded: {
+    title: 'Déploiement réussi',
+    sentence: 'La nouvelle version a été publiée et a passé le contrôle de santé.',
     tab: 'deployments',
   },
   backup_failed: {
@@ -132,6 +139,11 @@ export const WEB_NOTIFICATION_LABELS: Record<WebNotificationEvent, { title: stri
   app_deployment_failed: {
     title: 'Échec de déploiement (copie plateforme)',
     sentence: 'Un déploiement d’application a échoué.',
+    tab: 'deployments',
+  },
+  app_deployment_succeeded: {
+    title: 'Déploiement réussi (copie plateforme)',
+    sentence: 'La nouvelle version de l’application a été publiée et a passé le contrôle de santé.',
     tab: 'deployments',
   },
   app_backup_failed: {

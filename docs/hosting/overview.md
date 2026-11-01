@@ -1,3 +1,5 @@
+> **Installation Kolab actuelle :** utiliser [Créer un nouveau serveur Kolab](nouveau-serveur-kolab.md) pour les BDD, l’hébergement, la sécurité, les sauvegardes et la recette. Les instructions ci-dessous constituent une ancienne introduction PocketHost.
+
 [UNDER CONSTRUCTION]
 
 This guide covers how to set up a production hosting environment for PocketHost. Hosting PocketHost might be desirable if:

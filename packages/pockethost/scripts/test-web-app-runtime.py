@@ -7,7 +7,7 @@ import pathlib
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import web_app_runtime as runtime
 from web_app_build import dependency_plan, cache_namespace
 
@@ -21,6 +21,28 @@ class RuntimeTests(unittest.TestCase):
     def tearDown(self):self.temp.cleanup()
     def memory(self,current,inactive=0,maximum=5120,scope='web'):
         return [{'scope':scope,'limitBytes':maximum*1024**2,'currentBytes':current*1024**2,'reclaimableBytes':min(current,inactive)*1024**2,'workingSetBytes':max(0,current-inactive)*1024**2}]
+    def test_worker_subdirectory_selects_its_dockerfile_copy_context_and_ignore_rules(self):
+        child=self.root/'mail-worker';child.mkdir();(child/'Dockerfile').write_text('FROM node:24-alpine\nCOPY package.json ./\n')
+        (self.root/'Dockerfile').write_text('FROM unrelated-root-application\n')
+        (child/'package.json').write_text('{"name":"mail-worker"}')
+        (self.root/'package.json').write_text('{"name":"unrelated-root"}')
+        work=self.root/'work';work.mkdir()
+        for kind in ['worker','dockerfile','compose']:
+            profile={'kind':kind}if kind!='compose'else{'kind':'compose','compose':{'front':'web','services':{'web':{'dockerfile':'Dockerfile'}}}}
+            run=Mock();job=types.SimpleNamespace(app=APP,id=DEP,secrets=[],run=run,snapshot={'runtime':profile,'config':{'rootDirectory':'mail-worker'},'env':{}})
+            engine=runtime.RuntimeEngine(job,lambda *a,**k:'',lambda *a:None,self.root,'/run/user/1001/docker.sock')
+            engine.hmac_key='fixture-worker-secret-not-a-real-credential'
+            with patch.object(runtime,'build_environment',return_value={}):
+                engine.build(self.root,work,{'dockerfile':'Dockerfile','_service':'web'}if kind=='compose'else None)
+            args=run.call_args.args[0]
+            self.assertEqual(args[-1],str(child));self.assertEqual(args[args.index('-f')+1],str(child/'Dockerfile'))
+        self.assertIn('.git',(child/'.dockerignore').read_text());self.assertFalse((self.root/'.dockerignore').exists())
+    def test_build_context_rejects_missing_file_traversal_and_symbolic_roots(self):
+        (self.root/'file').write_text('not a directory')
+        (self.root/'linked').symlink_to(self.root,target_is_directory=True)
+        self.assertEqual(runtime.build_context(self.root,'.'),self.root)
+        for name in ['missing','file','../outside','/tmp','linked','linked/nested']:
+            with self.subTest(name=name),self.assertRaises(RuntimeError):runtime.build_context(self.root,name)
     def test_all_profiles_and_immutable_images(self):
         for kind in runtime.KINDS:
             if kind=='compose':continue

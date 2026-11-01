@@ -25,12 +25,39 @@ describe('monitoring notification delivery', () => {
       discordEnabled: true,
       discordWebhook: 'https://discord.com/api/webhooks/fixture',
     }
-    const report = monitoringReport('host', 'app.example.invalid', [])
+    const report = monitoringReport('host', 'app.example.invalid', [
+      { id: 'db', group: 'databases', name: 'BDD', state: 'error', detail: 'HTTP 503' },
+    ])
+    await notifyMonitoring(report, config, folder)
     const first = await notifyMonitoring(report, config, folder)
     expect(first.email.status).toBe('error')
     expect(first.discord.status).toBe('ok')
     await notifyMonitoring(report, config, folder)
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+  it('stays silent while healthy, including startup and hourly boundaries', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'kolab-notify-healthy-'))
+    cleanup.push(() => rm(folder, { recursive: true, force: true }))
+    const fetch = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetch)
+    const config = {
+      revision: 'r1',
+      emailEnabled: false,
+      emailRecipients: [],
+      discordEnabled: true,
+      discordWebhook: 'https://discord.com/api/webhooks/fixture',
+    }
+    const now = vi.spyOn(Date, 'now')
+    try {
+      for (const hour of [0, 1, 2, 24]) {
+        const time = 1793500000000 + hour * 3600000
+        now.mockReturnValue(time)
+        await notifyMonitoring(monitoringReport('host', 'app.example.invalid', [], time), config, folder)
+      }
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      now.mockRestore()
+    }
   })
   it('sends through a real local SMTP dialogue without creating a credentials file', async () => {
     const recipients: string[] = []
@@ -79,10 +106,15 @@ describe('monitoring notification delivery', () => {
       },
       ['receiver@example.invalid'],
       'Fixture monitoring',
-      'Incident local contrôlé'
+      'Incident local contrôlé',
+      '<html lang="fr"><body><h1>Incident</h1></body></html>'
     )
     expect(recipients).toEqual(['rcpt TO:<receiver@example.invalid>'])
     expect(message).toContain('Subject: Fixture monitoring')
+    expect(message).toContain('Content-Type: multipart/alternative')
+    expect(message).toContain('Content-Type: text/plain')
+    expect(message).toContain('Content-Type: text/html')
+    expect(message).toContain('<h1>Incident</h1>')
   })
   it('deduplicates incidents and confirms recovery independently for Discord', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'kolab-notify-'))
@@ -100,18 +132,18 @@ describe('monitoring notification delivery', () => {
       { id: 'database:test', group: 'databases', name: 'BDD', state: 'error', detail: 'HTTP 503' },
     ])
     await notifyMonitoring(report, config, folder)
+    expect(fetch).toHaveBeenCalledTimes(0)
+    await notifyMonitoring(report, config, folder)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0]?.[1]).toBeDefined()
+    await notifyMonitoring(report, config, folder)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    report.checks[0]!.state = 'ok'
+    await notifyMonitoring(report, config, folder)
     expect(fetch).toHaveBeenCalledTimes(1)
     await notifyMonitoring(report, config, folder)
     expect(fetch).toHaveBeenCalledTimes(2)
-    expect(fetch.mock.calls[1]?.[1]).toBeDefined()
-    await notifyMonitoring(report, config, folder)
-    expect(fetch).toHaveBeenCalledTimes(2)
-    report.checks[0]!.state = 'ok'
-    await notifyMonitoring(report, config, folder)
-    expect(fetch).toHaveBeenCalledTimes(2)
-    await notifyMonitoring(report, config, folder)
-    expect(fetch).toHaveBeenCalledTimes(3)
-    const body = JSON.parse((fetch.mock.calls[2] as any)[1].body)
+    const body = JSON.parse((fetch.mock.calls[1] as any)[1].body)
     expect(body.content).toContain('Rétabli')
     expect(body.allowed_mentions).toEqual({ parse: [] })
   })

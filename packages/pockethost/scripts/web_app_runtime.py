@@ -31,6 +31,19 @@ def relative(value):
     return value
 
 
+def build_context(repository, root_directory='.'):
+    """Dockerfile COPY and ignore rules are relative to the selected application directory."""
+    repository = pathlib.Path(repository).resolve(strict=True)
+    selected = repository
+    for part in pathlib.PurePosixPath(relative(root_directory)).parts:
+        selected = selected / part
+        if selected.is_symlink():
+            raise RuntimeError('Dossier de construction symbolique interdit.')
+    if not selected.is_dir() or not selected.resolve().is_relative_to(repository):
+        raise RuntimeError('Dossier de construction absent ou hors du dépôt.')
+    return selected
+
+
 def command(value):
     if value is None: return []
     if not isinstance(value, list) or len(value) > 50 or any(not isinstance(item, str) or not item or len(item) > 4096 or '\x00' in item for item in value):
@@ -374,6 +387,7 @@ class RuntimeEngine:
         if profile.get('image'):
             with self.job.blocking_heartbeat(): image=self.pull(profile['image'])
             return self.own_image(image,profile.get('_service',''))
+        context=build_context(context,(self.job.snapshot.get('config')or{}).get('rootDirectory')or'.')
         path=pathlib.Path(context)/relative(profile.get('dockerfile','Dockerfile'))
         if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(pathlib.Path(context).resolve()): raise RuntimeError('Dockerfile absent ou hors du dépôt.')
         exclude_vcs(context,path)

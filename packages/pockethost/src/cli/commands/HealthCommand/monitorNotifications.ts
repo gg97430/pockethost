@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type PocketBase from 'pocketbase'
 import { advanceMonitorSignals, type MonitoringReport, type MonitorSignals } from '../../../common/platformMonitoring'
 import { readStatus, writeStatus } from './collectPlatformHealth'
+import { monitoringEmail } from './monitorEmail'
 
 type Configuration = {
   revision: string
@@ -29,6 +30,7 @@ try:
   client.user=config['username'];client.password=config.get('password','');method=config.get('authMethod','PLAIN')
   client.auth(method,client.auth_login if method=='LOGIN' else client.auth_plain,initial_response_ok=method!='LOGIN')
  message=EmailMessage();message['From']=formataddr((config.get('senderName','Kolab Hosting'),config['senderAddress']));message['To']=', '.join(value['to']);message['Subject']=value['subject'];message.set_content(value['content'])
+ if value.get('html'):message.add_alternative(value['html'],subtype='html')
  client.send_message(message);print(json.dumps({'ok':True}))
 except Exception:print(json.dumps({'ok':False}))
 finally:
@@ -37,7 +39,7 @@ finally:
   except Exception:pass
 `
 
-export async function sendMonitorEmail(smtp: any, to: string[], subject: string, content: string) {
+export async function sendMonitorEmail(smtp: any, to: string[], subject: string, content: string, html?: string) {
   if (!smtp?.enabled || !smtp.host || !smtp.senderAddress || !to.length)
     throw Error('SMTP ou destinataires indisponibles.')
   await new Promise<void>((resolve, reject) => {
@@ -63,7 +65,7 @@ export async function sendMonitorEmail(smtp: any, to: string[], subject: string,
       }
     })
     child.stdin.on('error', () => {})
-    child.stdin.end(JSON.stringify({ smtp, to, subject, content }))
+    child.stdin.end(JSON.stringify({ smtp, to, subject, content, html }))
   })
 }
 
@@ -109,7 +111,7 @@ export async function notifyMonitoring(report: MonitoringReport, config: Configu
       continue
     }
     const path = join(folder, 'notifications-' + channel + '.json')
-    let previous: { checkedAt?: string; lastSummaryAt?: number; signals?: MonitorSignals; revision?: string } = {}
+    let previous: { checkedAt?: string; signals?: MonitorSignals; revision?: string } = {}
     try {
       previous = await readStatus(path)
     } catch {}
@@ -121,31 +123,21 @@ export async function notifyMonitoring(report: MonitoringReport, config: Configu
         recent ? signal : { ...signal, failed: 0, healthy: 0 },
       ])
     )
-    const transition = advanceMonitorSignals(report.checks, before),
-      summaryDue = Date.now() - (previous.lastSummaryAt || 0) >= 3600000
+    const transition = advanceMonitorSignals(report.checks, before)
     try {
-      if (transition.opened.length || transition.recovered.length || summaryDue) {
+      if (transition.opened.length || transition.recovered.length) {
         const lines = [
           `Kolab Hosting · ${label(report.domain)}`,
           ...transition.opened
             .slice(0, 25)
             .map((row) => `${row.state === 'error' ? '🔴' : '🟡'} ${label(row.name)} : ${label(row.detail)}`),
           ...transition.recovered.slice(0, 25).map((name) => `🟢 Rétabli : ${label(name)}`),
-          ...(summaryDue
-            ? [
-                `État : ${report.counts.ok} OK · ${report.counts.error} en erreur · ${report.counts.warning} à surveiller · ${report.counts.unknown} sans mesure · ${report.counts.paused} en pause`,
-              ]
-            : []),
           `https://${report.domain}/monitoring`,
         ]
-        if (channel === 'email')
-          await sendMonitorEmail(
-            config.smtp,
-            config.emailRecipients,
-            `[Kolab Hosting] ${report.domain} · supervision`,
-            lines.join('\n')
-          )
-        else {
+        if (channel === 'email') {
+          const email = monitoringEmail(report, transition.opened, transition.recovered)
+          await sendMonitorEmail(config.smtp, config.emailRecipients, email.subject, email.text, email.html)
+        } else {
           let content = ''
           const chunks: string[] = []
           for (const line of lines) {
@@ -170,7 +162,6 @@ export async function notifyMonitoring(report: MonitoringReport, config: Configu
       }
       await writeStatus(path, {
         checkedAt: report.checkedAt,
-        lastSummaryAt: summaryDue ? Date.now() : previous.lastSummaryAt,
         signals: transition.signals,
         revision: config.revision,
       })

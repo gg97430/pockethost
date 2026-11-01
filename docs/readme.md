@@ -2,6 +2,8 @@
 
 PocketHost is designed to run full stack on your local development machine.
 
+For a new Kolab production server, use [Créer un nouveau serveur Kolab](hosting/nouveau-serveur-kolab.md), including its installation and acceptance checklists.
+
 ## Getting started
 
 ```bash

@@ -55,8 +55,10 @@ const CRITICAL = ['deployment_failed', 'backup_failed', 'certificate_failed', 'h
  */
 const PLATFORM_ONLY = ['disk_low', 'disk_recovered']
 /** Copies optionnelles des échecs d'applications vers le canal plateforme. */
-const COPIED = ['health_degraded', 'deployment_failed', 'backup_failed']
+const COPIED = ['health_degraded', 'deployment_failed', 'deployment_succeeded', 'backup_failed']
 const DEPLOYMENT_FAILURES = ['deployment_failed', 'app_deployment_failed']
+const DEPLOYMENT_SUCCESSES = ['deployment_succeeded', 'app_deployment_succeeded']
+const DEPLOYMENT_RESULTS = [...DEPLOYMENT_FAILURES, ...DEPLOYMENT_SUCCESSES]
 const RATE_LIMITED = 'Notification regroupée par la limite de fréquence.'
 const WORKER_DOWN_AFTER = 180000
 const stamp = (time = Date.now()) => new Date(time).toISOString().replace('T', ' ')
@@ -452,6 +454,8 @@ export const HandleWebNotificationsPut = (e: core.RequestEvent) => {
     if (input.events !== undefined) {
       if (!Array.isArray(input.events) || input.events.some((event: any) => !WEB_NOTIFICATION_EVENTS.includes(event)))
         throw new BadRequestError('Types d’alerte invalides.')
+      if (input.events.includes('deployment_succeeded') && !value.events.includes('deployment_succeeded'))
+        value.deploymentSuccessActivatedAt = stamp()
       value.events = [...new Set(input.events)]
     }
     const row = old || new Record(tx.findCollectionByNameOrId(SETTINGS))
@@ -521,7 +525,8 @@ const enqueue = (
     if (
       store.findRecordsByFilter(
         DELIVERIES,
-        'scope={:scope} && appId={:app} && channel={:channel} && eventKey={:key}',
+        (platform ? 'scope="platform"' : 'scope!="platform" && appId={:app}') +
+          ' && channel={:channel} && eventKey={:key}',
         '',
         1,
         0,
@@ -546,8 +551,8 @@ const enqueue = (
       continue
     // Tests et résumés ne sont jamais regroupés ; les tests ne consomment pas le budget des alertes automatiques.
     let rate = false
-    // Each failed deployment needs its own log attachment. Other emails and all webhooks keep their budgets.
-    if (trigger === 'auto' && !(channel === 'email' && DEPLOYMENT_FAILURES.includes(event))) {
+    // Each deployment result gets its own email. Other emails and all webhooks keep their budgets.
+    if (trigger === 'auto' && !(channel === 'email' && DEPLOYMENT_RESULTS.includes(event))) {
       const sent = (filter: string, since: number, limit: number) =>
         store.findRecordsByFilter(
           DELIVERIES,
@@ -692,7 +697,7 @@ const settingsOf = (row: core.Record, store: any = $app) => {
   return find(row.getString('appId'), store)
 }
 const deploymentTargetActive = (row: core.Record, store: any = $app) => {
-  if (row.getString('trigger') === 'test' || !DEPLOYMENT_FAILURES.includes(row.getString('event'))) return true
+  if (row.getString('trigger') === 'test' || !DEPLOYMENT_RESULTS.includes(row.getString('event'))) return true
   try {
     const payload = JSON.parse(row.getString('payload') || '{}')
     return !!deploymentEmailApplication(
@@ -738,7 +743,9 @@ const sendDeliveryEmail = (row: core.Record) => {
     attachment = DEPLOYMENT_FAILURES.includes(row.getString('event'))
       ? deploymentFailureAttachment(row, payload, test)
       : null,
-    deployment = attachment?.details,
+    deployment =
+      attachment?.details ||
+      (DEPLOYMENT_SUCCESSES.includes(row.getString('event')) ? { ...details, stage: 'Publié' } : null),
     detail =
       (attachment && !test ? deployment?.summary || 'Détails indisponibles. Consultez le dashboard.' : '') ||
       (typeof details.summary === 'string' && details.summary) ||
@@ -774,14 +781,22 @@ const sendDeliveryEmail = (row: core.Record) => {
   // Détail et nom d'application viennent du locataire : seules nos propres URL deviennent des liens.
   const base = dashboardBase(),
     linkable = (value: string) => value === base || value.startsWith(`${base}/`)
+  const color = DEPLOYMENT_SUCCESSES.includes(row.getString('event'))
+    ? '#087443'
+    : DEPLOYMENT_FAILURES.includes(row.getString('event'))
+      ? '#b42318'
+      : '#2455d6'
   const html = lines
+    .slice(3)
     .map((line) => {
       const match = /^(.*?: )(\S+)$/.exec(line)
-      return match && linkable(match[2]!)
-        ? `${escape(match[1]!)}<a href="${escape(match[2]!)}">${escape(match[2]!)}</a>`
-        : escape(line)
+      const content =
+        match && linkable(match[2]!)
+          ? `${escape(match[1]!)}<a style="color:#2455d6" href="${escape(match[2]!)}">${escape(match[2]!)}</a>`
+          : escape(line)
+      return `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#344054;overflow-wrap:anywhere">${content}</p>`
     })
-    .join('<br>')
+    .join('')
   let reader: io.ReadSeekCloser | undefined
   try {
     if (attachment) reader = $filesystem.fileFromBytes(attachment.text, attachment.filename).reader.open()
@@ -791,7 +806,7 @@ const sendDeliveryEmail = (row: core.Record) => {
         to: recipients.map((address: string) => ({ address })),
         subject: `[${WEB_ALERT_BRAND}] ${test ? 'TEST · ' : ''}${text.title} · ${name}`.replace(/[\r\n]/g, ' '),
         text: lines.join('\n'),
-        html: `<p>${html}</p>`,
+        html: `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;background:#edf1f6;font-family:Verdana,Geneva,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 8px"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #dce3ec;border-radius:12px"><tr><td style="background:#162137;padding:24px 28px;color:#fff;border-radius:12px 12px 0 0"><strong style="font-size:23px;letter-spacing:3px">KOLAB</strong><p style="margin:7px 0 0;color:#b9c7dc;font-size:11px;letter-spacing:2px">HÉBERGEMENT</p></td></tr><tr><td style="padding:28px;border-top:4px solid ${color}"><h1 style="margin:0 0 14px;font-size:26px;color:${color}">${escape(text.title)}${test ? ' (test)' : ''}</h1><p style="margin:0 0 14px;font-size:20px;font-weight:700;color:#162137;overflow-wrap:anywhere">${escape(name)}</p><p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#475467">${escape(text.sentence)}</p>${html}${open && linkable(open) ? `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#2455d6" style="border-radius:6px"><a href="${escape(open)}" style="display:inline-block;padding:14px 20px;color:#fff;text-decoration:none;font-size:14px;font-weight:700">Ouvrir dans Kolab &rarr;</a></td></tr></table>` : ''}</td></tr></table></td></tr></table></body></html>`,
         headers: { 'Message-ID': `<ph-web-${row.id}@${$os.getenv('APEX_DOMAIN') || 'localhost'}>` },
         ...(attachment && reader ? { attachments: { [attachment.filename]: reader } } : {}),
       })
@@ -977,20 +992,23 @@ const scan = (settings: core.Record, context: ScanContext, store: any) => {
         app: app.id,
       }
     )
-  const copy = context.platform?.getBool('enabled') ? config(context.platform, true) : null
+  const local = config(settings),
+    copy = context.platform?.getBool('enabled') ? config(context.platform, true) : null
   const emit = (event: string, key: string, details: any) => {
     enqueue(settings, app, event, key, details, store)
     if (
       copy?.copyAppEvents &&
       COPIED.includes(event) &&
-      (event !== 'deployment_failed' ||
+      (event !== 'deployment_succeeded' ||
+        details.finishedAt >= (copy.deploymentSuccessActivatedAt || context.platform!.getString('activatedAt'))) &&
+      (!['deployment_failed', 'deployment_succeeded'].includes(event) ||
         (details.finishedAt &&
           details.finishedAt >= context.platform!.getString('activatedAt') &&
           deploymentEmailApplication(app.id, store)))
     )
       enqueue(
         context.platform!,
-        event === 'deployment_failed' ? app : null,
+        ['deployment_failed', 'deployment_succeeded'].includes(event) ? app : null,
         'app_' + event,
         'copy:' + app.id + ':' + key,
         { ...details, appId: app.id, appName: safeName(app.getString('name')) },
@@ -1011,17 +1029,32 @@ const scan = (settings: core.Record, context: ScanContext, store: any) => {
     else if (row.getString('status') === 'healthy' && row.getString('fromStatus') === 'degraded')
       emit('health_recovered', 'health:' + row.id, { status: 'healthy', httpStatus: row.getInt('httpStatus') })
   }
-  for (const row of take('web_deployments', 'status="failed"', 'finishedAt')) {
-    if (['deploy', 'ci-deploy'].includes(row.getString('action')) && !deploymentEmailApplication(app.id, store))
+  for (const row of take('web_deployments', '(status="failed" || status="ready")', 'finishedAt')) {
+    const deploy = ['deploy', 'ci-deploy'].includes(row.getString('action')),
+      success = row.getString('status') === 'ready'
+    if (
+      success &&
+      (!deploy ||
+        row.getString('finishedAt') < (local.deploymentSuccessActivatedAt || settings.getString('activatedAt')))
+    )
       continue
-    emit(row.getString('action') === 'domain' ? 'certificate_failed' : 'deployment_failed', 'deployment:' + row.id, {
-      deploymentId: row.id,
-      status: 'failed',
-      action: row.getString('action'),
-      stage: row.getString('stage'),
-      summary: webAlertSummary(row.getString('error'), app, store),
-      ...(['deploy', 'ci-deploy'].includes(row.getString('action')) ? deploymentFailureDetails(row) : {}),
-    })
+    if (deploy && !deploymentEmailApplication(app.id, store)) continue
+    emit(
+      success
+        ? 'deployment_succeeded'
+        : row.getString('action') === 'domain'
+          ? 'certificate_failed'
+          : 'deployment_failed',
+      'deployment:' + row.id,
+      {
+        ...(deploy ? deploymentFailureDetails(row) : {}),
+        deploymentId: row.id,
+        status: success ? 'ready' : 'failed',
+        action: row.getString('action'),
+        stage: success ? 'Publié' : row.getString('stage'),
+        summary: success ? 'La nouvelle version est publiée.' : webAlertSummary(row.getString('error'), app, store),
+      }
+    )
   }
   // Une seule alerte par sauvegarde, quelle que soit l'évolution ultérieure de s3State (rétention, suppression).
   // Les archives créées par la reprise de la plateforme ne concernent pas le client, ni une suppression abandonnée
@@ -1114,30 +1147,39 @@ const scanPlatformOutbox = (p: core.Record, store: any) => {
   let advanced = rows.length > 0
   const value = config(p, true)
   // Platform copies must also cover applications without an app-level alert configuration.
-  if (value.copyAppEvents && value.events.includes('app_deployment_failed')) {
+  if (value.copyAppEvents && value.events.some((event: string) => DEPLOYMENT_RESULTS.includes(event))) {
     const jobs = takeRows(
       store,
       cursors,
       start,
       'web_deployments',
-      'status="failed" && (action="deploy" || action="ci-deploy")',
+      '(status="failed" || status="ready") && (action="deploy" || action="ci-deploy")',
       'finishedAt'
     )
     advanced ||= jobs.length > 0
     for (const job of jobs) {
+      if (
+        job.getString('status') === 'ready' &&
+        job.getString('finishedAt') < (value.deploymentSuccessActivatedAt || start)
+      )
+        continue
       const app = deploymentEmailApplication(job.getString('appId'), store)
       if (!app) continue
       enqueue(
         p,
         app,
-        'app_deployment_failed',
+        job.getString('status') === 'ready' ? 'app_deployment_succeeded' : 'app_deployment_failed',
         `copy:${app.id}:deployment:${job.id}`,
         {
           ...deploymentFailureDetails(job),
           appId: app.id,
           appName: safeName(app.getString('name')),
-          status: 'failed',
-          summary: webAlertSummary(job.getString('error'), app, store),
+          status: job.getString('status'),
+          stage: job.getString('status') === 'ready' ? 'Publié' : job.getString('stage'),
+          summary:
+            job.getString('status') === 'ready'
+              ? 'La nouvelle version est publiée.'
+              : webAlertSummary(job.getString('error'), app, store),
         },
         store,
         'auto',
@@ -1627,6 +1669,8 @@ export const HandleWebPlatformNotificationsPut = (e: core.RequestEvent) => {
     if (input.events !== undefined) {
       if (!Array.isArray(input.events) || input.events.some((event: any) => !PLATFORM_EVENTS.includes(event)))
         throw new BadRequestError('Types d’alerte invalides.')
+      if (input.events.includes('app_deployment_succeeded') && !value.events.includes('app_deployment_succeeded'))
+        value.deploymentSuccessActivatedAt = stamp()
       value.events = [...new Set(input.events)]
     }
     if (input.copyAppEvents !== undefined) {

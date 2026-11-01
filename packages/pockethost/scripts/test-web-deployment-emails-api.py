@@ -155,7 +155,7 @@ routerAdd('POST','/test/failure',e=>{
  const b=e.requestInfo().body,m=require(`${__hooks}/mothership`),a=$app.findRecordById('web_apps',b.appId);
  if(b.env!==undefined){a.set('envEncrypted',m.encryptWebValue(b.env));$app.save(a)}
  const j=new Record($app.findCollectionByNameOrId('web_deployments'));
- j.set('appId',a.id);j.set('action',b.action||'deploy');j.set('status','failed');j.set('commit','c'.repeat(40));
+ j.set('appId',a.id);j.set('action',b.action||'deploy');j.set('status',b.status||'failed');j.set('commit','c'.repeat(40));
  j.set('stage','Construction');j.set('error',b.error||'La construction a échoué.');
  j.set('snapshotEncrypted',b.invalidCipher?'invalid':m.encryptWebValue(b.snapshot||{config:{repository:'frozen/repository',branch:'frozen-branch'},env:{},runtime:{kind:'nextjs'}}));
  j.set('finishedAt',b.finishedAt||new Date().toISOString());$app.save(j);return e.json(200,{id:j.id})
@@ -222,6 +222,7 @@ routerAdd('POST','/test/failure',e=>{
         worker('report', {'id': job['id'], 'proof': job['proof'], 'success': True, 'httpStatus': 0})
         return messages[-1][1]
 
+    historical_success = failure(status='ready', finishedAt=now(-86400))
     historical = failure(finishedAt=now(-86400))
     (root / 'web' / 'logs' / (historical + '.log')).write_text('HISTORY-MUST-NOT-BE-SENT\n')
     request('/api/web-platform-notifications', plain, status=403)
@@ -232,6 +233,13 @@ routerAdd('POST','/test/failure',e=>{
         'copyAppEvents': True}, 'PUT')
     assert claim() is None and not messages
     checks.append('platform_activation_ignores_historical_failures_and_nonoperators')
+    success_before_opt_in = failure(status='ready')
+    platform = request('/api/web-platform-notifications', token)
+    request('/api/web-platform-notifications', token, {'revision': platform['revision'],
+        'events': ['app_deployment_failed', 'app_deployment_succeeded']}, 'PUT')
+    assert claim() is None and not messages
+    checks.append('enabling_success_notifications_never_replays_previous_successes')
+
 
     frozen_env = {'OLD_SECRET': {'value': 'snapshot-secret-value', 'build': True, 'runtime': True},
         'PRIVATE_KEY': {'value': '-----BEGIN KEY-----\nlong-private-key-line-123456789\n-----END KEY-----', 'build': True},
@@ -263,6 +271,26 @@ routerAdd('POST','/test/failure',e=>{
     worker('email', {'id': job['id'], 'proof': job['proof']}, 401)
     assert claim() is None
     checks.append('global_scan_without_app_settings_utf8_mime_attachment_snapshot_current_multiline_masks_and_double_send_idempotency')
+
+    # Publication (ready), never a build in progress; successes have no attached build log.
+    building = failure(status='building')
+    assert claim() is None
+    for action in ['deploy', 'ci-deploy']:
+        success_id = failure(status='ready', action=action)
+        queued = claim()
+        assert queued and queued['payload']['event'] == 'app_deployment_succeeded'
+        assert queued['payload']['details']['deploymentId'] == success_id
+        message = send(queued, recipients)
+        assert not list(message.iter_attachments())
+        body = message.get_body(preferencelist=('plain',)).get_content()
+        assert 'réussi' in str(message['Subject']) and success_id in body
+        assert 'frozen/repository' in body and 'frozen-branch' in body and 'c' * 40 in body
+        assert claim() is None
+    # Starting an existing image or issuing a certificate isn't a new source deployment.
+    failure(status='ready', action='start')
+    failure(status='ready', action='domain')
+    assert claim() is None
+    checks.append('success_only_after_publication_manual_and_ci_metadata_no_attachment_and_no_cooldown_loss')
 
     for mode in ['missing', 'symlink', 'fifo', 'oversize', 'invalid-cipher']:
         ident = failure(invalidCipher=mode == 'invalid-cipher')
@@ -333,7 +361,7 @@ routerAdd('POST','/test/failure',e=>{
     app_alert = '/api/web-apps/' + site['id'] + '/notifications'
     current = request(app_alert, token)
     request(app_alert, token, {'revision': current['revision'], 'email': {'enabled': True, 'recipients': recipients},
-        'events': ['deployment_failed']}, 'PUT')
+        'events': ['deployment_failed', 'deployment_succeeded']}, 'PUT')
     ident = failure()
     first, second_job = claim(), claim()
     assert first and second_job and first['scope'] != second_job['scope'] and claim() is None
@@ -342,6 +370,17 @@ routerAdd('POST','/test/failure',e=>{
     for queued in [first, second_job]:
         send(queued, [actor['email']] if queued['scope'] == 'app' else recipients)
     checks.append('app_platform_deduplication_and_app_recipient_rights_revalidated_at_send')
+
+    success_id = failure(status='ready')
+    # App scans run at most every 15 seconds; advance only the disposable fixture's scan schedule.
+    for settings_row in request('/api/collections/web_notification_settings/records', su)['items']:
+        patch('web_notification_settings', settings_row['id'], {'scanAfter': now(-16)})
+    first, second_job = claim(), claim()
+    assert first and second_job and first['scope'] != second_job['scope'] and claim() is None
+    for queued in [first, second_job]:
+        message = send(queued, [actor['email']] if queued['scope'] == 'app' else recipients)
+        assert not list(message.iter_attachments()) and 'réussi' in str(message['Subject'])
+    checks.append('success_app_channel_and_platform_scan_share_one_copy_key')
 
     before = len(messages)
     test = request(app_alert + '/test', token, {'channel': 'email', 'event': 'deployment_failed'})
@@ -354,6 +393,7 @@ routerAdd('POST','/test/failure',e=>{
         excluded = app('Excluded ' + state)
         patch('web_apps', excluded['id'], {'status': state})
         failure(excluded)
+        failure(excluded, status='ready')
     assert claim() is None
     checks.append('deleting_and_suspended_applications_ignored')
     completed = True

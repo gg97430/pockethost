@@ -6360,6 +6360,7 @@ const WEB_NOTIFICATION_EVENTS$1 = [
 	"health_degraded",
 	"health_recovered",
 	"deployment_failed",
+	"deployment_succeeded",
 	"backup_failed",
 	"runtime_stopped",
 	"task_failed",
@@ -6382,6 +6383,7 @@ const WEB_PLATFORM_EVENTS = [
 	"backup_cleanup_failed",
 	"runtime_stopped",
 	"app_deployment_failed",
+	"app_deployment_succeeded",
 	"app_backup_failed",
 	"app_health_degraded"
 ];
@@ -6407,6 +6409,11 @@ const WEB_NOTIFICATION_LABELS = {
 	deployment_failed: {
 		title: "Échec de déploiement",
 		sentence: "Un déploiement a échoué ; la version publiée précédente est conservée si elle existe.",
+		tab: "deployments"
+	},
+	deployment_succeeded: {
+		title: "Déploiement réussi",
+		sentence: "La nouvelle version a été publiée et a passé le contrôle de santé.",
 		tab: "deployments"
 	},
 	backup_failed: {
@@ -6482,6 +6489,11 @@ const WEB_NOTIFICATION_LABELS = {
 	app_deployment_failed: {
 		title: "Échec de déploiement (copie plateforme)",
 		sentence: "Un déploiement d’application a échoué.",
+		tab: "deployments"
+	},
+	app_deployment_succeeded: {
+		title: "Déploiement réussi (copie plateforme)",
+		sentence: "La nouvelle version de l’application a été publiée et a passé le contrôle de santé.",
 		tab: "deployments"
 	},
 	app_backup_failed: {
@@ -6981,9 +6993,12 @@ const PLATFORM_ONLY = ["disk_low", "disk_recovered"];
 const COPIED = [
 	"health_degraded",
 	"deployment_failed",
+	"deployment_succeeded",
 	"backup_failed"
 ];
 const DEPLOYMENT_FAILURES = ["deployment_failed", "app_deployment_failed"];
+const DEPLOYMENT_SUCCESSES = ["deployment_succeeded", "app_deployment_succeeded"];
+const DEPLOYMENT_RESULTS = [...DEPLOYMENT_FAILURES, ...DEPLOYMENT_SUCCESSES];
 const RATE_LIMITED = "Notification regroupée par la limite de fréquence.";
 const WORKER_DOWN_AFTER = 18e4;
 const stamp$4 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
@@ -7326,6 +7341,7 @@ const HandleWebNotificationsPut = (e) => {
 		}, () => recipientsOf(value, app.id, tx).length > 0);
 		if (input.events !== void 0) {
 			if (!Array.isArray(input.events) || input.events.some((event) => !WEB_NOTIFICATION_EVENTS.includes(event))) throw new BadRequestError("Types d’alerte invalides.");
+			if (input.events.includes("deployment_succeeded") && !value.events.includes("deployment_succeeded")) value.deploymentSuccessActivatedAt = stamp$4();
 			value.events = [...new Set(input.events)];
 		}
 		const row = old || new Record(tx.findCollectionByNameOrId(SETTINGS$3));
@@ -7368,7 +7384,7 @@ const enqueue$2 = (settings, app, event, eventKey, details, store, trigger = "au
 		if (channel === "webhook" ? !value.webhook.url : !recipients.length) continue;
 		if (trigger !== "test" && !value[channel].enabled) continue;
 		const key = $security.sha256(eventKey), fingerprint = $security.sha256(channel === "webhook" ? value.webhook.url : [...recipients].sort().join(","));
-		if (store.findRecordsByFilter(DELIVERIES, "scope={:scope} && appId={:app} && channel={:channel} && eventKey={:key}", "", 1, 0, {
+		if (store.findRecordsByFilter(DELIVERIES, (platform ? "scope=\"platform\"" : "scope!=\"platform\" && appId={:app}") + " && channel={:channel} && eventKey={:key}", "", 1, 0, {
 			scope: platform ? "platform" : "",
 			app: appId,
 			channel,
@@ -7380,7 +7396,7 @@ const enqueue$2 = (settings, app, event, eventKey, details, store, trigger = "au
 			fingerprint
 		}).length) continue;
 		let rate = false;
-		if (trigger === "auto" && !(channel === "email" && DEPLOYMENT_FAILURES.includes(event))) {
+		if (trigger === "auto" && !(channel === "email" && DEPLOYMENT_RESULTS.includes(event))) {
 			const sent = (filter, since, limit) => store.findRecordsByFilter(DELIVERIES, `settingsId={:id} && channel={:channel} && created>={:since} && status!="suppressed" && trigger!="test"${filter}`, "-created", limit, 0, {
 				id: settings.id,
 				channel,
@@ -7506,7 +7522,7 @@ const settingsOf = (row, store = $app) => {
 	return find$2(row.getString("appId"), store);
 };
 const deploymentTargetActive = (row, store = $app) => {
-	if (row.getString("trigger") === "test" || !DEPLOYMENT_FAILURES.includes(row.getString("event"))) return true;
+	if (row.getString("trigger") === "test" || !DEPLOYMENT_RESULTS.includes(row.getString("event"))) return true;
 	try {
 		const payload = JSON.parse(row.getString("payload") || "{}");
 		return !!deploymentEmailApplication(row.getString("scope") === "platform" ? payload.details?.appId : row.getString("appId"), store);
@@ -7524,7 +7540,10 @@ const sendDeliveryEmail = (row) => {
 	if (row.getString("emailSentAt")) return;
 	const recipients = recipientsFor(row.getString("scope"), value, appId);
 	if (!recipients.length) throw new BadRequestError("Aucun destinataire enregistré n’est encore membre vérifié du projet.");
-	const payload = JSON.parse(row.getString("payload") || "{}"), text = label(payload.event || row.getString("event")), settingsMail = $app.settings(), host = $os.getenv("APP_HOST") || $os.getenv("APEX_DOMAIN") || "", name = payload.application ? safeName(payload.application?.name) : `Plateforme${host ? " " + host : ""}`, test = row.getString("trigger") === "test" || payload.details?.drill === true, details = payload.details || {}, attachment = DEPLOYMENT_FAILURES.includes(row.getString("event")) ? deploymentFailureAttachment(row, payload, test) : null, deployment = attachment?.details, detail = (attachment && !test ? deployment?.summary || "Détails indisponibles. Consultez le dashboard." : "") || typeof details.summary === "string" && details.summary || [
+	const payload = JSON.parse(row.getString("payload") || "{}"), text = label(payload.event || row.getString("event")), settingsMail = $app.settings(), host = $os.getenv("APP_HOST") || $os.getenv("APEX_DOMAIN") || "", name = payload.application ? safeName(payload.application?.name) : `Plateforme${host ? " " + host : ""}`, test = row.getString("trigger") === "test" || payload.details?.drill === true, details = payload.details || {}, attachment = DEPLOYMENT_FAILURES.includes(row.getString("event")) ? deploymentFailureAttachment(row, payload, test) : null, deployment = attachment?.details || (DEPLOYMENT_SUCCESSES.includes(row.getString("event")) ? {
+		...details,
+		stage: "Publié"
+	} : null), detail = (attachment && !test ? deployment?.summary || "Détails indisponibles. Consultez le dashboard." : "") || typeof details.summary === "string" && details.summary || [
 		details.stage,
 		details.backupId,
 		details.deploymentId,
@@ -7549,10 +7568,11 @@ const sendDeliveryEmail = (row) => {
 		`— ${WEB_ALERT_BRAND}${host ? " · " + host : ""}`
 	];
 	const base = dashboardBase(), linkable = (value) => value === base || value.startsWith(`${base}/`);
-	const html = lines.map((line) => {
+	const color = DEPLOYMENT_SUCCESSES.includes(row.getString("event")) ? "#087443" : DEPLOYMENT_FAILURES.includes(row.getString("event")) ? "#b42318" : "#2455d6";
+	const html = lines.slice(3).map((line) => {
 		const match = /^(.*?: )(\S+)$/.exec(line);
-		return match && linkable(match[2]) ? `${escape(match[1])}<a href="${escape(match[2])}">${escape(match[2])}</a>` : escape(line);
-	}).join("<br>");
+		return `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#344054;overflow-wrap:anywhere">${match && linkable(match[2]) ? `${escape(match[1])}<a style="color:#2455d6" href="${escape(match[2])}">${escape(match[2])}</a>` : escape(line)}</p>`;
+	}).join("");
 	let reader;
 	try {
 		if (attachment) reader = $filesystem.fileFromBytes(attachment.text, attachment.filename).reader.open();
@@ -7564,7 +7584,7 @@ const sendDeliveryEmail = (row) => {
 			to: recipients.map((address) => ({ address })),
 			subject: `[${WEB_ALERT_BRAND}] ${test ? "TEST · " : ""}${text.title} · ${name}`.replace(/[\r\n]/g, " "),
 			text: lines.join("\n"),
-			html: `<p>${html}</p>`,
+			html: `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;background:#edf1f6;font-family:Verdana,Geneva,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 8px"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #dce3ec;border-radius:12px"><tr><td style="background:#162137;padding:24px 28px;color:#fff;border-radius:12px 12px 0 0"><strong style="font-size:23px;letter-spacing:3px">KOLAB</strong><p style="margin:7px 0 0;color:#b9c7dc;font-size:11px;letter-spacing:2px">HÉBERGEMENT</p></td></tr><tr><td style="padding:28px;border-top:4px solid ${color}"><h1 style="margin:0 0 14px;font-size:26px;color:${color}">${escape(text.title)}${test ? " (test)" : ""}</h1><p style="margin:0 0 14px;font-size:20px;font-weight:700;color:#162137;overflow-wrap:anywhere">${escape(name)}</p><p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#475467">${escape(text.sentence)}</p>${html}${open && linkable(open) ? `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#2455d6" style="border-radius:6px"><a href="${escape(open)}" style="display:inline-block;padding:14px 20px;color:#fff;text-decoration:none;font-size:14px;font-weight:700">Ouvrir dans Kolab &rarr;</a></td></tr></table>` : ""}</td></tr></table></td></tr></table></body></html>`,
 			headers: { "Message-ID": `<ph-web-${row.id}@${$os.getenv("APEX_DOMAIN") || "localhost"}>` },
 			...attachment && reader ? { attachments: { [attachment.filename]: reader } } : {}
 		}));
@@ -7692,10 +7712,10 @@ const scan = (settings, context, store) => {
 	const app = store.findRecordById("web_apps", settings.getString("appId")), until = stamp$4();
 	const cursors = JSON.parse(settings.getString("sourceCursors") || "{}");
 	const take = (collection, filter, timeField) => takeRows(store, cursors, settings.getString("activatedAt") || until, collection, `appId={:app} && ${filter}`, timeField, { app: app.id });
-	const copy = context.platform?.getBool("enabled") ? config$1(context.platform, true) : null;
+	const local = config$1(settings), copy = context.platform?.getBool("enabled") ? config$1(context.platform, true) : null;
 	const emit = (event, key, details) => {
 		enqueue$2(settings, app, event, key, details, store);
-		if (copy?.copyAppEvents && COPIED.includes(event) && (event !== "deployment_failed" || details.finishedAt && details.finishedAt >= context.platform.getString("activatedAt") && deploymentEmailApplication(app.id, store))) enqueue$2(context.platform, event === "deployment_failed" ? app : null, "app_" + event, "copy:" + app.id + ":" + key, {
+		if (copy?.copyAppEvents && COPIED.includes(event) && (event !== "deployment_succeeded" || details.finishedAt >= (copy.deploymentSuccessActivatedAt || context.platform.getString("activatedAt"))) && (!["deployment_failed", "deployment_succeeded"].includes(event) || details.finishedAt && details.finishedAt >= context.platform.getString("activatedAt") && deploymentEmailApplication(app.id, store))) enqueue$2(context.platform, ["deployment_failed", "deployment_succeeded"].includes(event) ? app : null, "app_" + event, "copy:" + app.id + ":" + key, {
 			...details,
 			appId: app.id,
 			appName: safeName(app.getString("name"))
@@ -7710,15 +7730,17 @@ const scan = (settings, context, store) => {
 		status: "healthy",
 		httpStatus: row.getInt("httpStatus")
 	});
-	for (const row of take("web_deployments", "status=\"failed\"", "finishedAt")) {
-		if (["deploy", "ci-deploy"].includes(row.getString("action")) && !deploymentEmailApplication(app.id, store)) continue;
-		emit(row.getString("action") === "domain" ? "certificate_failed" : "deployment_failed", "deployment:" + row.id, {
+	for (const row of take("web_deployments", "(status=\"failed\" || status=\"ready\")", "finishedAt")) {
+		const deploy = ["deploy", "ci-deploy"].includes(row.getString("action")), success = row.getString("status") === "ready";
+		if (success && (!deploy || row.getString("finishedAt") < (local.deploymentSuccessActivatedAt || settings.getString("activatedAt")))) continue;
+		if (deploy && !deploymentEmailApplication(app.id, store)) continue;
+		emit(success ? "deployment_succeeded" : row.getString("action") === "domain" ? "certificate_failed" : "deployment_failed", "deployment:" + row.id, {
+			...deploy ? deploymentFailureDetails(row) : {},
 			deploymentId: row.id,
-			status: "failed",
+			status: success ? "ready" : "failed",
 			action: row.getString("action"),
-			stage: row.getString("stage"),
-			summary: webAlertSummary(row.getString("error"), app, store),
-			...["deploy", "ci-deploy"].includes(row.getString("action")) ? deploymentFailureDetails(row) : {}
+			stage: success ? "Publié" : row.getString("stage"),
+			summary: success ? "La nouvelle version est publiée." : webAlertSummary(row.getString("error"), app, store)
 		});
 	}
 	for (const row of take("web_app_backups", "(status=\"failed\" || s3State=\"failed\") && status!=\"deleting\" && status!=\"deleted\" && operation!=\"delete\" && trigger!=\"platform\"", "updated")) emit("backup_failed", "backup:" + row.id, {
@@ -7779,18 +7801,20 @@ const scanPlatformOutbox = (p, store) => {
 	const cursors = JSON.parse(p.getString("sourceCursors") || "{}"), start = p.getString("activatedAt") || stamp$4(), rows = takeRows(store, cursors, start, OUTBOX, "scope=\"platform\"", "created");
 	let advanced = rows.length > 0;
 	const value = config$1(p, true);
-	if (value.copyAppEvents && value.events.includes("app_deployment_failed")) {
-		const jobs = takeRows(store, cursors, start, "web_deployments", "status=\"failed\" && (action=\"deploy\" || action=\"ci-deploy\")", "finishedAt");
+	if (value.copyAppEvents && value.events.some((event) => DEPLOYMENT_RESULTS.includes(event))) {
+		const jobs = takeRows(store, cursors, start, "web_deployments", "(status=\"failed\" || status=\"ready\") && (action=\"deploy\" || action=\"ci-deploy\")", "finishedAt");
 		advanced ||= jobs.length > 0;
 		for (const job of jobs) {
+			if (job.getString("status") === "ready" && job.getString("finishedAt") < (value.deploymentSuccessActivatedAt || start)) continue;
 			const app = deploymentEmailApplication(job.getString("appId"), store);
 			if (!app) continue;
-			enqueue$2(p, app, "app_deployment_failed", `copy:${app.id}:deployment:${job.id}`, {
+			enqueue$2(p, app, job.getString("status") === "ready" ? "app_deployment_succeeded" : "app_deployment_failed", `copy:${app.id}:deployment:${job.id}`, {
 				...deploymentFailureDetails(job),
 				appId: app.id,
 				appName: safeName(app.getString("name")),
-				status: "failed",
-				summary: webAlertSummary(job.getString("error"), app, store)
+				status: job.getString("status"),
+				stage: job.getString("status") === "ready" ? "Publié" : job.getString("stage"),
+				summary: job.getString("status") === "ready" ? "La nouvelle version est publiée." : webAlertSummary(job.getString("error"), app, store)
 			}, store, "auto", "", "", "platform");
 		}
 	}
@@ -8161,6 +8185,7 @@ const HandleWebPlatformNotificationsPut = (e) => {
 		generatedSecret = applyChannels(input, value, () => {}, () => value.email.recipients.length > 0);
 		if (input.events !== void 0) {
 			if (!Array.isArray(input.events) || input.events.some((event) => !PLATFORM_EVENTS.includes(event))) throw new BadRequestError("Types d’alerte invalides.");
+			if (input.events.includes("app_deployment_succeeded") && !value.events.includes("app_deployment_succeeded")) value.deploymentSuccessActivatedAt = stamp$4();
 			value.events = [...new Set(input.events)];
 		}
 		if (input.copyAppEvents !== void 0) {

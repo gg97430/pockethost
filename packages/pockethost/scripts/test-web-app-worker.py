@@ -318,6 +318,7 @@ class WorkerTests(unittest.TestCase):
  def test_blocking_certificate_keeps_heartbeat_and_stops_before_terminal_report(self):
   self.value['action']='domain';self.value['snapshot']['domain']='custom.example.org';self.value['snapshot']['domains']=[{'host':'custom.example.org','certificate':False}]
   w.atomic(self.root/'routes.json',{'version':1,'routes':[{'appId':'b'*15,'host':'web-example.monappli.re','active':True,'target':'http://127.0.0.1:1234'}]})
+  w.atomic(self.root/'worker-status.json',{'httpsReady':True})
   event=threading.Event();calls=[]
   def report(path,body):calls.append(body);event.set();return {}
   def certificate(*args):
@@ -325,7 +326,7 @@ class WorkerTests(unittest.TestCase):
   module=types.SimpleNamespace(provision_web_domain_certificate=certificate)
   with mock.patch.dict(sys.modules,{'web_app_domains':module}),mock.patch.object(w,'api',side_effect=report),mock.patch.object(w,'CERT_HEARTBEAT_SECONDS',.01):
    result=self.job().execute();count=len(calls);time.sleep(.04);self.assertEqual(len(calls),count)
-  self.assertTrue(result['certificate']);self.assertGreater(count,0);self.assertTrue(all(c['stageKey']=='domain'for c in calls));self.assertTrue(w.load(self.root/'worker-status.json')['ready'])
+  self.assertTrue(result['certificate']);self.assertGreater(count,0);self.assertTrue(all(c['stageKey']=='domain'for c in calls));self.assertTrue(w.load(self.root/'worker-status.json')['ready']);self.assertTrue(w.load(self.root/'worker-status.json')['httpsReady']);self.assertIn(w.load(self.root/'worker-status.json')['allocationMode'],('adaptive','fixed'))
  def test_image_reuse_fingerprint_lookup_and_bounded_memory(self):
   profile={'kind':'auto','port':3000}
   with mock.patch.object(w,'SECRET','s'*32):
@@ -415,10 +416,12 @@ class WorkerTests(unittest.TestCase):
   self.assertIn(current,retained);self.assertNotIn(current,removed)
  def test_auto_build_stage_label_and_worker_status_publishes_railpack(self):
   self.value['snapshot']['runtime']={'kind':'auto'};calls=[]
+  w.atomic(self.root/'worker-status.json',{'httpsReady':True})
   with mock.patch.object(w,'api',side_effect=lambda path,body:calls.append(body)or{}),mock.patch.object(w,'publish_runtime_stats'),mock.patch.object(w,'RAILPACK_TOOLS',True):
    j=self.job();j.stage('build');j.stage('fetch')
   self.assertEqual(calls[0]['stage'],'Construction automatique (Railpack)');self.assertEqual(calls[1]['stage'],'Récupération du commit');self.assertIn('Construction automatique (Railpack)',j.logpath.read_text())
   self.assertIs(w.load(self.root/'worker-status.json')['railpack'],True)
+  self.assertTrue(w.load(self.root/'worker-status.json')['httpsReady']);self.assertIn(w.load(self.root/'worker-status.json')['allocationMode'],('adaptive','fixed'))
   self.value['snapshot']['runtime']={'kind':'dockerfile'};self.assertEqual(self.job().label('build'),w.STAGES['build'])
  def test_prerequisites_never_fail_on_missing_railpack(self):
   import web_app_railpack

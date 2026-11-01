@@ -26,6 +26,16 @@ def load(path,default=None):
  try:return json.loads(path.read_text())
  except (FileNotFoundError,ValueError):return {} if default is None else default
 
+def allocation_status():
+ mode=os.environ.get('WEB_APPS_ALLOCATION_MODE','adaptive')
+ return mode if mode in ('adaptive','fixed')else'unknown'
+
+def publish_job_status(deployment):
+ status=load(ROOT/'worker-status.json')
+ status.update({'ready':True,'rootless':True,'allocationMode':allocation_status(),'checkedAt':stamp(),'deployment':deployment,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS})
+ atomic(ROOT/'worker-status.json',status)
+
+
 def api(path,body):
  if not re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{3,4}',CONTROL)or not 1024<=int(CONTROL.rsplit(':',1)[1])<=65535 or len(SECRET)<32:raise RuntimeError('Contrôleur loopback et secret privé requis.')
  request=urllib.request.Request(CONTROL+'/api/web-apps/_worker/'+path,headers={'Content-Type':'application/json','X-Web-Worker':SECRET},data=json.dumps(body).encode())
@@ -196,7 +206,7 @@ class Job:
   if not force and time.monotonic()-self.last_heartbeat<5:return {}
   response=api('report',{'id':self.id,'stageKey':self.stage_key,'stage':self.label(self.stage_key)})
   self.last_heartbeat=time.monotonic();self.check_cancel(response)
-  atomic(ROOT/'worker-status.json',{'ready':True,'rootless':True,'checkedAt':stamp(),'deployment':self.id,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS})
+  publish_job_status(self.id)
   publish_runtime_stats();return response
  def stage(self,name):
   if name=='build':self.build_started=time.monotonic()
@@ -214,7 +224,7 @@ class Job:
     try:
      api('report',{'id':self.id,'stageKey':self.stage_key,'stage':self.label(self.stage_key)})
      self.last_heartbeat=time.monotonic()
-     atomic(ROOT/'worker-status.json',{'ready':True,'rootless':True,'checkedAt':stamp(),'deployment':self.id,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS})
+     publish_job_status(self.id)
     except Exception as error:errors.append(error);return
   thread=threading.Thread(target=pulse,name='web-blocking-heartbeat',daemon=True);thread.start()
   try:yield
@@ -833,8 +843,7 @@ def reconcile():
  (ROOT/'current-job.json').unlink(missing_ok=True)
 
 def main():
- allocation_label=os.environ.get('WEB_APPS_ALLOCATION_MODE','adaptive')
- if allocation_label not in ('adaptive','fixed'):allocation_label='unknown'
+ allocation_label=allocation_status()
  if not re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{3,4}',CONTROL)or not 1024<=int(CONTROL.rsplit(':',1)[1])<=65535 or len(SECRET)<32:raise RuntimeError('Configuration locale du worker invalide.')
  if ROOT.resolve()!=ROOT:raise RuntimeError('Répertoire du worker symbolique refusé.')
  ROOT.mkdir(parents=True,exist_ok=True,mode=0o750)

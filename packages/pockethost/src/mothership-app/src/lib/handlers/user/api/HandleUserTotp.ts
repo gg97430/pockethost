@@ -12,3 +12,5 @@ export const HandleDashboardTotpDisable = security.disable
 export const HandleDashboardTotpRegenerate = security.regenerate
 export const HandleDashboardTotpAuth = security.authenticate
 export const GuardDashboardTotp = security.guard
+
+export const HandleDashboardServiceDelegate = security.delegateService

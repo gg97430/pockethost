@@ -1,5 +1,7 @@
 import { mkLog } from '$util/Logger'
 import { ReconcileBackupPolicyCrons, TestBackupS3Config } from '../instance/api/HandleInstanceBackups'
+import { listWebMemberships } from '../webApps/access'
+import { saveWebUserProjects, validateWebUserProjects } from '../webApps/members'
 import { requireOperatorAdmin } from './auth'
 import { scanOrphanInstanceStorage } from './diskCleanup'
 import {
@@ -16,6 +18,7 @@ import {
   validateSMTPConfiguration,
 } from './settingsValidation'
 import { SMTP_TEST_WORKER } from './smtpTest'
+import { sendAccountWelcomeEmail, welcomeMailSettings } from './welcomeEmail'
 
 const readJsonBody = <T extends Record<string, any>>(e: core.RequestEvent): T => {
   try {
@@ -81,6 +84,7 @@ const serializeUser = (record: models.Record) => ({
   updated: record.getString('updated'),
   instanceCount: countInstancesForUser(record.id),
   managedInstances: record.getStringSlice('managedInstances') || [],
+  webProjects: listWebMemberships(record),
 })
 
 const userTimestampMs = (record: models.Record) => {
@@ -180,6 +184,10 @@ export const HandleOperatorAdminOverview = (e: core.RequestEvent) => {
         uid: record.getString('uid'),
       }))
       .sort((a, b) => a.subdomain.localeCompare(b.subdomain)),
+    webProjects: $app
+      .findAllRecords('web_projects')
+      .map((record) => ({ id: record.id, name: record.getString('name'), repository: record.getString('repository') }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
     stats: {
       totalUsers: users.length,
       verifiedUsers: users.filter((user) => user.verified).length,
@@ -192,7 +200,7 @@ export const HandleOperatorAdminOverview = (e: core.RequestEvent) => {
 
 export const HandleOperatorAdminCreateUser = (e: core.RequestEvent) => {
   const log = mkLog('operator-admin:create-user')
-  requireOperatorAdmin(e)
+  const actor = requireOperatorAdmin(e)
 
   const settings = readOperatorSettings()
   const body = readJsonBody<{
@@ -204,9 +212,15 @@ export const HandleOperatorAdminCreateUser = (e: core.RequestEvent) => {
     subscription_quantity?: number
     suspension?: string
     managedInstances?: string[]
+    webProjects?: { projectId: string; role: string }[]
+    sendWelcomeEmail?: boolean
   }>(e)
 
+  if (body.sendWelcomeEmail !== undefined && typeof body.sendWelcomeEmail !== 'boolean')
+    throw new BadRequestError('Le choix d’envoi du mail doit être un booléen.')
+  const welcomeSettings = body.sendWelcomeEmail === true ? welcomeMailSettings() : undefined
   validateOperatorUserInput(body)
+  if (body.webProjects !== undefined) validateWebUserProjects(body.webProjects)
   const email = normalizeEmailAddress(body.email)
   const password = `${body.password || ''}`
   if (!email) throw new BadRequestError("L'email est obligatoire.")
@@ -227,22 +241,34 @@ export const HandleOperatorAdminCreateUser = (e: core.RequestEvent) => {
   record.set('suspension', `${body.suspension || ''}`.trim())
   record.setPassword(password)
 
-  $app.save(record)
+  $app.runInTransaction((tx) => {
+    tx.save(record)
+    if (body.webProjects !== undefined) saveWebUserProjects(tx, actor, record, body.webProjects)
+  })
   log(`created ${email}`)
 
   let warning = ''
-  if (!record.getBool('verified')) {
+  let welcomeEmailSent = false
+  if (welcomeSettings) {
+    try {
+      sendAccountWelcomeEmail(record, password, welcomeSettings)
+      welcomeEmailSent = true
+    } catch {
+      warning =
+        'Compte créé, mais le mail contenant les identifiants n’a pas pu être envoyé. Vérifiez SMTP. Ne recréez pas ce compte.'
+    }
+  } else if (!record.getBool('verified')) {
     try {
       $mails.sendRecordVerification($app, record)
     } catch {
       warning = 'Compte créé, mais l’email de vérification n’a pas pu être envoyé. Vérifiez SMTP.'
     }
   }
-  return e.json(200, { user: serializeUser(record), warning })
+  return e.json(200, { user: serializeUser(record), warning, welcomeEmailSent })
 }
 
 export const HandleOperatorAdminUpdateUser = (e: core.RequestEvent) => {
-  requireOperatorAdmin(e)
+  const actor = requireOperatorAdmin(e)
   const id = e.request.pathValue('id')
   if (!id) throw new BadRequestError("L'identifiant utilisateur est obligatoire.")
 
@@ -255,9 +281,11 @@ export const HandleOperatorAdminUpdateUser = (e: core.RequestEvent) => {
     subscription_quantity?: number
     suspension?: string
     managedInstances?: string[]
+    webProjects?: { projectId: string; role: string }[]
   }>(e)
 
   validateOperatorUserInput(body)
+  if (body.webProjects !== undefined) validateWebUserProjects(body.webProjects)
   const record = $app.findRecordById('users', id)
   if (
     record.getBool('superAdmin') &&
@@ -291,7 +319,10 @@ export const HandleOperatorAdminUpdateUser = (e: core.RequestEvent) => {
     record.set('superAdmin', body.superAdmin)
   }
 
-  $app.save(record)
+  $app.runInTransaction((tx) => {
+    tx.save(record)
+    if (body.webProjects !== undefined) saveWebUserProjects(tx, actor, record, body.webProjects)
+  })
 
   return e.json(200, { user: serializeUser(record) })
 }

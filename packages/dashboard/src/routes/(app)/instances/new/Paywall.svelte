@@ -8,8 +8,8 @@
   <div class="wa-card-body">
     <h2 class="text-xl font-bold mb-2">Limite atteinte</h2>
     <p>
-      Ce compte ne peut pas créer d'instance supplémentaire. Modifiez `subscription_quantity` dans l'admin PocketBase si
-      vous voulez augmenter le quota.
+      Le quota de {maxInstances} base{maxInstances > 1 ? 's' : ''} de ce compte est atteint. Demandez à un administrateur
+      d’ajuster votre quota dans Administration.
     </p>
   </div>
 </wa-card>

@@ -1,13 +1,27 @@
 export type InstanceListSortDirection = 'asc' | 'desc'
+export type InstanceListSortBy =
+  | 'favorites'
+  | 'name'
+  | 'label'
+  | 'status'
+  | 'cpu'
+  | 'memory'
+  | 'disk'
+  | 'version'
+  | 'power'
 export type InstanceListViewMode = 'list' | 'grid'
 
 export type InstanceListPrefs = {
+  sortBy: InstanceListSortBy
+  groupFilter: string
   searchQuery: string
   sortDirection: InstanceListSortDirection
   viewMode: InstanceListViewMode
 }
 
 export const DEFAULT_INSTANCE_LIST_PREFS: InstanceListPrefs = {
+  sortBy: 'favorites',
+  groupFilter: 'all',
   searchQuery: '',
   sortDirection: 'asc',
   viewMode: 'list',
@@ -20,7 +34,23 @@ const DEFAULTS = DEFAULT_INSTANCE_LIST_PREFS
 const SORT_DIRECTIONS = new Set<InstanceListSortDirection>(['asc', 'desc'])
 const VIEW_MODES = new Set<InstanceListViewMode>(['list', 'grid'])
 
-const URL_KEYS = ['sort', 'q', 'view'] as const
+export const INSTANCE_SORT_OPTIONS: { value: InstanceListSortBy; label: string }[] = [
+  { value: 'favorites', label: 'Favoris puis nom' },
+  { value: 'name', label: 'Nom' },
+  { value: 'label', label: 'Label' },
+  { value: 'status', label: 'État' },
+  { value: 'cpu', label: 'CPU' },
+  { value: 'memory', label: 'RAM' },
+  { value: 'disk', label: 'Disque' },
+  { value: 'version', label: 'Version' },
+  { value: 'power', label: 'Alimentation' },
+]
+const SORT_KEYS = new Set(INSTANCE_SORT_OPTIONS.map((x) => x.value))
+const validGroup = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  (value === 'all' || value === 'ungrouped' || (value.startsWith('label:') && value.length <= 126))
+
+const URL_KEYS = ['sort', 'q', 'view', 'by', 'group'] as const
 
 export const instanceListPrefsHasUrlParams = (searchParams: URLSearchParams) =>
   URL_KEYS.some((key) => searchParams.has(key))
@@ -36,6 +66,8 @@ const parseStored = (raw: string | null): Partial<InstanceListPrefs> | null => {
 }
 
 const sanitize = (stored: Partial<InstanceListPrefs>): InstanceListPrefs => ({
+  sortBy: stored.sortBy && SORT_KEYS.has(stored.sortBy) ? stored.sortBy : DEFAULTS.sortBy,
+  groupFilter: validGroup(stored.groupFilter) ? stored.groupFilter : DEFAULTS.groupFilter,
   searchQuery: typeof stored.searchQuery === 'string' ? stored.searchQuery : DEFAULTS.searchQuery,
   sortDirection:
     stored.sortDirection && SORT_DIRECTIONS.has(stored.sortDirection) ? stored.sortDirection : DEFAULTS.sortDirection,
@@ -44,6 +76,10 @@ const sanitize = (stored: Partial<InstanceListPrefs>): InstanceListPrefs => ({
 
 export const loadInstanceListPrefsFromUrl = (searchParams: URLSearchParams): InstanceListPrefs => {
   const fromUrl: Partial<InstanceListPrefs> = {}
+  const by = searchParams.get('by') as InstanceListSortBy
+  if (SORT_KEYS.has(by)) fromUrl.sortBy = by
+  const group = searchParams.get('group')
+  if (validGroup(group)) fromUrl.groupFilter = group
   const sort = searchParams.get('sort')
   const q = searchParams.get('q')
   const view = searchParams.get('view')

@@ -74,6 +74,24 @@ describe('web site rate limit', () => {
     expect(peer.end).not.toHaveBeenCalled()
   })
 
+  it('applies admin policy changes without a server restart and labels its own 429 responses', async () => {
+    let limit = 1
+    const app = express(),
+      limiter = createWebLimiter({ limit, clientIp: byHeader, readLimit: () => limit })
+    app.use(limiter.middleware)
+    app.use((_req, res) => res.send('ok'))
+    expect((await request(app).get('/')).status).toBe(200)
+    const refused = await request(app).get('/')
+    expect(refused.status).toBe(429)
+    expect(refused.headers['x-kolab-rate-limit-source']).toBe('hosting-ip')
+    limit = 0
+    for (let i = 0; i < 3; i++) expect((await request(app).get('/')).status).toBe(200)
+    limit = 2
+    expect((await request(app).get('/')).status).toBe(200)
+    expect((await request(app).get('/')).status).toBe(200)
+    expect((await request(app).get('/')).status).toBe(429)
+  })
+
   it('reads its ceiling from the environment, 0 disabling it and garbage keeping the default', () => {
     expect(rateLimitFromEnv(undefined, 1200)).toBe(1200)
     expect(rateLimitFromEnv('', 1200)).toBe(1200)

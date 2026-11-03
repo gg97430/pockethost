@@ -65,7 +65,7 @@ def main():
     script_root = pathlib.Path(__file__).resolve().parent
     if script_root != pathlib.Path('/opt/pockethost-web'):
         raise RuntimeError('Run the installed trusted script')
-    for name in ['web_private_db_broker.py', 'web_private_db_provider.py', 'web_private_db_proxy.cjs', 'web_private_db_target.cjs', 'web_private_db_wait.cjs', 'web-private-db-broker.service']:
+    for name in ['web_private_db_broker.py', 'web_private_db_provider.py', 'web_private_db_cpu.py', 'web_private_db_limits.py', 'instance_request_limits.py', 'web_private_db_proxy.cjs', 'web_private_db_target.cjs', 'web_private_db_wait.cjs', 'web-private-db-broker.service']:
         item = script_root / name
         info = item.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:

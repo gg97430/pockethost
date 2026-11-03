@@ -1,6 +1,7 @@
 import { selectedInstanceImages } from '../../../../../common/instanceImages'
 import { canManageInstance } from '../../security/instanceAccess'
 import { operationsAccess, recordInstanceAction } from '../instance/api/instanceOperationsAccess'
+import { readConnectionLimits } from '../operatorAdmin/connectionLimits'
 import { requireWebAppPermission, webCan } from './access'
 import { decryptWebValue, encryptWebValue, webDirectLoopback, webInput, webJson } from './api'
 import { runtimeProfile } from './runtimes'
@@ -245,6 +246,7 @@ const targetStates = (grants: ReturnType<typeof workerRows>) => {
               databaseImages: selectedInstanceImages(ids, $os.getenv('PH_INSTANCE_IMAGE_OVERRIDES')),
               targetImage: image,
               ids,
+              connectionLimits: readConnectionLimits(),
               ...($os.getenv('WEB_DB_TARGET_ROOT') ? { targetRoot: $os.getenv('WEB_DB_TARGET_ROOT') } : {}),
               ...($os.getenv('WEB_DB_TARGET_SCRIPT') ? { targetScript: $os.getenv('WEB_DB_TARGET_SCRIPT') } : {}),
             })
@@ -277,6 +279,7 @@ export const HandleWebPrivateDatabaseWorker = (e: core.RequestEvent) => {
     targets = targetStates(grants)
   return webJson(e, {
     version: 1,
+    limits: readConnectionLimits(),
     enabled: supported(),
     applications: supported() ? activeApps($app).map((app) => app.id) : [],
     bindings: grants.map(({ row, grant, ...item }) => ({
@@ -294,6 +297,7 @@ export const HandleWebPrivateDatabaseBroker = (e: core.RequestEvent) => {
     targets = targetStates(grants)
   return webJson(e, {
     version: 1,
+    limits: readConnectionLimits(),
     enabled: supported(),
     applications: supported() ? activeApps($app).map((app) => app.id) : [],
     bindings: grants.map(({ row, grant, token, ...item }) => {

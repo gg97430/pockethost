@@ -170,6 +170,24 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(command[command.index('--cpus') + 1], '0.05')
         self.assertEqual(command[command.index('--memory') + 1], '96m')
 
+    def test_operator_can_remove_cpu_cap_only_for_selected_target(self):
+        info = copy.deepcopy(self.info)
+        info['HostConfig']['NanoCpus'] = 0
+        self.assertFalse(self.provider.trusted(info, self.target))
+        legacy = copy.deepcopy(self.info)
+        legacy['HostConfig']['CpuQuota'] = -1
+        self.assertFalse(self.provider.trusted(legacy, self.target))
+        with mock.patch.object(provider_module, 'unlimited', return_value=True):
+            self.assertTrue(self.provider.trusted(info, self.target))
+            self.assertTrue(self.provider.trusted(legacy, self.target))
+            info['HostConfig']['Privileged'] = True
+            self.assertFalse(self.provider.trusted(info, self.target))
+            self.provider.leaf = mock.Mock()
+            self.provider.docker = mock.Mock(side_effect=[(True, self.target_cid), (True, '')])
+            self.provider.create(self.target)
+            command = self.provider.docker.call_args_list[0].args
+            self.assertEqual(command[command.index('--cpus') + 1], '0')
+
     def test_pinned_database_b_keeps_private_namespace_available(self):
         image = 'sha256:' + 'e' * 64
         configured = provider_module.Provider({**self.config, 'databaseImages': {self.ident: image}})

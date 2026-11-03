@@ -574,9 +574,9 @@ install_letsencrypt_tls() {
     --keep-until-expiring \
     "${domain_args[@]}"
 
-  [[ -f "${cert_dir}/fullchain.pem" && -f "${cert_dir}/privkey.pem" ]] || die "Certificat Let's Encrypt introuvable dans ${cert_dir}"
-  cp "${cert_dir}/fullchain.pem" "${cert_file}"
-  cp "${cert_dir}/privkey.pem" "${key_file}"
+  as_root test -f "${cert_dir}/fullchain.pem" && as_root test -f "${cert_dir}/privkey.pem" || die "Certificat Let's Encrypt introuvable dans ${cert_dir}"
+  as_root cp "${cert_dir}/fullchain.pem" "${cert_file}"
+  as_root cp "${cert_dir}/privkey.pem" "${key_file}"
   write_letsencrypt_deploy_hook
 }
 
@@ -946,7 +946,8 @@ ensure_superuser_token() {
     return
   fi
 
-  pb_upsert_superuser_cli
+  # This function is captured as the Authorization token; keep bootstrap logs out of stdout.
+  pb_upsert_superuser_cli >&2
 
   for _ in $(seq 1 30); do
     token="$(pb_auth_superuser "${base}")"
@@ -1075,6 +1076,10 @@ main() {
   start_pm2_stack
   wait_for_mothership
   ensure_dashboard_admin
+  # The initial download runs before the control plane exists; publish its catalog now that authentication works.
+  if bool_enabled "${START_PM2}" && bool_enabled "${PRELOAD_POCKETBASE}"; then
+    preload_pocketbase_binaries
+  fi
   print_summary
 }
 

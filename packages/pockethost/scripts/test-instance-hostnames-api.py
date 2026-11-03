@@ -18,7 +18,7 @@ try:
  source=args.source/'packages/pockethost/src/mothership-app';hooks=root/'hooks';migrations=root/'migrations';hooks.mkdir();migrations.mkdir()
  shutil.copyfile(source/'pb_hooks/mothership.js',hooks/'mothership.js')
  for file in(source/'pb_migrations').glob('*.js'):
-  if file.name.split('_')[0].isdigit()and int(file.name.split('_')[0])<=1793272000:shutil.copyfile(file,migrations/file.name)
+  if file.name=='1793518500_added_instance_project_label.js' or (file.name.split('_')[0].isdigit()and int(file.name.split('_')[0])<=1793272000):shutil.copyfile(file,migrations/file.name)
  (hooks/'hostnames.pb.js').write_text("""
  onRecordCreateRequest(e=>require(`${__hooks}/mothership`).GuardInstanceHostnamesRequest(e),'instances');
  onRecordUpdateRequest(e=>require(`${__hooks}/mothership`).GuardInstanceHostnamesRequest(e),'instances');
@@ -59,6 +59,20 @@ try:
  assert one['publicHostname']=='client.one-old.example.test'and one['legacyHostnames']==['client.one-old.example.test','id.one-old.example.test']
  read=api('/api/collections/instances/records/'+one['id'],owner_token);assert read['publicHostname']==one['publicHostname']and read['legacyHostnames']==one['legacyHostnames']
  checks.append('normalization_and_owner_read_access')
+ outsider,outsider_token=user('outsider',False)
+ patch(one,{'power':True,'status':'running'})
+ api('/api/instance/'+one['id'],owner_token,{'fields':{'projectLabel':'  LAPUB   Projets '}},'PUT')
+ current=api('/api/collections/instances/records/'+one['id'],su)
+ assert current['projectLabel']=='LAPUB Projets'and current['power']and current['status']=='running'and current['uid']==owner['id']
+ api('/api/instance/'+one['id'],outsider_token,{'fields':{'projectLabel':'Hijack'}},'PUT',400)
+ for invalid in [None,{},['label'],'x'*61,'line\nbreak']:
+  api('/api/instance/'+one['id'],owner_token,{'fields':{'projectLabel':invalid}},'PUT',400)
+ assert api('/api/collections/instances/records/'+one['id'],su)['projectLabel']=='LAPUB Projets'
+ api('/api/instance/'+one['id'],operator_token,{'fields':{'projectLabel':''}},'PUT')
+ assert api('/api/collections/instances/records/'+one['id'],su)['projectLabel']==''
+ patch(one,{'power':False,'status':'idle'})
+ checks.append('labels_editable_online_normalized_clearable_and_reject_invalid_values_and_unrelated_users')
+
  patch(one,{'publicHostname':'hijack.example.test'},owner_token,403)
  patch(one,{'legacyHostnames':['hijack.example.test']},owner_token,403)
  api('/api/collections/instances/records',owner_token,{'subdomain':'owner-new','uid':owner['id'],'version':'0.39.11','publicHostname':'hijack.example.test'},status=403)

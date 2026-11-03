@@ -1,4 +1,5 @@
 <script lang="ts">
+  import InstanceProjectLabel from '$components/InstanceProjectLabel.svelte'
   import { goto } from '$app/navigation'
   import { INSTANCE_ADMIN_URL } from '$lib/appEnv'
   import { client } from '$src/pocketbase-client'
@@ -59,6 +60,7 @@
         </span>
       </div>
 
+      <InstanceProjectLabel {instance} />
       <div class="flex flex-wrap items-center gap-1.5 min-w-0">
         <a
           href={INSTANCE_ADMIN_URL(instance)}

@@ -29,6 +29,8 @@ export type {
   OperatorInstance,
   OperatorSettings,
   OperatorUser,
+  OperatorWebProject,
+  OperatorWebProjectAssignment,
   UpdateInstanceBackupPolicyInput,
   UpdateInstanceLitestreamPolicyInput,
   UpdateInstanceMonitoringInput,

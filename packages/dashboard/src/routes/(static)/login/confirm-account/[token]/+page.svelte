@@ -15,7 +15,7 @@
     } else {
       try {
         confirmVerification(token).then(() => {
-          window.location.href = '/dashboard'
+          window.location.href = '/home'
         })
       } catch (error) {
         const e = error as Error

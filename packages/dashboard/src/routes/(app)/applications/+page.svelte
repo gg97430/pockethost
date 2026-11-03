@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { goto } from '$app/navigation'
+  import WebHostingSummary from '$components/webApps/WebHostingSummary.svelte'
   import WebAppEnvironment from '$components/webApps/WebAppEnvironment.svelte'
   import WebGitSource from '$components/webApps/WebGitSource.svelte'
   import WebProjectGroups from '$components/webApps/WebProjectGroups.svelte'
@@ -300,6 +301,7 @@
         >{/if}
     </div>{/if}
 </header>
+{#if enabled && (groups || loading)}<WebHostingSummary {groups} loading={!groups && loading} />{/if}
 {#if error}<div class="web-alert web-alert--error" role="alert">{error}</div>{/if}
 {#if !enabled}<div class="web-alert" role="status">L’hébergement web n’est pas activé sur ce serveur.</div>{/if}
 {#if capabilities?.error}<div class="web-alert" role="status">{capabilities.error}</div>{/if}

@@ -78,6 +78,7 @@ function createTarget(options = {}) {
     connectMs: 2000,
     idleMs: 120000,
     maxConnections: 128,
+    limits: '/run/target/limits.json',
     ...options,
   }
   const connections = new Set()
@@ -98,6 +99,18 @@ function createTarget(options = {}) {
     }
   }
   function accept(client) {
+    // Policy changes affect new connections; established database reads remain open.
+    try {
+      if (fs.existsSync(options.limits)) {
+        const policy = readStatus(options.limits)
+        if (!Number.isInteger(policy.maxConnections) || policy.maxConnections < 1 || policy.maxConnections > 512)
+          throw Error('limits')
+        options.maxConnections = policy.maxConnections
+      }
+    } catch {
+      client.destroy()
+      return
+    }
     if (stopping || connections.size >= options.maxConnections) {
       client.destroy()
       return

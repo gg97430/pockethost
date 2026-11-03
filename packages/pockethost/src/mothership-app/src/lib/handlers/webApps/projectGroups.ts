@@ -92,6 +92,28 @@ const findApps = (ids: string[]) => {
 }
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name)
 
+/** Une lecture groupée, limitée aux applications déjà autorisées dans la liste. */
+const appsWithPendingDeployments = (ids: string[]) => {
+  const pending = new Set<string>()
+  for (let offset = 0; offset < ids.length; offset += 200) {
+    const params: Record<string, string> = {},
+      placeholders = ids.slice(offset, offset + 200).map((id, index) => {
+        params[`app${index}`] = id
+        return `{:app${index}}`
+      }),
+      rows = arrayOf(new DynamicModel({ appId: '' }))
+    $app
+      .db()
+      .newQuery(
+        `SELECT DISTINCT appId FROM web_deployments WHERE status IN ('queued', 'running') AND appId IN (${placeholders.join(',')})`
+      )
+      .bind(params)
+      .all(rows)
+    for (const row of rows) pending.add(`${row.appId}`)
+  }
+  return pending
+}
+
 /** GET /api/web-projects/groups — projets accessibles et leurs sites ; superAdmin : tout, plus « Sans projet ». */
 export const HandleWebProjectGroups = (e: core.RequestEvent) => {
   const user = requireWebUser(e),
@@ -176,6 +198,9 @@ export const HandleWebProjectGroups = (e: core.RequestEvent) => {
         .sort(byName),
     }
   }
+  const visibleApps = [...groups.flatMap((group) => group.apps), ...(unassigned?.apps || [])],
+    pending = appsWithPendingDeployments(visibleApps.map((app) => app.id))
+  for (const app of visibleApps) app.deploymentInProgress = pending.has(app.id)
   return webJson(e, {
     enabled: true,
     isPlatformAdmin: platform,

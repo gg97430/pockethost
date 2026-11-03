@@ -2,6 +2,7 @@
   import { browser } from '$app/environment'
   import { goto } from '$app/navigation'
   import { page } from '$app/stores'
+  import MandatoryTotpGate from '$components/account/MandatoryTotpGate.svelte'
   import Navbar from '$src/routes/Navbar/Navbar.svelte'
   import VerifyAccountBar from '$components/VerifyAccountBar.svelte'
   import Meta from '$components/guards/Meta.svelte'
@@ -26,7 +27,7 @@
   $: isAuthOnlyPage = pathname === '/' || pathname === '/login' || pathname.startsWith('/login/')
   $: isBlockedPublicPage = blockedPublicPrefixes.some((path) => pathname === path || pathname.startsWith(`${path}/`))
   $: if (browser && $isAuthStateInitialized && isBlockedPublicPage) {
-    goto($isUserLoggedIn ? '/dashboard' : '/login')
+    goto($isUserLoggedIn ? '/home' : '/login')
   }
 </script>
 
@@ -37,25 +38,27 @@
   {@html a11yDark}
 </svelte:head>
 
-<div class="app-shell min-h-screen">
-  {#if isAuthOnlyPage && !isBlockedPublicPage}
-    <div class="auth-theme-toggle">
-      <ThemeToggle />
-    </div>
-  {/if}
+<MandatoryTotpGate>
+  <div class="app-shell min-h-screen">
+    {#if isAuthOnlyPage && !isBlockedPublicPage}
+      <div class="auth-theme-toggle">
+        <ThemeToggle />
+      </div>
+    {/if}
 
-  {#if !isAuthOnlyPage && !isBlockedPublicPage}<Navbar />{/if}
+    {#if !isAuthOnlyPage && !isBlockedPublicPage}<Navbar />{/if}
 
-  {#if !isBlockedPublicPage}
-    <div class="w-full" class:workspace-main={!isAuthOnlyPage} use:proseCodeBlocks>
-      {#if !isAuthOnlyPage}
-        <MothershipStatus />
-        <div class="workspace-notices"><VerifyAccountBar /></div>
-      {/if}
-      <slot />
-    </div>
-  {/if}
-</div>
+    {#if !isBlockedPublicPage}
+      <div class="w-full" class:workspace-main={!isAuthOnlyPage} use:proseCodeBlocks>
+        {#if !isAuthOnlyPage}
+          <MothershipStatus />
+          <div class="workspace-notices"><VerifyAccountBar /></div>
+        {/if}
+        <slot />
+      </div>
+    {/if}
+  </div>
+</MandatoryTotpGate>
 
 <style>
   .workspace-main {

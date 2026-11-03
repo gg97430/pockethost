@@ -450,7 +450,7 @@
           </div>
           <p class="web-help">
             {allocation === 'adaptive'
-              ? 'Le projet peut dépasser sa mémoire habituelle si de la capacité est disponible, jusqu’à son plafond de pointe. La mémoire habituelle sert à l’admission ; elle ne garantit pas une allocation physique. Les constructions patientent jusqu’à 120 secondes en cas de pression mémoire. Augmentez le plafond si votre projet en a besoin ; des pics simultanés peuvent toujours saturer le budget global.'
+              ? 'La RAM de démarrage est ajustée automatiquement selon l’usage et la capacité disponible, dans la limite de sécurité du serveur. La baisse attend au moins 30 minutes de faible utilisation et conserve une marge au-dessus de la mémoire utilisée. Les budgets explicites du projet restent prioritaires. Les graphes de supervision affichent la limite réellement appliquée. La mémoire habituelle sert à l’admission ; elle ne garantit pas une réservation physique.'
               : 'Le serveur compte les plafonds des services avant d’accepter une nouvelle charge. Une capacité inutilisée peut donc bloquer un déploiement.'}
           </p>
           <p class="web-help">
@@ -469,7 +469,7 @@
                 disabled={!!busy}
               /><span class="web-help">1 000 millicœurs = un cœur.</span></label
             ><label class="web-field"
-              ><span>RAM maximale · Mio</span><input
+              ><span>{allocation === 'adaptive' ? 'RAM de démarrage · Mio' : 'RAM maximale · Mio'}</span><input
                 type="number"
                 bind:value={memory}
                 min="64"

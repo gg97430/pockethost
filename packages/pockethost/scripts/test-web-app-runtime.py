@@ -44,6 +44,22 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.build_context(self.root,'.'),self.root)
         for name in ['missing','file','../outside','/tmp','linked','linked/nested']:
             with self.subTest(name=name),self.assertRaises(RuntimeError):runtime.build_context(self.root,name)
+    def test_docker_source_readable_by_runtime_without_following_links_or_touching_git(self):
+        checkout=self.root/'checkout';checkout.mkdir(mode=0o750)
+        folder=checkout/'lib';folder.mkdir(mode=0o750)
+        source=folder/'admin.ts';source.write_text('export const ok=true');source.chmod(0o640)
+        executable=checkout/'start.sh';executable.write_text('#!/bin/sh\n');executable.chmod(0o750)
+        secret=self.root/'worker-secret';secret.write_text('outside checkout');secret.chmod(0o600)
+        (checkout/'external-link').symlink_to(secret)
+        git=checkout/'.git';git.mkdir(mode=0o700)
+        (git/'config').write_text('private metadata');(git/'config').chmod(0o600)
+        runtime.readable_source(checkout)
+        self.assertEqual(checkout.stat().st_mode&0o777,0o755)
+        self.assertEqual(folder.stat().st_mode&0o777,0o755)
+        self.assertEqual(source.stat().st_mode&0o777,0o644)
+        self.assertEqual(executable.stat().st_mode&0o777,0o755)
+        self.assertEqual(secret.stat().st_mode&0o777,0o600)
+        self.assertEqual((git/'config').stat().st_mode&0o777,0o600)
     def test_all_profiles_and_immutable_images(self):
         for kind in runtime.KINDS:
             if kind=='compose':continue

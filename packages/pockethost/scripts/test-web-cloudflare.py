@@ -184,6 +184,25 @@ class CloudflareTests(unittest.TestCase):
    PUBLIC_OWNERSHIP(HOST,TXT);dns.assert_called_once_with('_pockethost.'+HOST,'TXT')
   with patch.object(web_app_domains,'_dns',return_value=['"wrong"']):
    with self.assertRaisesRegex(ValueError,'TXT public'):PUBLIC_OWNERSHIP(HOST,TXT)
+ def test_zone_apex_ns_preserved_during_apply_verify_and_proxy_activation(self):
+  apex='lapub.re';ns=self.row('NS','ns1.example.net',name=apex);self.rows=[ns]
+  data={'token':'secret','hostname':apex,'publicIp':IP,'ownershipValue':TXT,'action':'preview'}
+  with patch.object(cf,'request',self.api):
+   plan=cf.run(data)
+   self.assertFalse(any(change['before']and change['before']['type']=='NS'for change in plan['changes']))
+   result=cf.run({**data,'action':'apply','revision':plan['revision']})
+   verified=cf.run({**data,'action':'verify','zoneId':result['zoneId'],'recordId':result['recordId']})
+   activated=cf.run({**data,'action':'activate','zoneId':result['zoneId'],'recordId':result['recordId']})
+  self.assertTrue(verified['verified']);self.assertTrue(activated['activated']);self.assertIn(ns,self.rows)
+ def test_ns_at_subdomain_or_ownership_name_still_refused(self):
+  for name in [HOST,'_pockethost.lapub.re']:
+   hostname=HOST if name==HOST else 'lapub.re'
+   self.rows=[self.row('NS','ns1.example.net',name=name)]
+   with patch.object(cf,'request',self.api):
+    with self.assertRaisesRegex(ValueError,'délégation'):cf.preview('secret',hostname,IP,TXT)
+ def test_provider_cannot_treat_subdomain_ns_as_apex(self):
+  current=[self.row('A',IP,proxied=False),self.row('TXT',TXT,name='_pockethost.'+HOST),self.row('NS','ns1.example.net')]
+  with self.assertRaisesRegex(ValueError,'délégation'):cf.provider_identity(current,HOST,IP,TXT,zone_name='lapub.re')
  def test_origin_tls_uses_loopback_and_ca_hostname_verification(self):
   context=ssl.create_default_context();wrapped=MagicMock(wraps=context);wrapped.wrap_socket.return_value=MagicMock()
   connection=MagicMock();raw=connection.return_value.__enter__.return_value

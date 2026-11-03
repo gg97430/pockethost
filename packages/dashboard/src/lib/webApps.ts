@@ -29,6 +29,8 @@ export type WebApp = {
   generatedDomain: string
   url: string
   status: string
+  /** Liste des applications : au moins un déploiement en attente ou en cours. */
+  deploymentInProgress?: boolean
   deletion?: { id: string; status: string; stage: string; error: string } | null
   autoDeploy: boolean
   activeDeployment: string

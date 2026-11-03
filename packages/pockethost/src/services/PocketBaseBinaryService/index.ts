@@ -201,7 +201,7 @@ export const freshenPocketbaseVersions = async () => {
 
 export { rmNamedContainerSync, spawnPocketBaseContainer } from './dockerSpawn'
 
-export const syncCachedVersionsToMothership = async () => {
+export const syncCachedVersionsToMothership = async (onlyIfMissing = false) => {
   const { info, warn } = LoggerService().create('syncCachedVersionsToMothership')
   const patches = PocketBaseBinaryService().versions()
 
@@ -211,7 +211,7 @@ export const syncCachedVersionsToMothership = async () => {
   }
 
   const catalog = mkVersionCatalogFromPatches(patches)
-  if (await syncMothershipVersions(catalog)) {
+  if (await syncMothershipVersions(catalog, onlyIfMissing)) {
     info(`Synced ${catalog.length} pocketbase versions from cache`)
   }
 }

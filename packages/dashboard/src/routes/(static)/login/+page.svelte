@@ -8,7 +8,7 @@
 
   $: emailChanged = browser && $page.url.searchParams.get('emailChanged') === '1'
   $: if (browser && $isAuthStateInitialized && $isUserLoggedIn) {
-    goto('/dashboard')
+    goto('/home')
   }
 </script>
 

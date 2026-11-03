@@ -378,6 +378,13 @@ routerAdd("GET", "/api/admin/disk-cleanup", (e) => {
 routerAdd("POST", "/api/admin/disk-cleanup", (e) => {
 	return require(`${__hooks}/mothership`).HandleOperatorAdminDiskCleanupRun(e);
 }, $apis.requireAuth());
+routerAdd("GET", "/api/workspace/overview", (e) => require(`${__hooks}/mothership`).HandleWorkspaceOverview(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/admin/request-limits", (e) => require(`${__hooks}/mothership`).HandleOperatorRequestLimits(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/admin/request-limits/web", (e) => require(`${__hooks}/mothership`).HandleOperatorWebRequestLimit(e), $apis.requireAuth("users"));
+routerAdd("PUT", "/api/admin/request-limits/web", (e) => require(`${__hooks}/mothership`).HandleOperatorWebRequestLimit(e), $apis.requireAuth("users"));
+routerAdd("PUT", "/api/admin/request-limits", (e) => require(`${__hooks}/mothership`).HandleOperatorRequestLimitsPut(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/admin/request-limits/databases/{id}", (e) => require(`${__hooks}/mothership`).HandleOperatorDatabaseRequestLimits(e), $apis.requireAuth("users"));
+routerAdd("PUT", "/api/admin/request-limits/databases/{id}", (e) => require(`${__hooks}/mothership`).HandleOperatorDatabaseRequestLimits(e), $apis.requireAuth("users"));
 
 //#endregion
 //#region src/lib/handlers/outpost/hooks.ts
@@ -426,6 +433,7 @@ cronAdd("public-stats", "0 * * * *", () => {
 
 //#endregion
 //#region src/lib/handlers/user/hooks.ts
+routerAdd("POST", "/api/web-apps/_platform/delegate", (e) => require(`${__hooks}/mothership`).HandleDashboardServiceDelegate(e), $apis.requireAuth("_superusers"));
 onBootstrap((e) => {
 	e.next();
 	require(`${__hooks}/mothership`).InitializeDashboardTotp();

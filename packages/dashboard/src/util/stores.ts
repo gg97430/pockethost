@@ -29,6 +29,7 @@ export const isUserLegacy = writable(false)
 export const userSubscriptionType = writable(SubscriptionType.Legacy)
 export const isUserPaid = writable(false)
 export const isUserLoggedIn = writable(false)
+export const isWorkspaceAccessAllowed = writable(false)
 export const isUserVerified = writable(false)
 export const isAuthStateInitialized = writable(false)
 export const userStore = writable<UserFields | undefined>()
@@ -135,10 +136,10 @@ export const init = () => {
       })
   }
 
-  isUserLoggedIn.subscribe(async (isLoggedIn) => {
+  isWorkspaceAccessAllowed.subscribe(async (isLoggedIn) => {
     debugLog(`isUserLoggedIn.subscribe update`, { isLoggedIn })
     if (!isLoggedIn) {
-      userStore.set(undefined)
+      // The auth listener owns user identity; enrollment only pauses business subscriptions.
       globalInstancesStore.set({})
       globalInstancesStoreReady.set(false)
       tryUserSubscribe(undefined)

@@ -64,7 +64,9 @@ def admit(root, job, docker, memory_mib, cpu_millicores):
         labels = (info.get('Config') or {}).get('Labels') or {}
         if labels.get('pockethost.web.app') not in members or not info.get('State', {}).get('Running'): continue
         host = info.get('HostConfig') or {}
-        if not host.get('Memory') or not host.get('NanoCpus'): raise RuntimeError('Quota de projet invérifiable pour un service actif.')
-        memory += host['Memory']; cpu += host['NanoCpus']
+        from web_private_db_cpu import accounted_nano_cpus
+        nano = accounted_nano_cpus(info)
+        if not host.get('Memory') or not nano: raise RuntimeError('Quota de projet invérifiable pour un service actif.')
+        memory += host['Memory']; cpu += nano
     if memory + memory_mib * 1024**2 > resources['memoryMiB'] * 1024**2 or cpu + cpu_millicores * 1_000_000 > resources['cpuMillicores'] * 1_000_000:
         raise RuntimeError('Quota CPU/RAM du projet atteint. La version publiée est conservée ; ajustez les limites du projet ou arrêtez un autre site.')

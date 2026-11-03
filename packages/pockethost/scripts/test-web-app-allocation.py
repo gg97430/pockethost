@@ -62,6 +62,60 @@ class AllocationTests(unittest.TestCase):
         with patch.object(r, 'effective_memory', return_value=[self.row, parent]):
             with self.assertRaises(r.ResourcePressure): r.admit(self.docker, build=True)
 
+    def test_resident_builder_is_replaced_by_its_full_reservation_without_double_counting(self):
+        self.row['workingSetBytes']=10*1024*MIB
+        builder={'scope':self.root/'builder','workingSetBytes':4*1024*MIB}
+        with patch.object(r,'builder_resident_memory',return_value=builder):
+            result=r.admit(self.docker,build=True)
+            self.assertEqual(result['candidateBytes'],8192*MIB)
+            # Extra reservations still bind, even when the builder is resident.
+            for container in self.containers:container['HostConfig']['MemoryReservation']=2048*MIB
+            with self.assertRaises(r.ResourcePressure):r.admit(self.docker,build=True)
+
+    def test_builder_credit_never_bypasses_host_reserve_or_unrelated_ancestor(self):
+        self.row['workingSetBytes']=10*1024*MIB
+        builder={'scope':self.root/'builder','workingSetBytes':4*1024*MIB}
+        with patch.object(r,'builder_resident_memory',return_value=builder):
+            with patch.object(r,'host_memory',return_value={'totalBytes':32768*MIB,'availableBytes':8192*MIB}):
+                with self.assertRaises(r.ResourcePressure):r.admit(self.docker,build=True)
+            parent={**self.row,'scope':str(self.root/'unrelated')}
+            with patch.object(r,'effective_memory',return_value=[self.row,parent]):
+                with self.assertRaises(r.ResourcePressure):r.admit(self.docker,build=True)
+            with self.assertRaises(RuntimeError):r.admit(self.docker,build=True,mode='fixed')
+        # Starting a site cannot use a builder credit; missing counters also fail conservatively.
+        with patch.object(r,'builder_resident_memory',return_value=None):
+            with self.assertRaises(r.ResourcePressure):r.admit(self.docker,build=True)
+        with patch.object(r,'builder_resident_memory')as credit:
+            r.admit(self.docker)
+            credit.assert_not_called()
+
+    def test_builder_identity_and_complete_nested_cgroup_are_verified_before_credit(self):
+        root=self.root.resolve();proc=root/'proc';cgroups=root/'cgroups'
+        cid='a'*64;scope=cgroups/'user.slice'/'user-1001.slice'/'user@1001.service'/'user.slice'/('docker-'+cid+'.scope')
+        scope.mkdir(parents=True);(scope/'init').mkdir();(proc/'123').mkdir(parents=True)
+        relative='/'+str(scope.relative_to(cgroups))+'/init'
+        (proc/'123'/'cgroup').write_text('0::'+relative+'\n')
+        (scope/'memory.max').write_text(str(8192*MIB));(scope/'memory.current').write_text(str(3072*MIB))
+        (scope/'memory.stat').write_text('anon '+str(2048*MIB)+'\ninactive_file '+str(1024*MIB)+'\n')
+        # A delegated /init subgroup excludes BuildKit execution children.
+        (scope/'init'/'memory.current').write_text(str(64*MIB))
+        item={'Id':cid,'Name':'/buildx_buildkit_ph-web-builder0','State':{'Running':True,'Pid':123},
+              'HostConfig':{'Memory':8192*MIB,'NetworkMode':'ph-web-build-network'},'Config':{'Cmd':['--oci-worker-net=bridge']}}
+        docker=lambda args:json.dumps([item])
+        with patch.object(r,'CGROUP_ROOT',cgroups),patch.object(r,'PROC_ROOT',proc),patch.object(r.os,'getuid',return_value=1001):
+            self.assertEqual(r.builder_resident_memory(docker,8192*MIB),{'scope':scope,'workingSetBytes':2048*MIB})
+            for section,key,value in [('State','Running',False),('State','Pid',1),('HostConfig','Memory',4096*MIB),
+                                      ('HostConfig','NetworkMode','bridge'),('Config','Cmd',['--allow-insecure-entitlement','network.host'])]:
+                changed=json.loads(json.dumps(item));changed[section][key]=value
+                self.assertIsNone(r.builder_resident_memory(lambda args:json.dumps([changed]),8192*MIB))
+            (proc/'123'/'cgroup').write_text('0::'+relative.replace('user-1001.slice','user-1002.slice')+'\n')
+            self.assertIsNone(r.builder_resident_memory(docker,8192*MIB))
+            (proc/'123'/'cgroup').write_text('0::'+relative+'\n')
+            (scope/'memory.max').write_text('max')
+            self.assertIsNone(r.builder_resident_memory(docker,8192*MIB))
+            (scope/'memory.max').write_text(str(8192*MIB));(scope/'memory.stat').write_text('inactive_file invalid\n')
+            self.assertIsNone(r.builder_resident_memory(docker,8192*MIB))
+
     def test_memory_pressure_defers_new_work_but_does_not_abort_on_pressure_alone(self):
         (self.root/'memory.pressure').write_text('some avg10=15.10 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n')
         with self.assertRaises(r.ResourcePressure): r.admit(self.docker, build=True)
@@ -162,6 +216,14 @@ class AllocationTests(unittest.TestCase):
         with patch.object(w,'admit_resources',side_effect=RuntimeError('configuration')), patch.object(w.time,'sleep') as sleep:
             with self.assertRaisesRegex(RuntimeError,'configuration'): w.Job.wait_resources(job,build=True)
         sleep.assert_not_called()
+
+    def test_wait_and_timeout_preserve_the_actual_admission_reason(self):
+        job=Mock();reason='Budget hébergement : construction et marge comprises'
+        with patch.object(w,'admit_resources',side_effect=[r.ResourcePressure(reason),{'ok':True}]),patch.object(w.time,'sleep'):
+            w.Job.wait_resources(job,build=True)
+        self.assertIn(reason,job.log.call_args.args[0])
+        with patch.object(w,'admit_resources',side_effect=r.ResourcePressure(reason)),patch.object(w.time,'monotonic',side_effect=[0,121]):
+            with self.assertRaisesRegex(r.ResourcePressure,reason):w.Job.wait_resources(job,build=True)
 
 
 if __name__ == '__main__': unittest.main()

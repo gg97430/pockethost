@@ -38,7 +38,32 @@ const KEY = /^github(:[a-z0-9]{15})?$/
 const UNAVAILABLE = 'Connexion GitHub introuvable ou désactivée.'
 const DUPLICATE = 'Cette GitHub App est déjà connectée.'
 
-export type WebGithubConnectionMeta = { label: string; disabled: boolean; createdAt: string; createdBy: string }
+type RepositoryWebhook = { repository: string; repositoryId: string; hookId: string }
+export type WebGithubConnectionMeta = {
+  label: string
+  disabled: boolean
+  createdAt: string
+  createdBy: string
+  repositoryWebhook?: RepositoryWebhook
+}
+/** Repository hooks have no installation in their payload. Opt in for one exact repository and hook only. */
+const repositoryWebhookConfig = (input: any): RepositoryWebhook | null => {
+  if (input === null) return null
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    Object.keys(input).sort().join(',') !== 'hookId,repository,repositoryId' ||
+    typeof input.repository !== 'string' ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.repository) ||
+    input.repository.includes('..') ||
+    input.repository.length > 250 ||
+    !/^[1-9][0-9]{0,19}$/.test(`${input.repositoryId}`) ||
+    !/^[1-9][0-9]{0,19}$/.test(`${input.hookId}`)
+  )
+    throw new BadRequestError('Webhook de dépôt : nom, identifiant du dépôt et identifiant du webhook obligatoires.')
+  return { repository: input.repository, repositoryId: `${input.repositoryId}`, hookId: `${input.hookId}` }
+}
 export type WebGithubConnection = {
   id: string
   key: string
@@ -76,6 +101,9 @@ export const githubConnectionMeta = (id: string, value: any): WebGithubConnectio
     disabled: meta.disabled === true,
     createdAt: typeof meta.createdAt === 'string' ? meta.createdAt : '',
     createdBy: typeof meta.createdBy === 'string' ? meta.createdBy : '',
+    ...(meta.repositoryWebhook !== undefined && meta.repositoryWebhook !== null
+      ? { repositoryWebhook: repositoryWebhookConfig(meta.repositoryWebhook)! }
+      : {}),
   }
 }
 /** Libellé saisi : 1 à 60 caractères, sans caractère de contrôle ni retour à la ligne. */
@@ -285,6 +313,7 @@ export const serializeWebGithubConnection = (
   webhookUrl: githubWebhookUrl(c.id),
   appCount: extra.appCount || 0,
   lastDelivery: extra.lastDelivery || null,
+  repositoryWebhook: c.meta.repositoryWebhook || null,
 })
 
 /** Validations de la saisie manuelle (mêmes règles que PUT /settings). Les secrets absents sont conservés. */
@@ -362,6 +391,15 @@ export const HandleWebGithubConnectionCreate = (e: core.RequestEvent) => {
         disabled: false,
         createdAt: new Date().toISOString(),
         createdBy: user.id,
+        ...(input.repositoryWebhook !== undefined && input.repositoryWebhook !== null
+          ? {
+              repositoryWebhook: (() => {
+                if (id === GITHUB_PRINCIPAL)
+                  throw new BadRequestError('Utilisez une connexion supplémentaire dédiée à ce dépôt.')
+                return repositoryWebhookConfig(input.repositoryWebhook)
+              })(),
+            }
+          : {}),
       },
     })
   })
@@ -376,6 +414,10 @@ export const HandleWebGithubConnectionUpdate = (e: core.RequestEvent) => {
     label = input.label === undefined ? undefined : githubConnectionLabel(input.label)
   if (input.disabled !== undefined && typeof input.disabled !== 'boolean')
     throw new BadRequestError('Le choix d’activation doit être explicite.')
+  const repositoryWebhook =
+    input.repositoryWebhook === undefined ? undefined : repositoryWebhookConfig(input.repositoryWebhook)
+  if (repositoryWebhook && id === GITHUB_PRINCIPAL)
+    throw new BadRequestError('Utilisez une connexion supplémentaire dédiée à ce dépôt.')
   $app.runInTransaction((tx) => {
     const row = githubConnectionRow(id, tx)
     if (!row) throw new NotFoundError('Connexion GitHub introuvable.')
@@ -384,11 +426,12 @@ export const HandleWebGithubConnectionUpdate = (e: core.RequestEvent) => {
     if (input.githubAppId !== undefined || input.githubInstallationId !== undefined)
       assertGithubConnectionUnique(tx, value.githubAppId, value.githubInstallationId, current.key)
     // `meta` n'est écrit qu'au premier renommage ou à la première (dés)activation.
-    if (label !== undefined || input.disabled !== undefined)
+    if (label !== undefined || input.disabled !== undefined || repositoryWebhook !== undefined)
       value.meta = {
         ...current.meta,
         ...(label !== undefined ? { label } : {}),
         ...(input.disabled !== undefined ? { disabled: input.disabled } : {}),
+        ...(repositoryWebhook !== undefined ? { repositoryWebhook } : {}),
       }
     writeWebGithubConnection(tx, id, value)
   })
@@ -541,6 +584,7 @@ export const webGithubWebhookFor = (e: core.RequestEvent, connectionId: string) 
   }
   const installation = `${value.githubInstallationId || ''}`
   if (event === 'pull_request') {
+    if (meta.repositoryWebhook) throw new ForbiddenError('Cette connexion dédiée ne reçoit que les push du dépôt.')
     if (!installation || `${body.installation?.id || ''}` !== installation)
       throw new ForbiddenError('Installation GitHub inconnue.')
     return webJson(e, handleWebPreviewWebhook(body, delivery, '', connectionId))
@@ -551,8 +595,21 @@ export const webGithubWebhookFor = (e: core.RequestEvent, connectionId: string) 
   })
   if (early) return webJson(e, { accepted: true, duplicate: true })
   const ignored = event !== 'push' || body.deleted === true || !branch
-  if (!ignored && (!installation || `${body.installation?.id || ''}` !== installation))
-    throw new ForbiddenError('Installation GitHub inconnue.')
+  if (!ignored) {
+    const bound = meta.repositoryWebhook
+    if (
+      bound &&
+      (connectionId === GITHUB_PRINCIPAL ||
+        repository.toLowerCase() !== bound.repository.toLowerCase() ||
+        `${body.repository?.id || ''}` !== bound.repositoryId ||
+        e.request!.header.get('X-GitHub-Hook-ID') !== bound.hookId)
+    )
+      throw new ForbiddenError('Webhook ou dépôt GitHub inattendu.')
+    // Existing GitHub App connections always require their installation. An explicitly bound repository
+    // hook may omit it, but can never supply another installation. HMAC remains mandatory above.
+    if (!installation || (body.installation ? `${body.installation.id || ''}` !== installation : !bound))
+      throw new ForbiddenError('Installation GitHub inconnue.')
+  }
   if (!ignored && !/^[a-f0-9]{40}$/.test(body.after || '')) throw new BadRequestError('Commit invalide.')
   const matching = ignored
     ? []

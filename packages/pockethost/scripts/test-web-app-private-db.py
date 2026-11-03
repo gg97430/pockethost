@@ -320,6 +320,14 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual((ready / 'ready').read_text(), self.identity())
         self.assertEqual(json.loads((home / 'config/config.json').read_text())['bindings'][0]['token'], TOKEN)
 
+    def test_operator_can_create_cpu_unlimited_relay_without_changing_identity(self):
+        with mock.patch.object(private, 'unlimited', side_effect=lambda kind, ident: kind == 'applications' and ident == APP):
+            self.assertTrue(self.manager.ensure(self.app, [binding()]))
+        args = self.created[0]
+        self.assertIn('--cpus=0', args)
+        self.assertIn('--memory=96m', args)
+        self.assertEqual(args[args.index('--network') + 1], 'container:' + CID)
+
     def test_app_restart_and_broker_socket_inode_each_recreate_sidecar(self):
         self.manager.ensure(self.app, [binding()]); initial = self.proxy['Id']
         self.manager.ensure(self.app, [binding()]); self.assertEqual(len(self.created), 1)

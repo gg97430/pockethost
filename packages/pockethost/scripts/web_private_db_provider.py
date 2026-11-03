@@ -16,6 +16,9 @@ import stat
 import subprocess
 import sys
 import time
+import tempfile
+from web_private_db_cpu import unlimited, cpu_unlimited
+from web_private_db_limits import limits
 
 ID = re.compile(r"[a-z0-9]{15}\Z")
 HEX = re.compile(r"[a-f0-9]{64}\Z")
@@ -39,6 +42,7 @@ class Provider:
         self.target_script = pathlib.Path(config.get('targetScript', TARGET_SCRIPT))
         self.image = config['targetImage']
         self.database_image = config['databaseImage']
+        self.connection_limit = limits(config.get('connectionLimits'))['perDatabase']
         ids = config['ids']
         if not isinstance(ids, list) or len(ids) > 500 or any(not isinstance(i, str) or not ID.fullmatch(i) for i in ids):
             raise ValueError('Invalid database IDs')
@@ -123,6 +127,18 @@ class Provider:
         # must only make this database unavailable.
         for directory, mode in [(self.target_root, 0o700), (self.target_root / target['instanceId'], 0o700), (target['directory'], 0o770)]:
             self.directory(directory, mode)
+        destination = target['directory'] / 'limits.json'
+        raw = json.dumps({'maxConnections': self.connection_limit}).encode()
+        if destination.is_file() and not destination.is_symlink() and destination.read_bytes() == raw:
+            return
+        fd, path = tempfile.mkstemp(prefix='.limits-', dir=target['directory'])
+        try:
+            with os.fdopen(fd, 'wb') as output:
+                os.fchmod(output.fileno(), 0o644)
+                output.write(raw)
+            os.replace(path, destination)
+        finally:
+            pathlib.Path(path).unlink(missing_ok=True)
 
     def managed(self, info):
         labels = (info.get('Config') or {}).get('Labels') or {}
@@ -154,7 +170,10 @@ class Provider:
             return False
         if host.get('SecurityOpt') not in [['no-new-privileges'], ['no-new-privileges:true']]:
             return False
-        if host.get('Memory') != 96 * 1024 * 1024 or host.get('NanoCpus') != 50000000 or host.get('PidsLimit') != 64:
+        allowed_cpu = (0, 50000000) if unlimited('instances', target['instanceId']) else (50000000,)
+        if host.get('Memory') != 96 * 1024 * 1024 or host.get('NanoCpus') not in allowed_cpu or host.get('PidsLimit') != 64:
+            return False
+        if not unlimited('instances', target['instanceId']) and cpu_unlimited(host):
             return False
         mounts = info.get('Mounts') or []
         if len(mounts) != 2:
@@ -184,12 +203,14 @@ class Provider:
         for key, value in [(INSTANCE, target['instanceId']), (PARENT, target['containerId']), (EPOCH, target['epoch']), (RECIPE, self.recipe)]:
             args += ['--label', key + '=' + value]
         args += ['--network', 'container:' + target['containerId'], '--user', '10001:1000', '--read-only', '--cap-drop', 'ALL',
-                 '--security-opt', 'no-new-privileges', '--memory', '96m', '--cpus', '0.05', '--pids-limit', '64',
+                 '--security-opt', 'no-new-privileges', '--memory', '96m', '--cpus', '0' if unlimited('instances', target['instanceId']) else '0.05', '--pids-limit', '64',
                  '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=4m,uid=10001,gid=1000,mode=0700',
                  '--mount', 'type=bind,src=' + str(target['directory']) + ',dst=/run/target',
                  '--mount', 'type=bind,src=' + str(self.target_script) + ',dst=/run/kolab-target.cjs,readonly',
                  '--health-cmd', '/usr/local/bin/node /run/kolab-target.cjs --check', '--health-interval', '5s', '--health-timeout', '5s',
                  '--health-retries', '1', '--health-start-period', '1s', '--entrypoint', '/usr/local/bin/node', self.image, '/run/kolab-target.cjs']
+        if unlimited('instances', target['instanceId']):
+            args[1:1] = ['--cpu-quota', '-1']
         ok, cid = self.docker(*args)
         if ok and HEX.fullmatch(cid):
             self.docker('start', cid)
@@ -289,6 +310,10 @@ class Provider:
                 target = targets.get(name)
                 if target and self.trusted(info, target):
                     self.leaf(target)
+                    if unlimited('instances', target['instanceId']) and not cpu_unlimited(info.get('HostConfig') or {}):
+                        ok, _ = self.docker('update', '--cpu-quota', '-1', info['Id'])
+                        if not ok:
+                            continue
                     current[name] = info
                     if self.available(info, target):
                         self.result[target['instanceId']] = {'available': True, 'targetSocket': str(target['directory'] / 't.sock'),

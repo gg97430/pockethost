@@ -5,9 +5,12 @@
     type OperatorDiskCleanupResult,
     type OperatorSettings,
     type OperatorUser,
+    type OperatorWebProjectAssignment,
   } from '$src/pocketbase-client'
   import { userStore } from '$util/stores'
+  import UserWebProjectAccess from '$components/UserWebProjectAccess.svelte'
   import UserInstanceAccess from '$components/UserInstanceAccess.svelte'
+  import RequestLimitsAdmin from '$components/RequestLimitsAdmin.svelte'
 
   type UserDraft = {
     email: string
@@ -18,6 +21,7 @@
     subscription_quantity: number
     suspension: string
     managedInstances: string[]
+    webProjects: OperatorWebProjectAssignment[]
   }
 
   const subscriptionOptions = ['free', 'premium', 'founder', 'flounder', 'legacy']
@@ -26,13 +30,14 @@
   let isLoading = false
   let isSavingSettings = false
   let isCreatingUser = false
+  let sendWelcomeEmail = false
   let isScanningDisk = false
   let isRunningDiskCleanup = false
   let isTestingBackupS3 = false
   let isTestingSMTP = false
   let savingUserId = ''
   let editingUserId = ''
-  let adminSection: 'users' | 'settings' | 'maintenance' = 'users'
+  let adminSection: 'users' | 'settings' | 'limits' | 'maintenance' = 'users'
   let showCreateUser = false
   let userStatus: 'all' | 'active' | 'suspended' | 'unverified' = 'all'
   let userRole: 'all' | 'user' | 'superuser' = 'all'
@@ -56,6 +61,7 @@
     subscription_quantity: 250,
     suspension: '',
     managedInstances: [],
+    webProjects: [],
   }
 
   $: canAccessAdmin = !!$userStore?.superAdmin && !$userStore?.suspension
@@ -64,6 +70,7 @@
     loadAdmin()
   }
 
+  $: canManageWebAccess = Array.isArray(overview?.webProjects)
   $: canManageInstanceAccess = Array.isArray(overview?.instances)
 
   $: filteredUsers = users.filter((user) => {
@@ -125,6 +132,7 @@
     subscription_quantity: user.subscription_quantity,
     suspension: user.suspension || '',
     managedInstances: [...(user.managedInstances || [])],
+    webProjects: (user.webProjects || []).map((project) => ({ ...project })),
   })
 
   const showError = (error: unknown) => {
@@ -197,10 +205,12 @@
     event.preventDefault()
     isCreatingUser = true
     try {
-      const { managedInstances, ...account } = newUser
-      const { user, warning } = await client().createOperatorUser({
+      const { managedInstances, webProjects, ...account } = newUser
+      const { user, warning, welcomeEmailSent } = await client().createOperatorUser({
         ...account,
+        sendWelcomeEmail,
         ...(canManageInstanceAccess ? { managedInstances } : {}),
+        ...(canManageWebAccess ? { webProjects } : {}),
       })
       users = [user, ...users]
       userDrafts = { ...userDrafts, [user.id]: toUserDraft(user) }
@@ -225,8 +235,15 @@
         subscription_quantity: settings?.defaultUserQuota ?? 250,
         suspension: '',
         managedInstances: [],
+        webProjects: [],
       }
-      showSuccess(warning || 'Compte créé.')
+      sendWelcomeEmail = false
+      showSuccess(
+        welcomeEmailSent
+          ? 'Compte créé. Le mail contenant les identifiants a été accepté par le serveur SMTP.'
+          : 'Compte créé.'
+      )
+      if (warning) errorMessage = warning
       showCreateUser = false
     } catch (error) {
       showError(error)
@@ -250,10 +267,11 @@
     try {
       const draft = userDrafts[userId]
       if (!draft) throw new Error('Brouillon utilisateur introuvable.')
-      const { managedInstances, ...account } = draft
+      const { managedInstances, webProjects, ...account } = draft
       const payload = {
         ...account,
         ...(canManageInstanceAccess ? { managedInstances } : {}),
+        ...(canManageWebAccess ? { webProjects } : {}),
         password: draft.password.trim() ? draft.password : undefined,
       }
       const { user } = await client().updateOperatorUser(userId, payload)
@@ -443,6 +461,14 @@
         </button>
         <button
           type="button"
+          class:active={adminSection === 'limits'}
+          aria-current={adminSection === 'limits' ? 'page' : undefined}
+          onclick={() => (adminSection = 'limits')}
+        >
+          <wa-icon name="gauge"></wa-icon> Limites de requêtes
+        </button>
+        <button
+          type="button"
           class:active={adminSection === 'maintenance'}
           aria-current={adminSection === 'maintenance' ? 'page' : undefined}
           onclick={() => (adminSection = 'maintenance')}
@@ -451,7 +477,9 @@
         </button>
       </nav>
 
-      {#if adminSection === 'users'}
+      {#if adminSection === 'limits'}
+        <RequestLimitsAdmin instances={overview.instances || []} />
+      {:else if adminSection === 'users'}
         {#if showCreateUser}
           <div class="admin-create-wrap">
             <form class="admin-panel admin-create" onsubmit={createUser}>
@@ -498,7 +526,7 @@
               <label>
                 Rôle
                 <select bind:value={newUser.superAdmin} disabled={isCreatingUser}>
-                  <option value={false}>Utilisateur — bases rattachées</option>
+                  <option value={false}>Utilisateur — accès aux bases et hébergements</option>
                   <option value={true}>Superuser — administrateur de la plateforme</option>
                 </select>
               </label>
@@ -510,6 +538,14 @@
                   disabled={isCreatingUser}
                 />
               {/if}
+              {#if canManageWebAccess}
+                <UserWebProjectAccess
+                  projects={overview.webProjects}
+                  bind:selected={newUser.webProjects}
+                  superAdmin={newUser.superAdmin}
+                  disabled={isCreatingUser}
+                />
+              {/if}
               <div class="admin-checks">
                 <label><input type="checkbox" bind:checked={newUser.verified} /> Vérifié</label>
               </div>
@@ -517,6 +553,26 @@
                 Suspension
                 <input type="text" bind:value={newUser.suspension} placeholder="vide = actif" />
               </label>
+              <div class="account-welcome-option">
+                <label
+                  ><input
+                    type="checkbox"
+                    bind:checked={sendWelcomeEmail}
+                    disabled={isCreatingUser ||
+                      !settings?.smtp.enabled ||
+                      !settings?.smtp.host ||
+                      !settings?.smtp.senderAddress}
+                  />
+                  Envoyer les identifiants par e-mail
+                </label>
+                <p>
+                  Un mail de bienvenue Kolab sera envoyé à l’adresse saisie, avec le lien de connexion et le mot de
+                  passe ci-dessus.
+                </p>
+                {#if !settings?.smtp.enabled || !settings?.smtp.host || !settings?.smtp.senderAddress}<p>
+                    Configurez SMTP dans les paramètres pour activer l’envoi.
+                  </p>{/if}
+              </div>
               <button class="admin-primary-btn" type="submit" disabled={isCreatingUser}>
                 <wa-icon name="user-plus"></wa-icon>
                 {isCreatingUser ? 'Creation...' : 'Creer le compte'}
@@ -705,6 +761,14 @@
                                 instances={overview.instances}
                                 bind:selected={draft.managedInstances}
                                 userId={user.id}
+                                superAdmin={draft.superAdmin}
+                                disabled={savingUserId === user.id}
+                              />
+                            {/if}
+                            {#if canManageWebAccess}
+                              <UserWebProjectAccess
+                                projects={overview.webProjects}
+                                bind:selected={draft.webProjects}
                                 superAdmin={draft.superAdmin}
                                 disabled={savingUserId === user.id}
                               />
@@ -1103,6 +1167,25 @@
 </div>
 
 <style>
+  .account-welcome-option {
+    border: 1px solid var(--app-border);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    background: var(--app-surface-soft);
+  }
+  .account-welcome-option label {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 600;
+  }
+  .account-welcome-option p {
+    margin: 0.6rem 0 0;
+    color: var(--app-text-muted);
+    font-size: 0.78rem;
+    line-height: 1.6;
+  }
+
   .admin-console {
     --admin-accent: var(--app-accent, #3b7cff);
     --admin-accent-soft: color-mix(in srgb, var(--admin-accent) 10%, transparent);

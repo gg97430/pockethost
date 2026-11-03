@@ -1242,7 +1242,8 @@ const setInstancePower = (instanceId, power) => {
 const waitUntilIdle = (instanceId) => {
 	for (let i = 0; i < MAX_STOP_WAIT_SECONDS; i++) {
 		const current = findInstance$2(instanceId);
-		if (!current.getBool("power") && current.getString("status").toLowerCase() === "idle") return current;
+		if (current.getBool("power")) setInstancePower(instanceId, false);
+		else if (current.getString("status").toLowerCase() === "idle") return current;
 		sleepOneSecond();
 	}
 	throw new BadRequestError("L'instance ne s'est pas arretee a temps.");
@@ -3607,8 +3608,14 @@ const HandleInstanceConsoleTicket = (e) => {
 	const payload = JSON.parse(JSON.stringify($security.parseUnverifiedJWT((headers.authorization || "").replace(/^Bearer\s+/i, ""))));
 	const expiresAt = Math.min(Date.now() + 6e4, Number(payload.exp) * 1e3);
 	if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new UnauthorizedError("Session expirée.");
-	const ticket = $security.randomString(64);
 	const user = e.auth;
+	return result(e, issueInstanceConsoleTicket(instance, user, expiresAt));
+};
+/** Used by server administration after its authenticated dashboard permission check. */
+const issueInstanceConsoleTicket = (instance, user, expiresAt) => {
+	assertAccess(instance, user);
+	if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 6e4) throw new UnauthorizedError("Session expirée.");
+	const ticket = $security.randomString(64);
 	$app.store().setFunc(TICKETS, (raw) => {
 		const tickets = prune(decode$1(raw));
 		for (const key of Object.keys(tickets)) if (tickets[key].user === user.id && tickets[key].instance === instance.id) delete tickets[key];
@@ -3622,11 +3629,11 @@ const HandleInstanceConsoleTicket = (e) => {
 		};
 		return JSON.stringify(tickets);
 	});
-	return result(e, {
+	return {
 		url: consoleUrl(instance),
 		ticket,
 		expiresAt: new Date(expiresAt).toISOString()
-	});
+	};
 };
 /** The instance exchanges a one-use capability; its own id comes from platform configuration. */
 const HandleInstanceConsoleConsume = (e) => {
@@ -3915,12 +3922,169 @@ const canSetWebRepository = (project, user, repository, current = "", store = $a
 };
 
 //#endregion
+//#region src/lib/handlers/instance/api/instanceOperationsAccess.ts
+const operationsAccess = (e) => {
+	const user = e.auth;
+	if (!user || user.collection().name !== "users") throw new UnauthorizedError("Connexion au dashboard requise.");
+	const id = e.request.pathValue("id");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Instance invalide.");
+	const instance = $app.findRecordById("instances", id);
+	if (!canManageInstance(instance, user)) throw new ForbiddenError("Accès refusé.");
+	if (user.getString("suspension") || instance.getString("suspension")) throw new ForbiddenError("Accès suspendu.");
+	return {
+		instance,
+		user
+	};
+};
+const operationJson = (e, value, status = 200) => {
+	e.response.header().set("Cache-Control", "no-store");
+	return e.json(status, value);
+};
+const recordInstanceAction = (instance, user, action, details = {}, app = $app) => {
+	const row = new Record(app.findCollectionByNameOrId("instance_action_log"));
+	row.set("instanceId", instance.id);
+	row.set("ownerId", instance.getString("uid"));
+	row.set("actorId", user?.id || "");
+	row.set("actorLabel", user?.getString("email") || "Automatisation");
+	row.set("action", action);
+	row.set("details", details);
+	app.save(row);
+};
+const HandleInstanceActionLog = (e) => {
+	const { instance } = operationsAccess(e);
+	const page = Math.max(1, Math.min(1e5, Math.floor(Number(e.request.url.query().get("page"))) || 1));
+	const items = $app.findRecordsByFilter("instance_action_log", "instanceId = {:id}", "-created,-id", 51, (page - 1) * 50, { id: instance.id });
+	return operationJson(e, {
+		items: items.slice(0, 50).map((r) => ({
+			id: r.id,
+			actor: r.getString("actorLabel"),
+			action: r.getString("action"),
+			details: JSON.parse(r.getString("details") || "{}"),
+			created: r.getString("created")
+		})),
+		page,
+		hasMore: items.length > 50
+	});
+};
+/** Records successful dashboard mutations; only an explicit metadata allowlist is retained. */
+const AuditInstanceRequest = (e) => {
+	const path = e.request.url.path, method = e.request.method;
+	if (method === "GET" || method === "OPTIONS" || /\/operations\/consume$/.test(path)) return e.next();
+	let instance, action, target = "";
+	if (/^\/api\/instance\/[a-z0-9]{15}(?:\/|$)/.test(path)) {
+		try {
+			instance = $app.findRecordById("instances", path.split("/")[3]);
+		} catch {
+			return e.next();
+		}
+		const section = path.split("/")[4] || "instance";
+		if (["service-accounts", "backup-checks"].includes(section)) return e.next();
+		action = `${method} ${section}`;
+		const segments = path.split("/");
+		if (section === "backups" && segments[6]) action = `backup.${segments[6]}`;
+		if (/^[a-z0-9]{15}$/.test(segments[5] || "")) target = segments[5];
+	} else if (/^\/api\/instance-transfers\/[a-z0-9]{15}\/(cancel|retry|link)$/.test(path)) {
+		try {
+			const transfer = $app.findRecordById("instance_transfers", path.split("/")[3]);
+			instance = $app.findRecordById("instances", transfer.getString("instance"));
+		} catch {
+			return e.next();
+		}
+		action = `transfer.${path.split("/")[4]}`;
+		target = path.split("/")[3];
+	} else return e.next();
+	const user = e.auth;
+	if (!user || user.collection().name !== "users" || !canManageInstance(instance, user)) return e.next();
+	const details = target ? { target } : {};
+	if (action === "PUT instance") {
+		const fields = JSON.parse(JSON.stringify(e.requestInfo().body || {})).fields || {};
+		details.fields = [
+			"subdomain",
+			"power",
+			"version",
+			"secrets",
+			"webhooks",
+			"syncAdmin",
+			"autoVacuum",
+			"metricsHistoryEnabled",
+			"dev",
+			"cname"
+		].filter((key) => fields[key] !== void 0 && fields[key] !== null);
+		if (typeof fields.power === "boolean" && fields.power !== instance.getBool("power")) {
+			action = fields.power ? "instance.started" : "instance.stopped";
+			details.previousPower = instance.getBool("power");
+			details.power = fields.power;
+		}
+	}
+	e.next();
+	if (e.status() >= 400) return;
+	try {
+		recordInstanceAction(instance, user, action, details);
+	} catch {
+		console.warn("Écriture du journal d’administration impossible.");
+	}
+};
+const HandleAccountActionLog = (e) => {
+	const user = e.auth;
+	if (!user || user.collection().name !== "users" || user.getString("suspension")) throw new ForbiddenError("Accès refusé.");
+	const page = Math.max(1, Math.min(1e5, Math.floor(Number(e.request.url.query().get("page")) || 1)));
+	const { filter, params } = instanceAccessQuery(user, "instanceId", "ownerId");
+	const rows = $app.findRecordsByFilter("instance_action_log", filter, "-created,-id", 51, (page - 1) * 50, params).filter((r) => !!r);
+	return operationJson(e, {
+		items: rows.slice(0, 50).map((r) => ({
+			id: r.id,
+			instanceId: r.getString("instanceId"),
+			actor: r.getString("actorLabel"),
+			action: r.getString("action"),
+			details: JSON.parse(r.getString("details") || "{}"),
+			created: r.getString("created")
+		})),
+		hasMore: rows.length > 50,
+		page
+	});
+};
+
+//#endregion
 //#region src/lib/handlers/operatorAdmin/auth.ts
 const requireOperatorAdmin = (e) => {
 	const authRecord = e.auth;
 	if (!authRecord) throw new UnauthorizedError("Authentification requise.");
 	if (authRecord.collection().name !== "users" || authRecord.getString("suspension") || !authRecord.getBool("superAdmin")) throw new ForbiddenError("Acces superadmin requis.");
 	return authRecord;
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/webRequestLimit.ts
+const NAME$1 = "web_ip_request_limit";
+const valid$1 = (value) => Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1e6;
+const readWebRequestLimit = (app = $app) => {
+	const rows = app.findRecordsByFilter("settings", "name = {:name}", "", 2, 0, { name: NAME$1 });
+	if (!rows.length) {
+		const raw = $os.getenv("WEB_APPS_IP_RATE_LIMIT"), value = raw?.trim() ? Number(raw) : 1200;
+		return valid$1(value) ? value : 1200;
+	}
+	const value = rows.length === 1 ? JSON.parse(rows[0].getString("value")) : void 0;
+	if (!valid$1(value)) throw new InternalServerError("Limite web invalide.");
+	return value;
+};
+const response$1 = (value) => ({
+	requestsPerMinute: value,
+	revision: $security.sha256(`${value}`)
+});
+const HandleOperatorWebRequestLimit = (e) => {
+	requireOperatorAdmin(e);
+	if (e.request.method !== "PUT") return operationJson(e, response$1(readWebRequestLimit()));
+	const body = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	if (Object.keys(body).sort().join(",") !== "requestsPerMinute,revision" || !valid$1(body.requestsPerMinute) || typeof body.revision !== "string") throw new BadRequestError("Saisissez un entier de 0 à 1 000 000. Zéro désactive le limiteur web.");
+	$app.runInTransaction((app) => {
+		if (response$1(readWebRequestLimit(app)).revision !== body.revision) throw new ApiError(409, "Ce réglage a changé. Rechargez avant d’enregistrer.");
+		const row = app.findRecordsByFilter("settings", "name = {:name}", "", 1, 0, { name: NAME$1 })[0] || new Record(app.findCollectionByNameOrId("settings"));
+		row.set("name", NAME$1);
+		row.set("value", JSON.stringify(body.requestsPerMinute));
+		app.save(row);
+	});
+	$app.logger().info("Web IP request limit updated", "actor", e.auth.id, "requestsPerMinute", body.requestsPerMinute);
+	return operationJson(e, response$1(body.requestsPerMinute));
 };
 
 //#endregion
@@ -6502,22 +6666,22 @@ const WEB_NOTIFICATION_LABELS = {
 		tab: ""
 	},
 	app_deployment_failed: {
-		title: "Échec de déploiement (copie plateforme)",
+		title: "Échec de déploiement",
 		sentence: "Un déploiement d’application a échoué.",
 		tab: "deployments"
 	},
 	app_deployment_succeeded: {
-		title: "Déploiement réussi (copie plateforme)",
+		title: "Déploiement réussi",
 		sentence: "La nouvelle version de l’application a été publiée et a passé le contrôle de santé.",
 		tab: "deployments"
 	},
 	app_backup_failed: {
-		title: "Échec de sauvegarde (copie plateforme)",
+		title: "Échec de sauvegarde",
 		sentence: "Une sauvegarde d’application a échoué.",
 		tab: "backups"
 	},
 	app_health_degraded: {
-		title: "Site indisponible (copie plateforme)",
+		title: "Site indisponible",
 		sentence: "Un site ne répond plus au contrôle de santé.",
 		tab: "health"
 	},
@@ -7014,6 +7178,12 @@ const COPIED = [
 const DEPLOYMENT_FAILURES = ["deployment_failed", "app_deployment_failed"];
 const DEPLOYMENT_SUCCESSES = ["deployment_succeeded", "app_deployment_succeeded"];
 const DEPLOYMENT_RESULTS = [...DEPLOYMENT_FAILURES, ...DEPLOYMENT_SUCCESSES];
+const DEPLOYMENT_EMAIL_MODES = [
+	"inherit",
+	"all",
+	"failed",
+	"none"
+];
 const RATE_LIMITED = "Notification regroupée par la limite de fréquence.";
 const WORKER_DOWN_AFTER = 18e4;
 const stamp$4 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
@@ -7035,7 +7205,8 @@ const defaults$1 = () => ({
 	},
 	events: [...WEB_NOTIFICATION_DEFAULT_EVENTS],
 	cooldownSeconds: 300,
-	copyAppEvents: false
+	copyAppEvents: false,
+	deploymentEmails: "inherit"
 });
 const platformDefaults = () => ({
 	...defaults$1(),
@@ -7064,6 +7235,13 @@ const config$1 = (row, platform = false) => {
 	const base = platform ? platformDefaults() : defaults$1();
 	const stored = row?.getString("configEncrypted") ? decryptWebValue(row.getString("configEncrypted")) : null;
 	return stored ? merge(base, stored) : base;
+};
+/** Application preference also governs operator copies, independently of webhook subscriptions. */
+const deploymentEmailChoice = (appId, event, store, finishedAt = "") => {
+	const value = config$1(find$2(appId, store)), mode = value.deploymentEmails;
+	if (!mode || mode === "inherit") return null;
+	if (mode === "none" || mode === "failed" && DEPLOYMENT_SUCCESSES.includes(event)) return false;
+	return !finishedAt || !value.deploymentEmailsActivatedAt || finishedAt >= value.deploymentEmailsActivatedAt;
 };
 const platformCollection = (store = $app) => {
 	try {
@@ -7191,6 +7369,7 @@ const response = (row, appId) => {
 	const value = config$1(row), view = channels(value), projectId = projectOf(appId);
 	return {
 		revision: row?.getString("revision") || "",
+		deploymentEmails: value.deploymentEmails,
 		...view,
 		email: {
 			...view.email,
@@ -7324,6 +7503,8 @@ const resetWebNotificationChannels = (appId, actorId, store) => {
 	const value = config$1(row), base = defaults$1(), configured = row.getBool("enabled") || !!value.webhook.url || !!value.email.recipients.length || !!value.email.projectAdmins;
 	value.webhook = base.webhook;
 	value.email = base.email;
+	value.deploymentEmails = "inherit";
+	delete value.deploymentEmailsActivatedAt;
 	row.set("actorId", actorId);
 	row.set("revision", $security.randomString(24));
 	row.set("configEncrypted", encryptWebValue(value));
@@ -7345,11 +7526,20 @@ const HandleWebNotificationsPut = (e) => {
 		"webhook",
 		"email",
 		"events",
-		"cooldownSeconds"
+		"cooldownSeconds",
+		"deploymentEmails"
 	].includes(key))) throw new BadRequestError("Options de notification invalides.");
 	$app.runInTransaction((tx) => {
 		const old = find$2(app.id, tx), value = config$1(old);
 		if (input.revision !== (old?.getString("revision") || "")) throw new BadRequestError("Les canaux ont changé. Rechargez leur configuration.");
+		if (input.deploymentEmails !== void 0) {
+			if (!DEPLOYMENT_EMAIL_MODES.includes(input.deploymentEmails)) throw new BadRequestError("Choisissez tous les déploiements, les échecs uniquement ou aucun email.");
+			if (input.deploymentEmails !== value.deploymentEmails) {
+				value.deploymentEmailsActivatedAt = stamp$4();
+				if (input.deploymentEmails === "all") value.deploymentSuccessActivatedAt = stamp$4();
+			}
+			value.deploymentEmails = input.deploymentEmails;
+		}
 		generatedSecret = applyChannels(input, value, (recipients) => {
 			const allowed = allowedRecipients(app.id, tx, actor);
 			if (recipients.some((address) => !allowed.has(address.toLowerCase()))) throw new BadRequestError("Chaque destinataire doit être l’adresse vérifiée d’un membre du projet, ou la vôtre.");
@@ -7390,11 +7580,14 @@ const enqueue$2 = (settings, app, event, eventKey, details, store, trigger = "au
 		details
 	};
 	const created = [];
-	if (trigger === "auto" && !value.events.includes(event)) return created;
 	if (!platform && app && PLATFORM_ONLY.includes(event) && !platformOperated(app.id, store)) return created;
 	const appId = platform ? "" : app.id;
 	for (const channel of ["webhook", "email"]) {
 		if (only && only !== channel) continue;
+		if (trigger === "auto") {
+			const selected = channel === "email" && app && DEPLOYMENT_RESULTS.includes(event) ? deploymentEmailChoice(app.id, event, store, details.finishedAt || "") : null;
+			if (selected === false || selected === null && !value.events.includes(event)) continue;
+		}
 		const recipients = channel === "email" ? recipientsFor(scope, value, appId, store) : [];
 		if (channel === "webhook" ? !value.webhook.url : !recipients.length) continue;
 		if (trigger !== "test" && !value[channel].enabled) continue;
@@ -7540,7 +7733,8 @@ const deploymentTargetActive = (row, store = $app) => {
 	if (row.getString("trigger") === "test" || !DEPLOYMENT_RESULTS.includes(row.getString("event"))) return true;
 	try {
 		const payload = JSON.parse(row.getString("payload") || "{}");
-		return !!deploymentEmailApplication(row.getString("scope") === "platform" ? payload.details?.appId : row.getString("appId"), store);
+		const appId = row.getString("scope") === "platform" ? payload.details?.appId : row.getString("appId");
+		return !!deploymentEmailApplication(appId, store) && (row.getString("channel") !== "email" || deploymentEmailChoice(appId, row.getString("event"), store) !== false);
 	} catch {
 		return false;
 	}
@@ -7563,7 +7757,7 @@ const sendDeliveryEmail = (row) => {
 		details.backupId,
 		details.deploymentId,
 		details.taskName
-	].filter((item) => typeof item === "string" && item)[0] || "", open = payload.application?.dashboardUrl || payload.dashboardUrl || "", manage = platform ? `${dashboardBase()}/applications/recovery` : dashboardLink(appId, "notifications"), lines = [
+	].filter((item) => typeof item === "string" && item)[0] || "", open = payload.application?.dashboardUrl || payload.dashboardUrl || "", manage = payload.application?.id && DEPLOYMENT_RESULTS.includes(row.getString("event")) ? dashboardLink(payload.application.id, "notifications") : platform ? `${dashboardBase()}/applications/recovery` : dashboardLink(appId, "notifications"), lines = [
 		text.title + (test ? " (test)" : ""),
 		text.sentence,
 		payload.application ? `Application : ${name}${payload.application.url ? ` (${payload.application.url})` : ""}` : name,
@@ -7816,7 +8010,7 @@ const scanPlatformOutbox = (p, store) => {
 	const cursors = JSON.parse(p.getString("sourceCursors") || "{}"), start = p.getString("activatedAt") || stamp$4(), rows = takeRows(store, cursors, start, OUTBOX, "scope=\"platform\"", "created");
 	let advanced = rows.length > 0;
 	const value = config$1(p, true);
-	if (value.copyAppEvents && value.events.some((event) => DEPLOYMENT_RESULTS.includes(event))) {
+	if (value.copyAppEvents) {
 		const jobs = takeRows(store, cursors, start, "web_deployments", "(status=\"failed\" || status=\"ready\") && (action=\"deploy\" || action=\"ci-deploy\")", "finishedAt");
 		advanced ||= jobs.length > 0;
 		for (const job of jobs) {
@@ -8939,6 +9133,16 @@ const SESSIONS = "web_github_setup_sessions";
 const KEY = /^github(:[a-z0-9]{15})?$/;
 const UNAVAILABLE$1 = "Connexion GitHub introuvable ou désactivée.";
 const DUPLICATE = "Cette GitHub App est déjà connectée.";
+/** Repository hooks have no installation in their payload. Opt in for one exact repository and hook only. */
+const repositoryWebhookConfig = (input) => {
+	if (input === null) return null;
+	if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).sort().join(",") !== "hookId,repository,repositoryId" || typeof input.repository !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.repository) || input.repository.includes("..") || input.repository.length > 250 || !/^[1-9][0-9]{0,19}$/.test(`${input.repositoryId}`) || !/^[1-9][0-9]{0,19}$/.test(`${input.hookId}`)) throw new BadRequestError("Webhook de dépôt : nom, identifiant du dépôt et identifiant du webhook obligatoires.");
+	return {
+		repository: input.repository,
+		repositoryId: `${input.repositoryId}`,
+		hookId: `${input.hookId}`
+	};
+};
 /** `default` -> `github`, `<id>` -> `github:<id>`. Lève une 400 pour tout autre identifiant. */
 const githubSettingsKey = (id) => {
 	if (!GITHUB_CONNECTION_ID.test(`${id}`)) throw new BadRequestError("Connexion GitHub invalide.");
@@ -8956,7 +9160,8 @@ const githubConnectionMeta = (id, value) => {
 		label: (typeof meta.label === "string" && meta.label ? meta.label : id === "default" ? GITHUB_PRINCIPAL_LABEL : `${value?.ownerLogin || value?.githubAppSlug || "Connexion GitHub"}`).slice(0, 60),
 		disabled: meta.disabled === true,
 		createdAt: typeof meta.createdAt === "string" ? meta.createdAt : "",
-		createdBy: typeof meta.createdBy === "string" ? meta.createdBy : ""
+		createdBy: typeof meta.createdBy === "string" ? meta.createdBy : "",
+		...meta.repositoryWebhook !== void 0 && meta.repositoryWebhook !== null ? { repositoryWebhook: repositoryWebhookConfig(meta.repositoryWebhook) } : {}
 	};
 };
 /** Libellé saisi : 1 à 60 caractères, sans caractère de contrôle ni retour à la ligne. */
@@ -9146,7 +9351,8 @@ const serializeWebGithubConnection = (c, extra = {}) => ({
 	hasWebhookSecret: !!c.value.webhookSecret,
 	webhookUrl: githubWebhookUrl(c.id),
 	appCount: extra.appCount || 0,
-	lastDelivery: extra.lastDelivery || null
+	lastDelivery: extra.lastDelivery || null,
+	repositoryWebhook: c.meta.repositoryWebhook || null
 });
 /** Validations de la saisie manuelle (mêmes règles que PUT /settings). Les secrets absents sont conservés. */
 const applyCredentials = (target, input) => {
@@ -9206,7 +9412,11 @@ const HandleWebGithubConnectionCreate = (e) => {
 				label: label || (id === "default" ? "Connexion principale" : value.githubAppSlug || "Connexion GitHub"),
 				disabled: false,
 				createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-				createdBy: user.id
+				createdBy: user.id,
+				...input.repositoryWebhook !== void 0 && input.repositoryWebhook !== null ? { repositoryWebhook: (() => {
+					if (id === "default") throw new BadRequestError("Utilisez une connexion supplémentaire dédiée à ce dépôt.");
+					return repositoryWebhookConfig(input.repositoryWebhook);
+				})() } : {}
 			}
 		});
 	});
@@ -9220,15 +9430,18 @@ const HandleWebGithubConnectionUpdate = (e) => {
 	requirePlatformAdmin(e);
 	const id = pathConnectionId(e), input = webInput(e), label = input.label === void 0 ? void 0 : githubConnectionLabel(input.label);
 	if (input.disabled !== void 0 && typeof input.disabled !== "boolean") throw new BadRequestError("Le choix d’activation doit être explicite.");
+	const repositoryWebhook = input.repositoryWebhook === void 0 ? void 0 : repositoryWebhookConfig(input.repositoryWebhook);
+	if (repositoryWebhook && id === "default") throw new BadRequestError("Utilisez une connexion supplémentaire dédiée à ce dépôt.");
 	$app.runInTransaction((tx) => {
 		const row = githubConnectionRow(id, tx);
 		if (!row) throw new NotFoundError("Connexion GitHub introuvable.");
 		const current = connectionOf(row), value = applyCredentials({ ...current.value }, input);
 		if (input.githubAppId !== void 0 || input.githubInstallationId !== void 0) assertGithubConnectionUnique(tx, value.githubAppId, value.githubInstallationId, current.key);
-		if (label !== void 0 || input.disabled !== void 0) value.meta = {
+		if (label !== void 0 || input.disabled !== void 0 || repositoryWebhook !== void 0) value.meta = {
 			...current.meta,
 			...label !== void 0 ? { label } : {},
-			...input.disabled !== void 0 ? { disabled: input.disabled } : {}
+			...input.disabled !== void 0 ? { disabled: input.disabled } : {},
+			...repositoryWebhook !== void 0 ? { repositoryWebhook } : {}
 		};
 		writeWebGithubConnection(tx, id, value);
 	});
@@ -9312,8 +9525,8 @@ const webGithubWebhookFor = (e, connectionId) => {
 	const mac = $security.hs256(raw, secret || $security.randomString(48));
 	if (!(!!row && !!secret && raw.length <= 1e7 && $security.equal("sha256=" + mac, signature))) throw new UnauthorizedError("Signature GitHub invalide.");
 	if (!/^[A-Za-z0-9-]{1,100}$/.test(deliveryHeader)) throw new BadRequestError("Livraison invalide.");
-	const delivery = `gh-${connectionId}-${$security.sha256(raw)}`, event = (e.request.header.get("X-GitHub-Event") || "").slice(0, 60), body = JSON.parse(raw), repository = repositoryOf(body), branch = branchOf(body);
-	if (githubConnectionMeta(connectionId, value).disabled) {
+	const delivery = `gh-${connectionId}-${$security.sha256(raw)}`, event = (e.request.header.get("X-GitHub-Event") || "").slice(0, 60), body = JSON.parse(raw), repository = repositoryOf(body), branch = branchOf(body), meta = githubConnectionMeta(connectionId, value);
+	if (meta.disabled) {
 		let duplicate = false;
 		$app.runInTransaction((tx) => {
 			if (bumpDuplicate(tx, delivery)) {
@@ -9342,6 +9555,7 @@ const webGithubWebhookFor = (e, connectionId) => {
 	}
 	const installation = `${value.githubInstallationId || ""}`;
 	if (event === "pull_request") {
+		if (meta.repositoryWebhook) throw new ForbiddenError("Cette connexion dédiée ne reçoit que les push du dépôt.");
 		if (!installation || `${body.installation?.id || ""}` !== installation) throw new ForbiddenError("Installation GitHub inconnue.");
 		return webJson(e, handleWebPreviewWebhook(body, delivery, "", connectionId));
 	}
@@ -9354,7 +9568,11 @@ const webGithubWebhookFor = (e, connectionId) => {
 		duplicate: true
 	});
 	const ignored = event !== "push" || body.deleted === true || !branch;
-	if (!ignored && (!installation || `${body.installation?.id || ""}` !== installation)) throw new ForbiddenError("Installation GitHub inconnue.");
+	if (!ignored) {
+		const bound = meta.repositoryWebhook;
+		if (bound && (connectionId === "default" || repository.toLowerCase() !== bound.repository.toLowerCase() || `${body.repository?.id || ""}` !== bound.repositoryId || e.request.header.get("X-GitHub-Hook-ID") !== bound.hookId)) throw new ForbiddenError("Webhook ou dépôt GitHub inattendu.");
+		if (!installation || (body.installation ? `${body.installation.id || ""}` !== installation : !bound)) throw new ForbiddenError("Installation GitHub inconnue.");
+	}
 	if (!ignored && !/^[a-f0-9]{40}$/.test(body.after || "")) throw new BadRequestError("Commit invalide.");
 	const matching = ignored ? [] : $app.findRecordsByFilter("web_apps", "", "", 500, 0).filter((app) => pushTarget(app, repository, branch, connectionId, $app));
 	let head = ignored ? "" : body.after;
@@ -11728,7 +11946,8 @@ const HandleWebWorkerProjectLimits = (e) => {
 	return webJson(e, {
 		version: 1,
 		projects,
-		apps
+		apps,
+		ipRequestsPerMinute: readWebRequestLimit()
 	});
 };
 const HandleWebWorkerClaim = (e) => {
@@ -12515,129 +12734,6 @@ const GuardWebInstanceDomainCreate = (e) => {
 const GuardWebInstanceDomainUpdate = (e) => {
 	guardNativeInstanceDomain(e.record, false);
 	return e.next();
-};
-
-//#endregion
-//#region src/lib/handlers/instance/api/instanceOperationsAccess.ts
-const operationsAccess = (e) => {
-	const user = e.auth;
-	if (!user || user.collection().name !== "users") throw new UnauthorizedError("Connexion au dashboard requise.");
-	const id = e.request.pathValue("id");
-	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Instance invalide.");
-	const instance = $app.findRecordById("instances", id);
-	if (!canManageInstance(instance, user)) throw new ForbiddenError("Accès refusé.");
-	if (user.getString("suspension") || instance.getString("suspension")) throw new ForbiddenError("Accès suspendu.");
-	return {
-		instance,
-		user
-	};
-};
-const operationJson = (e, value, status = 200) => {
-	e.response.header().set("Cache-Control", "no-store");
-	return e.json(status, value);
-};
-const recordInstanceAction = (instance, user, action, details = {}, app = $app) => {
-	const row = new Record(app.findCollectionByNameOrId("instance_action_log"));
-	row.set("instanceId", instance.id);
-	row.set("ownerId", instance.getString("uid"));
-	row.set("actorId", user?.id || "");
-	row.set("actorLabel", user?.getString("email") || "Automatisation");
-	row.set("action", action);
-	row.set("details", details);
-	app.save(row);
-};
-const HandleInstanceActionLog = (e) => {
-	const { instance } = operationsAccess(e);
-	const page = Math.max(1, Math.min(1e5, Math.floor(Number(e.request.url.query().get("page"))) || 1));
-	const items = $app.findRecordsByFilter("instance_action_log", "instanceId = {:id}", "-created,-id", 51, (page - 1) * 50, { id: instance.id });
-	return operationJson(e, {
-		items: items.slice(0, 50).map((r) => ({
-			id: r.id,
-			actor: r.getString("actorLabel"),
-			action: r.getString("action"),
-			details: JSON.parse(r.getString("details") || "{}"),
-			created: r.getString("created")
-		})),
-		page,
-		hasMore: items.length > 50
-	});
-};
-/** Records successful dashboard mutations; only an explicit metadata allowlist is retained. */
-const AuditInstanceRequest = (e) => {
-	const path = e.request.url.path, method = e.request.method;
-	if (method === "GET" || method === "OPTIONS" || /\/operations\/consume$/.test(path)) return e.next();
-	let instance, action, target = "";
-	if (/^\/api\/instance\/[a-z0-9]{15}(?:\/|$)/.test(path)) {
-		try {
-			instance = $app.findRecordById("instances", path.split("/")[3]);
-		} catch {
-			return e.next();
-		}
-		const section = path.split("/")[4] || "instance";
-		if (["service-accounts", "backup-checks"].includes(section)) return e.next();
-		action = `${method} ${section}`;
-		const segments = path.split("/");
-		if (section === "backups" && segments[6]) action = `backup.${segments[6]}`;
-		if (/^[a-z0-9]{15}$/.test(segments[5] || "")) target = segments[5];
-	} else if (/^\/api\/instance-transfers\/[a-z0-9]{15}\/(cancel|retry|link)$/.test(path)) {
-		try {
-			const transfer = $app.findRecordById("instance_transfers", path.split("/")[3]);
-			instance = $app.findRecordById("instances", transfer.getString("instance"));
-		} catch {
-			return e.next();
-		}
-		action = `transfer.${path.split("/")[4]}`;
-		target = path.split("/")[3];
-	} else return e.next();
-	const user = e.auth;
-	if (!user || user.collection().name !== "users" || !canManageInstance(instance, user)) return e.next();
-	const details = target ? { target } : {};
-	if (action === "PUT instance") {
-		const fields = JSON.parse(JSON.stringify(e.requestInfo().body || {})).fields || {};
-		details.fields = [
-			"subdomain",
-			"power",
-			"version",
-			"secrets",
-			"webhooks",
-			"syncAdmin",
-			"autoVacuum",
-			"metricsHistoryEnabled",
-			"dev",
-			"cname"
-		].filter((key) => fields[key] !== void 0 && fields[key] !== null);
-		if (typeof fields.power === "boolean" && fields.power !== instance.getBool("power")) {
-			action = fields.power ? "instance.started" : "instance.stopped";
-			details.previousPower = instance.getBool("power");
-			details.power = fields.power;
-		}
-	}
-	e.next();
-	if (e.status() >= 400) return;
-	try {
-		recordInstanceAction(instance, user, action, details);
-	} catch {
-		console.warn("Écriture du journal d’administration impossible.");
-	}
-};
-const HandleAccountActionLog = (e) => {
-	const user = e.auth;
-	if (!user || user.collection().name !== "users" || user.getString("suspension")) throw new ForbiddenError("Accès refusé.");
-	const page = Math.max(1, Math.min(1e5, Math.floor(Number(e.request.url.query().get("page")) || 1)));
-	const { filter, params } = instanceAccessQuery(user, "instanceId", "ownerId");
-	const rows = $app.findRecordsByFilter("instance_action_log", filter, "-created,-id", 51, (page - 1) * 50, params).filter((r) => !!r);
-	return operationJson(e, {
-		items: rows.slice(0, 50).map((r) => ({
-			id: r.id,
-			instanceId: r.getString("instanceId"),
-			actor: r.getString("actorLabel"),
-			action: r.getString("action"),
-			details: JSON.parse(r.getString("details") || "{}"),
-			created: r.getString("created")
-		})),
-		hasMore: rows.length > 50,
-		page
-	});
 };
 
 //#endregion
@@ -14875,6 +14971,16 @@ const HandleInstanceTransferBootstrap = () => {
 const removeEmptyKeys = (obj) => Object.fromEntries(Object.entries(obj).filter(([, value]) => value != null));
 
 //#endregion
+//#region ../common/instanceProjectLabel.ts
+/** An organizational label only; it never grants access to an instance. Empty removes the label. */
+const normalizeInstanceProjectLabel = (value) => {
+	if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value)) throw new Error("Le label doit être un texte sur une seule ligne.");
+	const label = value.normalize("NFC").trim().replace(/ +/g, " ");
+	if (Array.from(label).length > 60) throw new Error("Le label est limité à 60 caractères.");
+	return label;
+};
+
+//#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceUpdate.ts
 const callCloudflareAPI = (endpoint, method, body, log) => {
 	const apiToken = $os.getenv("MOTHERSHIP_CLOUDFLARE_API_TOKEN");
@@ -14963,6 +15069,12 @@ const HandleInstanceUpdate = (e) => {
 	for (const name of ["publicHostname", "legacyHostnames"]) if (Object.prototype.hasOwnProperty.call(hostnameFields, name)) {
 		assertInstanceHostnameOperator(authRecord);
 		record.set(name, hostnameFields[name]);
+	}
+	const labelFields = JSON.parse(JSON.stringify(e.requestInfo().body || {})).fields || {};
+	if (Object.prototype.hasOwnProperty.call(labelFields, "projectLabel")) try {
+		record.set("projectLabel", normalizeInstanceProjectLabel(labelFields.projectLabel));
+	} catch (error) {
+		throw new BadRequestError(error instanceof Error ? error.message : "Label invalide.");
 	}
 	const oldCname = record.getString("cname").trim();
 	const newCname = cname !== null ? cname.trim() : null;
@@ -16618,6 +16730,329 @@ const HandleUserWelcomeMessage = (e) => {
 };
 
 //#endregion
+//#region src/lib/handlers/webApps/members.ts
+const ID$1 = /^[a-z0-9]{15}$/;
+const fail = (error) => {
+	if (!error) return;
+	if (error.code === "forbidden") throw new ForbiddenError(error.message);
+	throw new BadRequestError(error.message);
+};
+const userSummary = (id, store = $app) => {
+	if (!id) return null;
+	try {
+		const user = store.findRecordById("users", id);
+		return {
+			id: user.id,
+			email: user.getString("email")
+		};
+	} catch {
+		return null;
+	}
+};
+const memberView = (row, selfId, store = $app) => ({
+	id: row.id,
+	projectId: row.getString("project"),
+	userId: row.getString("user"),
+	email: userSummary(row.getString("user"), store)?.email || "",
+	role: row.getString("role"),
+	invitedBy: userSummary(row.getString("invitedBy"), store),
+	self: row.getString("user") === selfId,
+	created: row.getString("created"),
+	updated: row.getString("updated")
+});
+const ownerCount = (projectId, store) => store.findRecordsByFilter(WEB_MEMBERS, "project={:id} && role=\"owner\"", "", 1e3, 0, { id: projectId }).length;
+const memberOf = (e, projectId, store) => {
+	const id = e.request.pathValue("memberId");
+	if (!ID$1.test(id || "")) throw new BadRequestError("Membre invalide.");
+	let row;
+	try {
+		row = store.findRecordById(WEB_MEMBERS, id);
+	} catch {
+		throw new NotFoundError("Membre introuvable.");
+	}
+	if (row.getString("project") !== projectId) throw new NotFoundError("Membre introuvable.");
+	return row;
+};
+const projectView = (row, role, platform) => ({
+	id: row.id,
+	name: row.getString("name"),
+	repository: row.getString("repository"),
+	multiRepository: row.getBool("multiRepository"),
+	role: platform ? "platform" : role,
+	memberRole: role || null,
+	capabilities: webCapabilities(platform ? "platform" : role)
+});
+/** GET /api/web-access/me — droits de l'utilisateur courant, consommé par le dashboard. */
+const HandleWebAccessMe = (e) => {
+	const user = e.auth;
+	if (!user) throw new UnauthorizedError("Authentification requise.");
+	const usable = webEnabled() && user.collection().name === "users" && !user.getString("suspension"), platform = usable && isWebPlatformAdmin(user);
+	const projects = [];
+	if (usable) {
+		for (const m of listWebMemberships(user)) if (isWebRole(m.role)) try {
+			projects.push(projectView($app.findRecordById("web_projects", m.projectId), m.role, platform));
+		} catch {}
+	}
+	projects.sort((a, b) => a.name.localeCompare(b.name));
+	return webJson(e, {
+		enabled: webEnabled(),
+		isPlatformAdmin: platform,
+		allProjects: platform,
+		hasAccess: platform || projects.length > 0,
+		roles: WEB_ROLES,
+		permissions: WEB_PERMISSIONS,
+		globalCapabilities: webCapabilities(platform ? "platform" : ""),
+		projects
+	});
+};
+const HandleWebProjectMembersList = (e) => {
+	const { user, project, role } = requireWebProjectPermission(e, "members.read"), rows = $app.findRecordsByFilter(WEB_MEMBERS, "project={:id}", "created", 500, 0, { id: project.id });
+	const order = (r) => -WEB_ROLES.indexOf(r.getString("role"));
+	return webJson(e, {
+		projectId: project.id,
+		role,
+		capabilities: webCapabilities(role),
+		items: rows.sort((a, b) => order(a) - order(b)).map((r) => memberView(r, user.id))
+	});
+};
+/**
+* Chaque tentative d'ajout (réussie ou non) est comptée par auteur : un admin de projet ne peut pas sonder en masse
+* quels e-mails ont un compte sur ce serveur. Les superAdmins (attribution par utilisateur) ne sont pas limités.
+*/
+const ADD_RATE = "web_member_add_rate", ADD_RATE_MAX = 20, ADD_RATE_WINDOW = 36e5;
+const limitMemberAdds = (actorId) => {
+	let limited = false;
+	$app.store().setFunc(ADD_RATE, (raw) => {
+		const at = Date.now(), all = raw ? JSON.parse(`${raw}`) : {};
+		for (const id of Object.keys(all)) {
+			all[id] = (all[id] || []).filter((t) => t > at - ADD_RATE_WINDOW);
+			if (!all[id].length) delete all[id];
+		}
+		const hits = all[actorId] || [];
+		limited = hits.length >= ADD_RATE_MAX;
+		if (!limited) all[actorId] = [...hits, at];
+		return JSON.stringify(all);
+	});
+	if (limited) throw new TooManyRequestsError("Trop d’ajouts de membres. Réessayez dans une heure.");
+};
+const HandleWebProjectMemberAdd = (e) => {
+	const access = requireWebProjectPermission(e, "members.manage"), input = webInput(e), projectId = access.project.id;
+	if (!access.platform) limitMemberAdds(access.user.id);
+	if (Object.keys(input).some((key) => !["email", "role"].includes(key))) throw new BadRequestError("Champs invalides.");
+	const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+	if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestError("Adresse e-mail invalide.");
+	fail(webMemberChangeError(access.role, {
+		kind: "add",
+		role: input.role
+	}));
+	let target = null;
+	try {
+		target = $app.findFirstRecordByData("users", "email", email);
+	} catch {}
+	if (!target || !target.getBool("verified") || target.getString("suspension")) throw new BadRequestError("Impossible d’ajouter cette personne. Elle doit déjà avoir un compte actif et vérifié sur ce serveur.");
+	const invitee = target;
+	let member;
+	$app.runInTransaction((tx) => {
+		if (webProjectMemberRecord(projectId, invitee.id, tx)) throw new BadRequestError("Cette personne est déjà membre du projet.");
+		const row = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS));
+		row.set("project", projectId);
+		row.set("user", invitee.id);
+		row.set("role", input.role);
+		row.set("invitedBy", access.user.id);
+		tx.save(row);
+		auditWebProject(projectId, access.user.id, "member-added", {
+			userId: invitee.id,
+			email,
+			role: input.role
+		}, tx);
+		member = memberView(row, access.user.id, tx);
+	});
+	return webJson(e, { member }, 201);
+};
+const HandleWebProjectMemberUpdate = (e) => {
+	const access = requireWebProjectPermission(e, "members.manage"), input = webInput(e), projectId = access.project.id;
+	if (Object.keys(input).some((key) => key !== "role")) throw new BadRequestError("Champs invalides.");
+	let member;
+	$app.runInTransaction((tx) => {
+		const row = memberOf(e, projectId, tx), from = row.getString("role");
+		fail(webMemberChangeError(access.role, {
+			kind: "change",
+			from,
+			role: input.role,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		if (from !== input.role) {
+			row.set("role", input.role);
+			tx.save(row);
+			auditWebProject(projectId, access.user.id, "member-role-changed", {
+				userId: row.getString("user"),
+				email: userSummary(row.getString("user"), tx)?.email || "",
+				from,
+				role: input.role
+			}, tx);
+		}
+		member = memberView(row, access.user.id, tx);
+	});
+	return webJson(e, { member });
+};
+const HandleWebProjectMemberRemove = (e) => {
+	const access = requireWebProjectPermission(e, "members.manage"), projectId = access.project.id;
+	$app.runInTransaction((tx) => {
+		const row = memberOf(e, projectId, tx), from = row.getString("role");
+		fail(webMemberChangeError(access.role, {
+			kind: "remove",
+			from,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		auditWebProject(projectId, access.user.id, "member-removed", {
+			userId: row.getString("user"),
+			email: userSummary(row.getString("user"), tx)?.email || "",
+			role: from
+		}, tx);
+		tx.delete(row);
+	});
+	return webJson(e, { removed: true });
+};
+const HandleWebProjectMemberLeave = (e) => {
+	const access = requireWebProjectPermission(e, "project.read"), projectId = access.project.id;
+	$app.runInTransaction((tx) => {
+		const row = webProjectMemberRecord(projectId, access.user.id, tx);
+		if (!row) throw new BadRequestError("Vous n’êtes pas membre de ce projet.");
+		const from = row.getString("role");
+		fail(webMemberChangeError(from, {
+			kind: "leave",
+			from,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		auditWebProject(projectId, access.user.id, "member-left", {
+			userId: access.user.id,
+			role: from
+		}, tx);
+		tx.delete(row);
+	});
+	return webJson(e, { left: true });
+};
+/** Historique des changements d'accès du projet (ajouts, rôles, retraits, départs). */
+const HandleWebProjectMembersAudit = (e) => {
+	const { project } = requireWebProjectPermission(e, "members.manage"), page = Math.max(1, Math.min(1e4, Math.floor(Number(e.request.url.query().get("page")) || 1))), rows = $app.findRecordsByFilter("web_project_audit", "projectId={:id} && action ~ \"member-\"", "-created", 26, (page - 1) * 25, { id: project.id });
+	return webJson(e, {
+		page,
+		hasMore: rows.length > 25,
+		items: rows.slice(0, 25).map((r) => ({
+			id: r.id,
+			action: r.getString("action"),
+			actor: userSummary(r.getString("actorId")),
+			details: JSON.parse(r.getString("details") || "{}"),
+			created: r.getString("created")
+		}))
+	});
+};
+/**
+* Attribution des projets à un utilisateur par un superAdmin (même parcours que UserInstanceAccess pour les bases). GET
+* : tous les projets avec le rôle actuel de l'utilisateur. PUT { projects: [{ projectId, role }] } remplace l'ensemble
+* ; un projet absent de la liste est retiré, sauf s'il s'agit de son dernier propriétaire.
+*/
+const assignedUser = (e) => {
+	const id = e.request.pathValue("userId");
+	if (!ID$1.test(id || "")) throw new BadRequestError("Utilisateur invalide.");
+	try {
+		return $app.findRecordById("users", id);
+	} catch {
+		throw new NotFoundError("Utilisateur introuvable.");
+	}
+};
+const assignments = (user) => {
+	const roles = {};
+	for (const m of listWebMemberships(user)) if (isWebRole(m.role)) roles[m.projectId] = m.role;
+	return {
+		userId: user.id,
+		superAdmin: user.getBool("superAdmin"),
+		items: $app.findRecordsByFilter("web_projects", "", "name", 1e3, 0).map((row) => ({
+			projectId: row.id,
+			name: row.getString("name"),
+			repository: row.getString("repository"),
+			role: roles[row.id] || null
+		}))
+	};
+};
+const HandleWebUserProjectsGet = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, assignments(assignedUser(e)));
+};
+const validateWebUserProjects = (projects) => {
+	if (!Array.isArray(projects) || projects.length > 1e3 || projects.some((p) => !p || typeof p !== "object" || Array.isArray(p) || typeof p.projectId !== "string" || Object.keys(p).some((key) => !["projectId", "role"].includes(key)) || !ID$1.test(p.projectId || "") || !isWebRole(p.role))) throw new BadRequestError("Liste attendue : [{ projectId, role }] avec un rôle viewer, developer, admin ou owner.");
+	if (new Set(projects.map((p) => p.projectId)).size !== projects.length) throw new BadRequestError("Un projet ne peut être sélectionné qu’une fois.");
+	return projects;
+};
+/** Shares membership checks and audit with the per-user endpoint; caller owns the transaction. */
+const saveWebUserProjects = (tx, actor, user, projects) => {
+	const wanted = {};
+	for (const p of validateWebUserProjects(projects)) wanted[p.projectId] = p.role;
+	const current = {};
+	for (const row of tx.findRecordsByFilter(WEB_MEMBERS, "user={:user}", "", 1e3, 0, { user: user.id })) current[row.getString("project")] = row;
+	for (const projectId of Object.keys(wanted)) {
+		try {
+			tx.findRecordById("web_projects", projectId);
+		} catch {
+			throw new BadRequestError("Projet introuvable.");
+		}
+		const role = wanted[projectId], row = current[projectId];
+		if (!row) {
+			const created = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS));
+			created.set("project", projectId);
+			created.set("user", user.id);
+			created.set("role", role);
+			created.set("invitedBy", actor.id);
+			tx.save(created);
+			auditWebProject(projectId, actor.id, "member-added", {
+				userId: user.id,
+				email: user.getString("email"),
+				role
+			}, tx);
+			continue;
+		}
+		const from = row.getString("role");
+		if (from === role) continue;
+		fail(webMemberChangeError("platform", {
+			kind: "change",
+			from,
+			role,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		row.set("role", role);
+		tx.save(row);
+		auditWebProject(projectId, actor.id, "member-role-changed", {
+			userId: user.id,
+			email: user.getString("email"),
+			from,
+			role
+		}, tx);
+	}
+	for (const projectId of Object.keys(current)) {
+		if (wanted[projectId]) continue;
+		const row = current[projectId], from = row.getString("role");
+		fail(webMemberChangeError("platform", {
+			kind: "remove",
+			from,
+			ownerCount: ownerCount(projectId, tx)
+		}));
+		auditWebProject(projectId, actor.id, "member-removed", {
+			userId: user.id,
+			email: user.getString("email"),
+			role: from
+		}, tx);
+		tx.delete(row);
+	}
+};
+const HandleWebUserProjectsPut = (e) => {
+	const actor = requirePlatformAdmin(e), user = assignedUser(e), input = webInput(e);
+	if (Object.keys(input).some((key) => key !== "projects")) throw new BadRequestError("Champ inconnu.");
+	validateWebUserProjects(input.projects);
+	$app.runInTransaction((tx) => saveWebUserProjects(tx, actor, user, input.projects));
+	return webJson(e, assignments(user));
+};
+
+//#endregion
 //#region src/lib/handlers/operatorAdmin/smtpTest.ts
 /** Bounded draft test; never changes the live mail configuration or echoes credentials. */
 const SMTP_TEST_WORKER = String.raw`
@@ -16662,6 +17097,81 @@ finally:
   except Exception:pass
 print(json.dumps(result))
 `;
+
+//#endregion
+//#region ../common/accountWelcomeEmail.ts
+const escapeWelcomeHtml = (value) => value.replace(/[&<>"']/g, (c) => ({
+	"&": "&amp;",
+	"<": "&lt;",
+	">": "&gt;",
+	"\"": "&quot;",
+	"'": "&#39;"
+})[c]);
+/** Credentials exist only in the creation request and the mail; never persist a delivery payload. */
+const accountWelcomeEmail = ({ baseUrl, email, password, verificationToken }) => {
+	const base = baseUrl.trim().replace(/\/+$/, "");
+	if (!/^(?:https:\/\/(?:[a-z0-9-]+\.)+[a-z]{2,63}(?::\d{1,5})?|http:\/\/(?:localhost|127\.0\.0\.1)(?::\d{1,5})?)$/i.test(base)) throw new Error("Adresse de la plateforme invalide.");
+	const login = `${base}/login`;
+	const action = verificationToken ? `${base}/login/confirm-account/${encodeURIComponent(verificationToken)}` : login;
+	const button = verificationToken ? "Confirmer mon compte" : "Me connecter à Kolab";
+	const intro = verificationToken ? "Votre compte a été créé par votre administrateur. Confirmez votre adresse e-mail pour commencer." : "Votre compte est prêt. Retrouvez vos bases de données et vos hébergements dans votre espace Kolab.";
+	const credential = (label, value, mono = false) => `<tr><td style="padding:16px 20px;border-bottom:1px solid #e4e9f0"><p style="margin:0 0 7px;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#667085">${label}</p><div style="font-family:${mono ? "'Courier New',monospace" : "Arial,sans-serif"};font-size:16px;font-weight:600;line-height:1.6;color:#162137;overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap">${escapeWelcomeHtml(value)}</div></td></tr>`;
+	return {
+		subject: "[Kolab Hosting] Votre compte et vos identifiants",
+		text: [
+			"Bienvenue sur Kolab Hosting",
+			"",
+			intro,
+			"",
+			`Plateforme : ${base}`,
+			`Connexion : ${login}`,
+			`E-mail : ${email}`,
+			"Mot de passe :",
+			password,
+			"",
+			...verificationToken ? [`Confirmer mon compte : ${action}`, ""] : [],
+			"Vous pourrez changer votre mot de passe depuis « Mon compte » après connexion.",
+			"Conservez ces identifiants dans votre gestionnaire de mots de passe.",
+			"",
+			"— Kolab Hosting"
+		].join("\n"),
+		html: `<!doctype html><html lang="fr"><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>Bienvenue sur Kolab</title></head><body style="margin:0;background:#f2f5fa;font-family:Arial,sans-serif"><div style="display:none;max-height:0;overflow:hidden">Votre accès à Kolab Hosting est prêt.</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 12px"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #dce3ec;border-radius:14px"><tr><td style="background:#162137;padding:28px 30px;border-radius:14px 14px 0 0;color:#fff"><strong style="font-size:25px;letter-spacing:4px">KOLAB</strong><p style="margin:8px 0 0;color:#b9c7dc;font-size:11px;letter-spacing:2px">GESTION &amp; HÉBERGEMENT</p></td></tr><tr><td style="padding:30px;border-top:4px solid #2455d6"><span style="display:inline-block;padding:6px 10px;background:#e9f6ef;color:#087443;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.7px">VOTRE NOUVEL ESPACE</span><h1 style="margin:18px 0 12px;font-size:29px;line-height:1.2;color:#162137">Bienvenue sur Kolab.</h1><p style="margin:0 0 24px;font-size:15px;line-height:1.7;color:#475467">${intro}</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4e9f0;border-radius:8px;background:#f8faff">${credential("Adresse de connexion", login)}${credential("Votre e-mail", email)}${credential("Votre mot de passe", password, true)}</table><table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:26px"><tr><td bgcolor="#2455d6" style="border-radius:7px"><a href="${escapeWelcomeHtml(action)}" style="display:inline-block;padding:15px 23px;color:#fff;text-decoration:none;font-size:15px;font-weight:700">${button} &rarr;</a></td></tr></table><p style="margin:22px 0 0;font-size:13px;line-height:1.7;color:#667085">Vous pourrez changer votre mot de passe depuis <strong>Mon compte</strong> après connexion. Conservez ces identifiants dans votre gestionnaire de mots de passe.</p></td></tr><tr><td style="padding:20px 30px;border-top:1px solid #e4e9f0;background:#fafbfe;border-radius:0 0 14px 14px;font-size:12px;line-height:1.6;color:#667085">Compte créé par votre administrateur sur <a href="${escapeWelcomeHtml(login)}" style="color:#2455d6;text-decoration:none">${escapeWelcomeHtml(base)}</a>.<br>Kolab Hosting · Vos applications, au même endroit.</td></tr></table></td></tr></table></body></html>`
+	};
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/welcomeEmail.ts
+const welcomeMailSettings = () => {
+	const settings = $app.settings();
+	if (!settings.smtp?.enabled || !settings.smtp.host || !settings.meta.senderAddress) throw new BadRequestError("Configurez le serveur SMTP avant d’envoyer les identifiants par e-mail.");
+	const baseUrl = ($os.getenv("APP_URL") || `https://${$os.getenv("APP_HOST") || $os.getenv("APEX_DOMAIN")}`).trim();
+	accountWelcomeEmail({
+		baseUrl,
+		email: "",
+		password: ""
+	});
+	return {
+		baseUrl,
+		senderAddress: settings.meta.senderAddress,
+		senderName: settings.meta.senderName || "Kolab Hosting"
+	};
+};
+const sendAccountWelcomeEmail = (record, password, settings) => {
+	const mail = accountWelcomeEmail({
+		baseUrl: settings.baseUrl,
+		email: record.email(),
+		password,
+		...!record.getBool("verified") ? { verificationToken: record.newVerificationToken() } : {}
+	});
+	$app.newMailClient().send(new MailerMessage({
+		from: {
+			address: settings.senderAddress,
+			name: settings.senderName
+		},
+		to: [{ address: record.email() }],
+		...mail
+	}));
+};
 
 //#endregion
 //#region src/lib/handlers/operatorAdmin/api.ts
@@ -16717,7 +17227,8 @@ const serializeUser = (record) => ({
 	created: record.getString("created"),
 	updated: record.getString("updated"),
 	instanceCount: countInstancesForUser(record.id),
-	managedInstances: record.getStringSlice("managedInstances") || []
+	managedInstances: record.getStringSlice("managedInstances") || [],
+	webProjects: listWebMemberships(record)
 });
 const userTimestampMs = (record) => {
 	const timestamp = Date.parse(record.getString("created") || record.getString("updated") || "");
@@ -16796,6 +17307,11 @@ const HandleOperatorAdminOverview = (e) => {
 			subdomain: record.getString("subdomain"),
 			uid: record.getString("uid")
 		})).sort((a, b) => a.subdomain.localeCompare(b.subdomain)),
+		webProjects: $app.findAllRecords("web_projects").map((record) => ({
+			id: record.id,
+			name: record.getString("name"),
+			repository: record.getString("repository")
+		})).sort((a, b) => a.name.localeCompare(b.name)),
 		stats: {
 			totalUsers: users.length,
 			verifiedUsers: users.filter((user) => user.verified).length,
@@ -16807,10 +17323,13 @@ const HandleOperatorAdminOverview = (e) => {
 };
 const HandleOperatorAdminCreateUser = (e) => {
 	const log = mkLog("operator-admin:create-user");
-	requireOperatorAdmin(e);
+	const actor = requireOperatorAdmin(e);
 	const settings = readOperatorSettings();
 	const body = readJsonBody(e);
+	if (body.sendWelcomeEmail !== void 0 && typeof body.sendWelcomeEmail !== "boolean") throw new BadRequestError("Le choix d’envoi du mail doit être un booléen.");
+	const welcomeSettings = body.sendWelcomeEmail === true ? welcomeMailSettings() : void 0;
 	validateOperatorUserInput(body);
+	if (body.webProjects !== void 0) validateWebUserProjects(body.webProjects);
 	const email = normalizeEmailAddress(body.email);
 	const password = `${body.password || ""}`;
 	if (!email) throw new BadRequestError("L'email est obligatoire.");
@@ -16828,25 +17347,37 @@ const HandleOperatorAdminCreateUser = (e) => {
 	record.set("managedInstances", validateManagedInstances(body.managedInstances || []));
 	record.set("suspension", `${body.suspension || ""}`.trim());
 	record.setPassword(password);
-	$app.save(record);
+	$app.runInTransaction((tx) => {
+		tx.save(record);
+		if (body.webProjects !== void 0) saveWebUserProjects(tx, actor, record, body.webProjects);
+	});
 	log(`created ${email}`);
 	let warning = "";
-	if (!record.getBool("verified")) try {
+	let welcomeEmailSent = false;
+	if (welcomeSettings) try {
+		sendAccountWelcomeEmail(record, password, welcomeSettings);
+		welcomeEmailSent = true;
+	} catch {
+		warning = "Compte créé, mais le mail contenant les identifiants n’a pas pu être envoyé. Vérifiez SMTP. Ne recréez pas ce compte.";
+	}
+	else if (!record.getBool("verified")) try {
 		$mails.sendRecordVerification($app, record);
 	} catch {
 		warning = "Compte créé, mais l’email de vérification n’a pas pu être envoyé. Vérifiez SMTP.";
 	}
 	return e.json(200, {
 		user: serializeUser(record),
-		warning
+		warning,
+		welcomeEmailSent
 	});
 };
 const HandleOperatorAdminUpdateUser = (e) => {
-	requireOperatorAdmin(e);
+	const actor = requireOperatorAdmin(e);
 	const id = e.request.pathValue("id");
 	if (!id) throw new BadRequestError("L'identifiant utilisateur est obligatoire.");
 	const body = readJsonBody(e);
 	validateOperatorUserInput(body);
+	if (body.webProjects !== void 0) validateWebUserProjects(body.webProjects);
 	const record = $app.findRecordById("users", id);
 	if (record.getBool("superAdmin") && (body.superAdmin === false || typeof body.suspension === "string" && body.suspension.trim())) ensureAnotherSuperAdminExists(record.id);
 	if (typeof body.email === "string") {
@@ -16869,7 +17400,10 @@ const HandleOperatorAdminUpdateUser = (e) => {
 		if (!body.superAdmin && record.getBool("superAdmin")) ensureAnotherSuperAdminExists(record.id);
 		record.set("superAdmin", body.superAdmin);
 	}
-	$app.save(record);
+	$app.runInTransaction((tx) => {
+		tx.save(record);
+		if (body.webProjects !== void 0) saveWebUserProjects(tx, actor, record, body.webProjects);
+	});
 	return e.json(200, { user: serializeUser(record) });
 };
 const HandleOperatorAdminUpdateSettings = (e) => {
@@ -17328,6 +17862,255 @@ const HandleOperatorResourceMetrics = (e) => {
 	} catch {
 		return e.json(200, emptyPlatformResources(range));
 	}
+};
+
+//#endregion
+//#region ../common/instanceImages.ts
+/** Operator-owned image policy. This module is pure and can run in Node and PocketBase's JS VM. */
+const INSTANCE_IMAGE_ID = /^[a-z0-9]{15}$/;
+const INSTANCE_IMAGE_SHA = /^sha256:[a-f0-9]{64}$/;
+const INSTANCE_IMAGE_OVERRIDES_MAX_LENGTH = 32768;
+const INSTANCE_IMAGE_OVERRIDES_MAX_ENTRIES = 256;
+const invalid = () => /* @__PURE__ */ new Error("Invalid operator PH_INSTANCE_IMAGE_OVERRIDES configuration.");
+const parseInstanceImageOverrides = (raw) => {
+	const result = Object.create(null);
+	if (raw === void 0 || raw === "") return result;
+	if (typeof raw !== "string" || raw.length > 32768) throw invalid();
+	let value;
+	try {
+		value = JSON.parse(raw);
+	} catch {
+		throw invalid();
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+	const entries = Object.entries(value);
+	if (entries.length > 256) throw invalid();
+	if ((raw.match(/"(?:\\.|[^"\\])*"\s*:/g) || []).length !== entries.length) throw invalid();
+	for (const [id, image] of entries) {
+		if (!INSTANCE_IMAGE_ID.test(id) || typeof image !== "string" || !INSTANCE_IMAGE_SHA.test(image)) throw invalid();
+		result[id] = image;
+	}
+	return result;
+};
+/** The private DB provider receives only assignments for the already-authorized database IDs. */
+const selectedInstanceImages = (ids, rawOverrides) => {
+	const overrides = parseInstanceImageOverrides(rawOverrides);
+	const selected = Object.create(null);
+	if (ids.length > 500 || ids.some((id) => !INSTANCE_IMAGE_ID.test(id))) throw new Error("Invalid database IDs.");
+	for (const id of ids) if (overrides[id]) selected[id] = overrides[id];
+	return selected;
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/connectionLimits.ts
+const DEFAULT_CONNECTION_LIMITS = {
+	total: 512,
+	perApp: 128,
+	perBinding: 128,
+	perDatabase: 128
+};
+const NAME = "private_db_connection_limits";
+const validateConnectionLimits = (value) => {
+	if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join(",") !== "perApp,perBinding,perDatabase,total") throw new BadRequestError("Les quatre plafonds de connexion sont obligatoires.");
+	for (const [key, maximum] of [
+		["total", 1024],
+		["perApp", 256],
+		["perBinding", 256],
+		["perDatabase", 512]
+	]) if (!Number.isSafeInteger(value[key]) || value[key] < 1 || value[key] > maximum) throw new BadRequestError(`Le plafond ${key} doit être un entier de 1 à ${maximum}.`);
+	if (value.perBinding > value.perApp || value.perApp > value.total || value.perBinding > value.perDatabase || value.perDatabase > value.total) throw new BadRequestError("Une liaison ne peut dépasser son application ou sa base, ni le plafond total.");
+	return {
+		total: value.total,
+		perApp: value.perApp,
+		perBinding: value.perBinding,
+		perDatabase: value.perDatabase
+	};
+};
+const readConnectionLimits = (app = $app) => {
+	const rows = app.findRecordsByFilter("settings", "name = {:name}", "", 2, 0, { name: NAME });
+	if (!rows.length) return { ...DEFAULT_CONNECTION_LIMITS };
+	if (rows.length !== 1) throw new InternalServerError("Configuration de connexion ambiguë.");
+	return validateConnectionLimits(JSON.parse(rows[0].getString("value")));
+};
+const connectionLimitsRevision = (limits) => $security.sha256(JSON.stringify(limits));
+const writeConnectionLimits = (value, revision) => {
+	$app.runInTransaction((app) => {
+		if (connectionLimitsRevision(readConnectionLimits(app)) !== revision) throw new ApiError(409, "Ces plafonds ont été modifiés. Rechargez avant d’enregistrer.");
+		const row = app.findRecordsByFilter("settings", "name = {:name}", "", 1, 0, { name: NAME })[0] || new Record(app.findCollectionByNameOrId("settings"));
+		row.set("name", NAME);
+		row.set("value", JSON.stringify(value));
+		app.save(row);
+	});
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/requestLimits.ts
+const HandleOperatorRequestLimits = (e) => {
+	requireOperatorAdmin(e);
+	const limits = readConnectionLimits();
+	return operationJson(e, {
+		limits,
+		revision: connectionLimitsRevision(limits)
+	});
+};
+const HandleOperatorRequestLimitsPut = (e) => {
+	const actor = requireOperatorAdmin(e), body = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	if (Object.keys(body).sort().join(",") !== "limits,revision" || typeof body.revision !== "string" || !/^[a-f0-9]{64}$/.test(body.revision)) throw new BadRequestError("Configuration ou révision invalide.");
+	const limits = validateConnectionLimits(body.limits);
+	writeConnectionLimits(limits, body.revision);
+	$app.logger().info("Private database connection limits updated", "actor", actor.id, "limits", JSON.stringify(limits));
+	return operationJson(e, {
+		limits,
+		revision: connectionLimitsRevision(limits)
+	});
+};
+const HandleOperatorDatabaseRequestLimits = (e) => {
+	const actor = requireOperatorAdmin(e), id = e.request.pathValue("id");
+	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Base invalide.");
+	const instance = $app.findRecordById("instances", id);
+	if (!instance.getBool("power") || instance.getString("suspension")) throw new BadRequestError("Démarrez cette base avant de modifier ses limites.");
+	const action = e.request.method === "PUT" ? "update" : "read";
+	const input = action === "update" ? JSON.parse(JSON.stringify(e.requestInfo().body || {})) : null;
+	const inferred = `${$app.dataDir()}`.replace(/\/mothership\/pb_data\/?$/, "");
+	const root = $os.getenv("DATA_ROOT") || (inferred !== `${$app.dataDir()}` ? inferred : "");
+	if (!root) throw new InternalServerError("Dossier des bases indisponible.");
+	const { ticket } = issueInstanceConsoleTicket(instance, actor, Date.now() + 3e4);
+	const path = `${$app.dataDir()}/.request-limits-${$security.randomString(24)}.json`;
+	let result;
+	try {
+		$os.writeFile(path, JSON.stringify({
+			dataRoot: root,
+			instance: id,
+			action,
+			input,
+			ticket,
+			databaseImage: $os.getenv("DOCKER_INSTANCE_IMAGE_NAME") || "benallfree/pockethost-instance",
+			databaseImages: selectedInstanceImages([id], $os.getenv("PH_INSTANCE_IMAGE_OVERRIDES"))
+		}), 384);
+		result = JSON.parse(toString($os.cmd("python3", $os.getenv("INSTANCE_REQUEST_LIMITS_SCRIPT") || "/opt/pockethost-web/instance_request_limits.py", path).output()));
+	} catch {
+		throw new BadRequestError("La base est inaccessible ou ses hooks doivent être mis à jour. Aucun redémarrage automatique.");
+	} finally {
+		try {
+			$os.remove(path);
+		} catch {}
+	}
+	if (!result.ok) throw new ApiError(result.status === 409 ? 409 : 400, result.message || "Réglage PocketBase indisponible.");
+	if (action === "update") recordInstanceAction(instance, actor, "rate-limits.updated", {
+		enabled: result.value.enabled,
+		rules: result.value.rules
+	});
+	return operationJson(e, result.value);
+};
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/workspace.ts
+/** Small authenticated landing summary. No Docker sampling, external calls, log reads or secret serialization. */
+const HandleWorkspaceOverview = (e) => {
+	const user = e.auth;
+	if (!user || user.collection().name !== "users") throw new UnauthorizedError("Authentification requise.");
+	if (user.getString("suspension")) throw new ForbiddenError("Compte suspendu.");
+	e.response.header().set("Cache-Control", "no-store");
+	const base = instanceAccessQuery(user), app = webAppAccessQuery(user);
+	const web = $os.getenv("WEB_APPS_ENABLED") === "true";
+	const platform = user.getBool("superAdmin");
+	const memberSql = `wm.user={:uid} AND wm.role IN ('viewer','developer','admin','owner')`;
+	const visibleAppSql = platform ? "1=1" : `EXISTS (SELECT 1 FROM web_app_environments we JOIN web_project_members wm ON wm.project=we.projectId WHERE we.appId=web_apps.id AND ${memberSql})`;
+	const scopes = {
+		instances: platform ? "1=1" : "uid={:uid} OR id IN (SELECT value FROM json_each({:bases}))",
+		web_projects: platform ? "1=1" : `EXISTS (SELECT 1 FROM web_project_members wm WHERE wm.project=web_projects.id AND ${memberSql})`,
+		web_apps: visibleAppSql,
+		web_deployments: `appId IN (SELECT id FROM web_apps WHERE ${visibleAppSql}) AND action IN ('deploy','ci-deploy')`
+	};
+	const count = (collection, extra = "") => $app.countRecords(collection, $dbx.exp(`(${scopes[collection]})${extra ? ` AND (${extra.replace(/&&/g, " AND ").replace(/\|\|/g, " OR ")})` : ""}`, {
+		uid: user.id,
+		bases: JSON.stringify(user.getStringSlice("managedInstances") || [])
+	}));
+	const appCount = (extra = "") => web ? count("web_apps", extra) : 0;
+	const jobAccess = webAppAccessQuery(user, "appId");
+	const jobs = {
+		...jobAccess,
+		filter: `(${jobAccess.filter}) && @collection.web_apps:present.id ?= appId && (action="deploy" || action="ci-deploy")`
+	};
+	const jobCount = (extra) => web ? count("web_deployments", extra) : 0;
+	const failedApps = "status=\"failed\" || lastError!=\"\"";
+	const failedBases = "power=true && status=\"failed\"";
+	const cutoff = (/* @__PURE__ */ new Date(Date.now() - 864e5)).toISOString().replace("T", " ");
+	const completed = (status) => jobCount(`finishedAt>="${cutoff}" && status="${status}"`);
+	const recent = web ? $app.findRecordsByFilter("web_deployments", jobs.filter, "-created,-id", 8, 0, jobs.params) : [];
+	const names = /* @__PURE__ */ new Map();
+	for (const row of recent) {
+		const id = row.getString("appId");
+		if (!names.has(id)) try {
+			names.set(id, $app.findRecordById("web_apps", id).getString("name"));
+		} catch {}
+	}
+	const attention = [];
+	for (const row of $app.findRecordsByFilter("instances", `(${base.filter}) && (${failedBases})`, "-updated", 6, 0, base.params)) attention.push({
+		id: row.id,
+		name: row.getString("subdomain"),
+		kind: "database",
+		status: "failed",
+		servingPreviousVersion: false
+	});
+	if (web) for (const row of $app.findRecordsByFilter("web_apps", `(${app.filter}) && (${failedApps})`, "-updated", 6, 0, app.params)) attention.push({
+		id: row.id,
+		name: row.getString("name"),
+		kind: "application",
+		status: row.getString("status"),
+		servingPreviousVersion: row.getString("status") === "running" && !!row.getString("activeDeployment")
+	});
+	let resources = null;
+	if (user.getBool("superAdmin")) try {
+		const root = $os.getenv("PLATFORM_RESOURCES_ROOT") || "/var/lib/kolab-resource-monitoring";
+		const content = toString($os.readFile(`${root}/resources-15m.json`));
+		if (content.length > 4 * 1024 * 1024) throw Error("Resource cache too large");
+		const response = parsePlatformResources(JSON.parse(content), "15m");
+		if (response.sample) resources = {
+			host: response.sample.host,
+			collectedAt: response.sample.collectedAt,
+			stale: response.stale
+		};
+	} catch {}
+	const result = {
+		collectedAt: (/* @__PURE__ */ new Date()).toISOString(),
+		webEnabled: web,
+		canCreateBase: user.getBool("superAdmin") || Number(user.get("subscription_quantity")) > 0,
+		canCreateApp: web && user.getBool("superAdmin"),
+		counts: {
+			databases: count("instances"),
+			databasesRunning: count("instances", "power=true && status=\"running\""),
+			databasesOff: count("instances", "power=false"),
+			databasesFailed: count("instances", failedBases),
+			applications: appCount(),
+			applicationsRunning: appCount("status=\"running\""),
+			applicationsStopped: appCount("status=\"stopped\""),
+			applicationsFailed: appCount(failedApps),
+			projects: web ? count("web_projects") : 0,
+			projectsWithErrors: web ? count("web_projects", `EXISTS (SELECT 1 FROM web_app_environments wi JOIN web_apps wa ON wa.id=wi.appId WHERE wi.projectId=web_projects.id AND (wa.status='failed' OR wa.lastError!=''))`) : 0,
+			deploymentsInProgress: jobCount("status=\"running\""),
+			deploymentsQueued: jobCount("status=\"queued\""),
+			autoDeploy: appCount("json_extract(config, '$.autoDeploy')=1")
+		},
+		deployments24h: {
+			ready: completed("ready"),
+			failed: completed("failed"),
+			cancelled: completed("cancelled")
+		},
+		recentDeployments: recent.filter((row) => names.has(row.getString("appId"))).map((row) => ({
+			id: row.id,
+			appId: row.getString("appId"),
+			appName: names.get(row.getString("appId")) || "Application",
+			action: row.getString("action"),
+			status: row.getString("status"),
+			commit: row.getString("commit").slice(0, 12),
+			created: row.getString("created"),
+			finishedAt: row.getString("finishedAt")
+		})),
+		attention,
+		resources
+	};
+	return e.json(200, result);
 };
 
 //#endregion
@@ -22388,6 +23171,15 @@ const fields = () => [
 	}
 ];
 const createTotpSecurity = (config) => {
+	const required = config.authCollection === "users";
+	const directServiceRequest = (e) => /^127\.0\.0\.1:|^\[::1\]:/.test(e.request?.remoteAddr || "") && [
+		"X-Forwarded-For",
+		"X-Forwarded-Host",
+		"X-Forwarded-Proto",
+		"X-Real-Ip",
+		"Forwarded",
+		"Via"
+	].every((name) => !e.request.header.values(name).length);
 	const keyPath = () => `${$app.dataDir()}/.pockethost-totp.key`;
 	const readKey = () => toString($os.readFile(keyPath())).trim();
 	const decrypt = (value) => toString($security.decrypt(value, readKey()));
@@ -22488,6 +23280,20 @@ const createTotpSecurity = (config) => {
 			ph_totp: state.getString("nonce")
 		}, record.getString("tokenKey") + record.collection().authToken.secret, Math.max(1, Number(payload.exp) - Math.floor(Date.now() / 1e3)));
 	};
+	const limitedToken = (token, record, service = false) => {
+		const payload = claims(token);
+		const lifetime = Math.max(1, Math.min(service ? 3600 : 900, Number(payload.exp) - Math.floor(Date.now() / 1e3)));
+		delete payload.exp;
+		delete payload.ph_totp;
+		delete payload.ph_service;
+		return $security.createJWT({
+			...payload,
+			...service ? {
+				ph_service: "controller",
+				refreshable: false
+			} : { ph_totp_enrollment: true }
+		}, record.getString("tokenKey") + record.collection().authToken.secret, lifetime);
+	};
 	const requestHeaders = (e) => JSON.parse(JSON.stringify(e.requestInfo().headers || {}));
 	const tokenFromRequest = (e) => (requestHeaders(e).authorization || "").replace(/^Bearer\s+/i, "").trim();
 	const hasProof = (token, state) => {
@@ -22505,6 +23311,17 @@ const createTotpSecurity = (config) => {
 		return state ? markToken(token, current, state) : token;
 	};
 	return {
+		delegateService: (e) => {
+			if (!required || e.auth?.collection().name !== "_superusers" || !directServiceRequest(e)) throw new ForbiddenError("Délégation technique locale requise.");
+			const input = data(e);
+			if (Object.keys(input).some((name) => name !== "userId") || !/^[a-z0-9]{15}$/.test(input.userId || "")) throw new BadRequestError("Identité technique invalide.");
+			const record = $app.findRecordById("users", input.userId);
+			if (!record.getBool("superAdmin") || !record.getBool("verified") || record.getString("suspension")) throw new ForbiddenError("Administrateur de plateforme actif requis.");
+			return json(e, {
+				token: limitedToken(record.newAuthToken(), record, true),
+				record
+			});
+		},
 		trustedToken: (record) => {
 			const state = findState(record);
 			const token = record.newAuthToken();
@@ -22546,6 +23363,7 @@ const createTotpSecurity = (config) => {
 		status: (e) => {
 			const state = findState(requireAuth(e));
 			return json(e, {
+				required,
 				enabled: state?.getBool("enabled") || false,
 				recoveryCodesRemaining: state ? recoveryHashes(state).length : 0
 			});
@@ -22595,6 +23413,7 @@ const createTotpSecurity = (config) => {
 			});
 		},
 		disable: (e) => {
+			if (required) throw new ForbiddenError("Le TOTP est obligatoire sur Kolab et ne peut pas être désactivé.");
 			const record = requireAuth(e);
 			assertPassword(e, record);
 			let token = "";
@@ -22621,7 +23440,10 @@ const createTotpSecurity = (config) => {
 		authenticate: (e) => {
 			if (!e.record) return e.next();
 			const state = findState(e.record);
-			if (!state?.getBool("enabled")) return e.next();
+			if (!state?.getBool("enabled")) {
+				if (required) e.token = limitedToken(e.token, e.record);
+				return e.next();
+			}
 			if (!e.authMethod && hasProof(tokenFromRequest(e), state)) {
 				e.token = markToken(e.token, e.record, state);
 				return e.next();
@@ -22642,7 +23464,29 @@ const createTotpSecurity = (config) => {
 				if (payload.collectionId === collection.id && payload.type === "auth") record = $app.findAuthRecordByToken(token, "auth");
 			} catch {}
 			if (!record) return e.next();
+			const payload = claims(token);
+			if (required && payload.ph_service === "controller" && payload.refreshable === false && directServiceRequest(e)) {
+				if (path === "/api/collections/users/auth-refresh") throw new UnauthorizedError("Une délégation technique ne peut pas être renouvelée.");
+				return e.next();
+			}
 			const state = findState(record);
+			if (required && !state?.getBool("enabled")) {
+				const method = e.request?.method || "";
+				if (!(method === "GET" && [
+					"/api/account/totp",
+					"/api/versions",
+					"/api/signup"
+				].includes(path) || method === "POST" && [
+					"/api/account/totp/setup",
+					"/api/account/totp/confirm",
+					"/api/collections/users/auth-refresh",
+					"/api/collections/users/request-password-reset",
+					"/api/collections/users/confirm-password-reset",
+					"/api/collections/users/request-verification",
+					"/api/collections/users/confirm-verification"
+				].includes(path))) throw new ApiError(403, "Configurez et validez le TOTP avant d’accéder à Kolab.", { totpEnrollmentRequired: new ValidationError("totp_enrollment_required", "Le TOTP est obligatoire.") });
+				return e.next();
+			}
 			if (state?.getBool("enabled") && !hasProof(token, state)) throw codeError("Une connexion avec le second facteur est requise.");
 			return e.next();
 		}
@@ -22663,6 +23507,7 @@ const HandleDashboardTotpDisable = security.disable;
 const HandleDashboardTotpRegenerate = security.regenerate;
 const HandleDashboardTotpAuth = security.authenticate;
 const GuardDashboardTotp = security.guard;
+const HandleDashboardServiceDelegate = security.delegateService;
 
 //#endregion
 //#region src/lib/handlers/versions/api/HandleVersionsRequest.ts
@@ -24577,6 +25422,19 @@ const findApps = (ids) => {
 	return out;
 };
 const byName = (a, b) => a.name.localeCompare(b.name);
+/** Une lecture groupée, limitée aux applications déjà autorisées dans la liste. */
+const appsWithPendingDeployments = (ids) => {
+	const pending = /* @__PURE__ */ new Set();
+	for (let offset = 0; offset < ids.length; offset += 200) {
+		const params = {}, placeholders = ids.slice(offset, offset + 200).map((id, index) => {
+			params[`app${index}`] = id;
+			return `{:app${index}}`;
+		}), rows = arrayOf(new DynamicModel({ appId: "" }));
+		$app.db().newQuery(`SELECT DISTINCT appId FROM web_deployments WHERE status IN ('queued', 'running') AND appId IN (${placeholders.join(",")})`).bind(params).all(rows);
+		for (const row of rows) pending.add(`${row.appId}`);
+	}
+	return pending;
+};
 /** GET /api/web-projects/groups — projets accessibles et leurs sites ; superAdmin : tout, plus « Sans projet ». */
 const HandleWebProjectGroups = (e) => {
 	const user = requireWebUser(e), platform = isWebPlatformAdmin(user), q = webProjectAccessQuery(user, "id"), rows = $app.findRecordsByFilter("web_projects", q.filter, "name", LIMITS.projects + 1, 0, q.params);
@@ -24643,6 +25501,8 @@ const HandleWebProjectGroups = (e) => {
 			membership: null
 		})).sort(byName) };
 	}
+	const visibleApps = [...groups.flatMap((group) => group.apps), ...unassigned?.apps || []], pending = appsWithPendingDeployments(visibleApps.map((app) => app.id));
+	for (const app of visibleApps) app.deploymentInProgress = pending.has(app.id);
 	return webJson(e, {
 		enabled: true,
 		isPlatformAdmin: platform,
@@ -24864,358 +25724,6 @@ const HandleWebAppProjectMove = (e) => {
 		},
 		...result
 	});
-};
-
-//#endregion
-//#region src/lib/handlers/webApps/members.ts
-const ID$1 = /^[a-z0-9]{15}$/;
-const fail = (error) => {
-	if (!error) return;
-	if (error.code === "forbidden") throw new ForbiddenError(error.message);
-	throw new BadRequestError(error.message);
-};
-const userSummary = (id, store = $app) => {
-	if (!id) return null;
-	try {
-		const user = store.findRecordById("users", id);
-		return {
-			id: user.id,
-			email: user.getString("email")
-		};
-	} catch {
-		return null;
-	}
-};
-const memberView = (row, selfId, store = $app) => ({
-	id: row.id,
-	projectId: row.getString("project"),
-	userId: row.getString("user"),
-	email: userSummary(row.getString("user"), store)?.email || "",
-	role: row.getString("role"),
-	invitedBy: userSummary(row.getString("invitedBy"), store),
-	self: row.getString("user") === selfId,
-	created: row.getString("created"),
-	updated: row.getString("updated")
-});
-const ownerCount = (projectId, store) => store.findRecordsByFilter(WEB_MEMBERS, "project={:id} && role=\"owner\"", "", 1e3, 0, { id: projectId }).length;
-const memberOf = (e, projectId, store) => {
-	const id = e.request.pathValue("memberId");
-	if (!ID$1.test(id || "")) throw new BadRequestError("Membre invalide.");
-	let row;
-	try {
-		row = store.findRecordById(WEB_MEMBERS, id);
-	} catch {
-		throw new NotFoundError("Membre introuvable.");
-	}
-	if (row.getString("project") !== projectId) throw new NotFoundError("Membre introuvable.");
-	return row;
-};
-const projectView = (row, role, platform) => ({
-	id: row.id,
-	name: row.getString("name"),
-	repository: row.getString("repository"),
-	multiRepository: row.getBool("multiRepository"),
-	role: platform ? "platform" : role,
-	memberRole: role || null,
-	capabilities: webCapabilities(platform ? "platform" : role)
-});
-/** GET /api/web-access/me — droits de l'utilisateur courant, consommé par le dashboard. */
-const HandleWebAccessMe = (e) => {
-	const user = e.auth;
-	if (!user) throw new UnauthorizedError("Authentification requise.");
-	const usable = webEnabled() && user.collection().name === "users" && !user.getString("suspension"), platform = usable && isWebPlatformAdmin(user);
-	const projects = [];
-	if (usable) {
-		for (const m of listWebMemberships(user)) if (isWebRole(m.role)) try {
-			projects.push(projectView($app.findRecordById("web_projects", m.projectId), m.role, platform));
-		} catch {}
-	}
-	projects.sort((a, b) => a.name.localeCompare(b.name));
-	return webJson(e, {
-		enabled: webEnabled(),
-		isPlatformAdmin: platform,
-		allProjects: platform,
-		hasAccess: platform || projects.length > 0,
-		roles: WEB_ROLES,
-		permissions: WEB_PERMISSIONS,
-		globalCapabilities: webCapabilities(platform ? "platform" : ""),
-		projects
-	});
-};
-const HandleWebProjectMembersList = (e) => {
-	const { user, project, role } = requireWebProjectPermission(e, "members.read"), rows = $app.findRecordsByFilter(WEB_MEMBERS, "project={:id}", "created", 500, 0, { id: project.id });
-	const order = (r) => -WEB_ROLES.indexOf(r.getString("role"));
-	return webJson(e, {
-		projectId: project.id,
-		role,
-		capabilities: webCapabilities(role),
-		items: rows.sort((a, b) => order(a) - order(b)).map((r) => memberView(r, user.id))
-	});
-};
-/**
-* Chaque tentative d'ajout (réussie ou non) est comptée par auteur : un admin de projet ne peut pas sonder en masse
-* quels e-mails ont un compte sur ce serveur. Les superAdmins (attribution par utilisateur) ne sont pas limités.
-*/
-const ADD_RATE = "web_member_add_rate", ADD_RATE_MAX = 20, ADD_RATE_WINDOW = 36e5;
-const limitMemberAdds = (actorId) => {
-	let limited = false;
-	$app.store().setFunc(ADD_RATE, (raw) => {
-		const at = Date.now(), all = raw ? JSON.parse(`${raw}`) : {};
-		for (const id of Object.keys(all)) {
-			all[id] = (all[id] || []).filter((t) => t > at - ADD_RATE_WINDOW);
-			if (!all[id].length) delete all[id];
-		}
-		const hits = all[actorId] || [];
-		limited = hits.length >= ADD_RATE_MAX;
-		if (!limited) all[actorId] = [...hits, at];
-		return JSON.stringify(all);
-	});
-	if (limited) throw new TooManyRequestsError("Trop d’ajouts de membres. Réessayez dans une heure.");
-};
-const HandleWebProjectMemberAdd = (e) => {
-	const access = requireWebProjectPermission(e, "members.manage"), input = webInput(e), projectId = access.project.id;
-	if (!access.platform) limitMemberAdds(access.user.id);
-	if (Object.keys(input).some((key) => !["email", "role"].includes(key))) throw new BadRequestError("Champs invalides.");
-	const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
-	if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestError("Adresse e-mail invalide.");
-	fail(webMemberChangeError(access.role, {
-		kind: "add",
-		role: input.role
-	}));
-	let target = null;
-	try {
-		target = $app.findFirstRecordByData("users", "email", email);
-	} catch {}
-	if (!target || !target.getBool("verified") || target.getString("suspension")) throw new BadRequestError("Impossible d’ajouter cette personne. Elle doit déjà avoir un compte actif et vérifié sur ce serveur.");
-	const invitee = target;
-	let member;
-	$app.runInTransaction((tx) => {
-		if (webProjectMemberRecord(projectId, invitee.id, tx)) throw new BadRequestError("Cette personne est déjà membre du projet.");
-		const row = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS));
-		row.set("project", projectId);
-		row.set("user", invitee.id);
-		row.set("role", input.role);
-		row.set("invitedBy", access.user.id);
-		tx.save(row);
-		auditWebProject(projectId, access.user.id, "member-added", {
-			userId: invitee.id,
-			email,
-			role: input.role
-		}, tx);
-		member = memberView(row, access.user.id, tx);
-	});
-	return webJson(e, { member }, 201);
-};
-const HandleWebProjectMemberUpdate = (e) => {
-	const access = requireWebProjectPermission(e, "members.manage"), input = webInput(e), projectId = access.project.id;
-	if (Object.keys(input).some((key) => key !== "role")) throw new BadRequestError("Champs invalides.");
-	let member;
-	$app.runInTransaction((tx) => {
-		const row = memberOf(e, projectId, tx), from = row.getString("role");
-		fail(webMemberChangeError(access.role, {
-			kind: "change",
-			from,
-			role: input.role,
-			ownerCount: ownerCount(projectId, tx)
-		}));
-		if (from !== input.role) {
-			row.set("role", input.role);
-			tx.save(row);
-			auditWebProject(projectId, access.user.id, "member-role-changed", {
-				userId: row.getString("user"),
-				email: userSummary(row.getString("user"), tx)?.email || "",
-				from,
-				role: input.role
-			}, tx);
-		}
-		member = memberView(row, access.user.id, tx);
-	});
-	return webJson(e, { member });
-};
-const HandleWebProjectMemberRemove = (e) => {
-	const access = requireWebProjectPermission(e, "members.manage"), projectId = access.project.id;
-	$app.runInTransaction((tx) => {
-		const row = memberOf(e, projectId, tx), from = row.getString("role");
-		fail(webMemberChangeError(access.role, {
-			kind: "remove",
-			from,
-			ownerCount: ownerCount(projectId, tx)
-		}));
-		auditWebProject(projectId, access.user.id, "member-removed", {
-			userId: row.getString("user"),
-			email: userSummary(row.getString("user"), tx)?.email || "",
-			role: from
-		}, tx);
-		tx.delete(row);
-	});
-	return webJson(e, { removed: true });
-};
-const HandleWebProjectMemberLeave = (e) => {
-	const access = requireWebProjectPermission(e, "project.read"), projectId = access.project.id;
-	$app.runInTransaction((tx) => {
-		const row = webProjectMemberRecord(projectId, access.user.id, tx);
-		if (!row) throw new BadRequestError("Vous n’êtes pas membre de ce projet.");
-		const from = row.getString("role");
-		fail(webMemberChangeError(from, {
-			kind: "leave",
-			from,
-			ownerCount: ownerCount(projectId, tx)
-		}));
-		auditWebProject(projectId, access.user.id, "member-left", {
-			userId: access.user.id,
-			role: from
-		}, tx);
-		tx.delete(row);
-	});
-	return webJson(e, { left: true });
-};
-/** Historique des changements d'accès du projet (ajouts, rôles, retraits, départs). */
-const HandleWebProjectMembersAudit = (e) => {
-	const { project } = requireWebProjectPermission(e, "members.manage"), page = Math.max(1, Math.min(1e4, Math.floor(Number(e.request.url.query().get("page")) || 1))), rows = $app.findRecordsByFilter("web_project_audit", "projectId={:id} && action ~ \"member-\"", "-created", 26, (page - 1) * 25, { id: project.id });
-	return webJson(e, {
-		page,
-		hasMore: rows.length > 25,
-		items: rows.slice(0, 25).map((r) => ({
-			id: r.id,
-			action: r.getString("action"),
-			actor: userSummary(r.getString("actorId")),
-			details: JSON.parse(r.getString("details") || "{}"),
-			created: r.getString("created")
-		}))
-	});
-};
-/**
-* Attribution des projets à un utilisateur par un superAdmin (même parcours que UserInstanceAccess pour les bases). GET
-* : tous les projets avec le rôle actuel de l'utilisateur. PUT { projects: [{ projectId, role }] } remplace l'ensemble
-* ; un projet absent de la liste est retiré, sauf s'il s'agit de son dernier propriétaire.
-*/
-const assignedUser = (e) => {
-	const id = e.request.pathValue("userId");
-	if (!ID$1.test(id || "")) throw new BadRequestError("Utilisateur invalide.");
-	try {
-		return $app.findRecordById("users", id);
-	} catch {
-		throw new NotFoundError("Utilisateur introuvable.");
-	}
-};
-const assignments = (user) => {
-	const roles = {};
-	for (const m of listWebMemberships(user)) if (isWebRole(m.role)) roles[m.projectId] = m.role;
-	return {
-		userId: user.id,
-		superAdmin: user.getBool("superAdmin"),
-		items: $app.findRecordsByFilter("web_projects", "", "name", 1e3, 0).map((row) => ({
-			projectId: row.id,
-			name: row.getString("name"),
-			repository: row.getString("repository"),
-			role: roles[row.id] || null
-		}))
-	};
-};
-const HandleWebUserProjectsGet = (e) => {
-	requirePlatformAdmin(e);
-	return webJson(e, assignments(assignedUser(e)));
-};
-const HandleWebUserProjectsPut = (e) => {
-	const actor = requirePlatformAdmin(e), user = assignedUser(e), input = webInput(e);
-	if (Object.keys(input).some((key) => key !== "projects") || !Array.isArray(input.projects) || input.projects.length > 1e3 || input.projects.some((p) => !p || typeof p !== "object" || Object.keys(p).some((key) => !["projectId", "role"].includes(key)) || !ID$1.test(p.projectId || "") || !isWebRole(p.role))) throw new BadRequestError("Liste attendue : [{ projectId, role }] avec un rôle viewer, developer, admin ou owner.");
-	const wanted = {};
-	for (const p of input.projects) wanted[p.projectId] = p.role;
-	$app.runInTransaction((tx) => {
-		const current = {};
-		for (const row of tx.findRecordsByFilter(WEB_MEMBERS, "user={:user}", "", 1e3, 0, { user: user.id })) current[row.getString("project")] = row;
-		for (const projectId of Object.keys(wanted)) {
-			try {
-				tx.findRecordById("web_projects", projectId);
-			} catch {
-				throw new BadRequestError("Projet introuvable.");
-			}
-			const role = wanted[projectId], row = current[projectId];
-			if (!row) {
-				const created = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS));
-				created.set("project", projectId);
-				created.set("user", user.id);
-				created.set("role", role);
-				created.set("invitedBy", actor.id);
-				tx.save(created);
-				auditWebProject(projectId, actor.id, "member-added", {
-					userId: user.id,
-					email: user.getString("email"),
-					role
-				}, tx);
-				continue;
-			}
-			const from = row.getString("role");
-			if (from === role) continue;
-			fail(webMemberChangeError("platform", {
-				kind: "change",
-				from,
-				role,
-				ownerCount: ownerCount(projectId, tx)
-			}));
-			row.set("role", role);
-			tx.save(row);
-			auditWebProject(projectId, actor.id, "member-role-changed", {
-				userId: user.id,
-				email: user.getString("email"),
-				from,
-				role
-			}, tx);
-		}
-		for (const projectId of Object.keys(current)) {
-			if (wanted[projectId]) continue;
-			const row = current[projectId], from = row.getString("role");
-			fail(webMemberChangeError("platform", {
-				kind: "remove",
-				from,
-				ownerCount: ownerCount(projectId, tx)
-			}));
-			auditWebProject(projectId, actor.id, "member-removed", {
-				userId: user.id,
-				email: user.getString("email"),
-				role: from
-			}, tx);
-			tx.delete(row);
-		}
-	});
-	return webJson(e, assignments(user));
-};
-
-//#endregion
-//#region ../common/instanceImages.ts
-/** Operator-owned image policy. This module is pure and can run in Node and PocketBase's JS VM. */
-const INSTANCE_IMAGE_ID = /^[a-z0-9]{15}$/;
-const INSTANCE_IMAGE_SHA = /^sha256:[a-f0-9]{64}$/;
-const INSTANCE_IMAGE_OVERRIDES_MAX_LENGTH = 32768;
-const INSTANCE_IMAGE_OVERRIDES_MAX_ENTRIES = 256;
-const invalid = () => /* @__PURE__ */ new Error("Invalid operator PH_INSTANCE_IMAGE_OVERRIDES configuration.");
-const parseInstanceImageOverrides = (raw) => {
-	const result = Object.create(null);
-	if (raw === void 0 || raw === "") return result;
-	if (typeof raw !== "string" || raw.length > 32768) throw invalid();
-	let value;
-	try {
-		value = JSON.parse(raw);
-	} catch {
-		throw invalid();
-	}
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
-	const entries = Object.entries(value);
-	if (entries.length > 256) throw invalid();
-	if ((raw.match(/"(?:\\.|[^"\\])*"\s*:/g) || []).length !== entries.length) throw invalid();
-	for (const [id, image] of entries) {
-		if (!INSTANCE_IMAGE_ID.test(id) || typeof image !== "string" || !INSTANCE_IMAGE_SHA.test(image)) throw invalid();
-		result[id] = image;
-	}
-	return result;
-};
-/** The private DB provider receives only assignments for the already-authorized database IDs. */
-const selectedInstanceImages = (ids, rawOverrides) => {
-	const overrides = parseInstanceImageOverrides(rawOverrides);
-	const selected = Object.create(null);
-	if (ids.length > 500 || ids.some((id) => !INSTANCE_IMAGE_ID.test(id))) throw new Error("Invalid database IDs.");
-	for (const id of ids) if (overrides[id]) selected[id] = overrides[id];
-	return selected;
 };
 
 //#endregion
@@ -25443,6 +25951,7 @@ const targetStates = (grants) => {
 			databaseImages: selectedInstanceImages(ids, $os.getenv("PH_INSTANCE_IMAGE_OVERRIDES")),
 			targetImage: image,
 			ids,
+			connectionLimits: readConnectionLimits(),
 			...$os.getenv("WEB_DB_TARGET_ROOT") ? { targetRoot: $os.getenv("WEB_DB_TARGET_ROOT") } : {},
 			...$os.getenv("WEB_DB_TARGET_SCRIPT") ? { targetScript: $os.getenv("WEB_DB_TARGET_SCRIPT") } : {}
 		})).combinedOutput()));
@@ -25465,6 +25974,7 @@ const HandleWebPrivateDatabaseWorker = (e) => {
 	const grants = workerRows(), targets = targetStates(grants);
 	return webJson(e, {
 		version: 1,
+		limits: readConnectionLimits(),
 		enabled: supported(),
 		applications: supported() ? activeApps($app).map((app) => app.id) : [],
 		bindings: grants.map(({ row, grant, ...item }) => ({
@@ -25481,6 +25991,7 @@ const HandleWebPrivateDatabaseBroker = (e) => {
 	const grants = workerRows(), targets = targetStates(grants);
 	return webJson(e, {
 		version: 1,
+		limits: readConnectionLimits(),
 		enabled: supported(),
 		applications: supported() ? activeApps($app).map((app) => app.id) : [],
 		bindings: grants.map(({ row, grant, token, ...item }) => {
@@ -25694,6 +26205,7 @@ exports.GuardWebDeletingRecord = GuardWebDeletingRecord;
 exports.GuardWebInstanceDomainCreate = GuardWebInstanceDomainCreate;
 exports.GuardWebInstanceDomainUpdate = GuardWebInstanceDomainUpdate;
 exports.HandleAccountActionLog = HandleAccountActionLog;
+exports.HandleDashboardServiceDelegate = HandleDashboardServiceDelegate;
 exports.HandleDashboardTotpAuth = HandleDashboardTotpAuth;
 exports.HandleDashboardTotpConfirm = HandleDashboardTotpConfirm;
 exports.HandleDashboardTotpDisable = HandleDashboardTotpDisable;
@@ -25782,10 +26294,14 @@ exports.HandleOperatorAdminTestBackupS3 = HandleOperatorAdminTestBackupS3;
 exports.HandleOperatorAdminTestSMTP = HandleOperatorAdminTestSMTP;
 exports.HandleOperatorAdminUpdateSettings = HandleOperatorAdminUpdateSettings;
 exports.HandleOperatorAdminUpdateUser = HandleOperatorAdminUpdateUser;
+exports.HandleOperatorDatabaseRequestLimits = HandleOperatorDatabaseRequestLimits;
 exports.HandleOperatorMonitoring = HandleOperatorMonitoring;
 exports.HandleOperatorMonitoringDeliveryConfig = HandleOperatorMonitoringDeliveryConfig;
 exports.HandleOperatorMonitoringUpdate = HandleOperatorMonitoringUpdate;
+exports.HandleOperatorRequestLimits = HandleOperatorRequestLimits;
+exports.HandleOperatorRequestLimitsPut = HandleOperatorRequestLimitsPut;
 exports.HandleOperatorResourceMetrics = HandleOperatorResourceMetrics;
+exports.HandleOperatorWebRequestLimit = HandleOperatorWebRequestLimit;
 exports.HandleOutpostUnsubscribe = HandleOutpostUnsubscribe;
 exports.HandleProcessNotification = HandleProcessNotification;
 exports.HandleProcessSingleNotification = HandleProcessSingleNotification;
@@ -25962,6 +26478,7 @@ exports.HandleWebWebhookDeliveries = HandleWebWebhookDeliveries;
 exports.HandleWebWorkerClaim = HandleWebWorkerClaim;
 exports.HandleWebWorkerProjectLimits = HandleWebWorkerProjectLimits;
 exports.HandleWebWorkerReport = HandleWebWorkerReport;
+exports.HandleWorkspaceOverview = HandleWorkspaceOverview;
 exports.InitializeDashboardTotp = InitializeDashboardTotp;
 exports.LIVE_PLATFORM_TOPIC = LIVE_PLATFORM_TOPIC;
 exports.LIVE_VIEW_STATS_TOPIC = LIVE_VIEW_STATS_TOPIC;
@@ -26054,6 +26571,7 @@ exports.instanceHostnameView = instanceHostnameView;
 exports.instanceOwnsHostname = instanceOwnsHostname;
 exports.instanceTransferBackupTools = instanceTransferBackupTools;
 exports.isWebPlatformAdmin = isWebPlatformAdmin;
+exports.issueInstanceConsoleTicket = issueInstanceConsoleTicket;
 exports.listAccessibleProjectIds = listAccessibleProjectIds;
 exports.listAccessibleWebAppIds = listAccessibleWebAppIds;
 exports.listWebGithubConnections = listWebGithubConnections;
@@ -26076,6 +26594,7 @@ exports.queueWebGitPush = queueWebGitPush;
 exports.readDockerMetricsSnapshot = readDockerMetricsSnapshot;
 exports.readOperatorSettings = readOperatorSettings;
 exports.readWebGithubSettings = readWebGithubSettings;
+exports.readWebRequestLimit = readWebRequestLimit;
 exports.reconcileWebGitSourceProject = reconcileWebGitSourceProject;
 exports.recordInstanceAction = recordInstanceAction;
 exports.recountLivePlatformStats = recountLivePlatformStats;
@@ -26101,6 +26620,7 @@ exports.restoreWebStorageBackup = restoreWebStorageBackup;
 exports.runtimeNeedsSource = runtimeNeedsSource;
 exports.runtimeProfile = runtimeProfile;
 exports.runtimeWorkerSnapshot = runtimeWorkerSnapshot;
+exports.saveWebUserProjects = saveWebUserProjects;
 exports.scrubWebCiCredentials = scrubWebCiCredentials;
 exports.sendLivePlatformStatsToClient = sendLivePlatformStatsToClient;
 exports.sendLiveViewStatsToClient = sendLiveViewStatsToClient;
@@ -26113,6 +26633,7 @@ exports.serializeWebGitSource = serializeWebGitSource;
 exports.serializeWebGithubConnection = serializeWebGithubConnection;
 exports.storageWorkerSnapshot = storageWorkerSnapshot;
 exports.validateRuntimeProfile = validateRuntimeProfile;
+exports.validateWebUserProjects = validateWebUserProjects;
 exports.verifyAndQueueWebDomain = verifyAndQueueWebDomain;
 exports.webActorCan = webActorCan;
 exports.webAlertSummary = webAlertSummary;

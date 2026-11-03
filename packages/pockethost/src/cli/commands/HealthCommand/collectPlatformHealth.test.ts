@@ -3,9 +3,25 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { httpProbe, readRows, readStatus } from './collectPlatformHealth'
+import { httpProbe, memoryAllocationStatus, monitoredFileServices, readRows, readStatus } from './collectPlatformHealth'
 
 describe('monitoring collector boundaries', () => {
+  it('alerts when automatic memory allocation stops or cannot measure a service', () => {
+    const now = Date.now()
+    expect(memoryAllocationStatus({ checkedAt: new Date(now - 46000).toISOString(), resources: [] }, now).state).toBe(
+      'error'
+    )
+    expect(memoryAllocationStatus({ checkedAt: new Date(now + 31000).toISOString(), resources: [] }, now).state).toBe(
+      'error'
+    )
+    expect(
+      memoryAllocationStatus({ checkedAt: new Date(now).toISOString(), resources: [{ decision: 'unavailable' }] }, now)
+        .state
+    ).toBe('warning')
+    expect(
+      memoryAllocationStatus({ checkedAt: new Date(now).toISOString(), resources: [{ decision: 'grow' }] }, now).state
+    ).toBe('ok')
+  })
   const cleanup: (() => Promise<void>)[] = []
   afterEach(async () => {
     for (const fn of cleanup.splice(0)) await fn()
@@ -54,5 +70,17 @@ describe('monitoring collector boundaries', () => {
     expect(pages).toBe(2)
     const tooMany = { collection: () => ({ getList: async () => ({ totalPages: 26, items: [] }) }) } as any
     await expect(readRows(tooMany, 'instances', 'id')).rejects.toThrow('bound')
+  })
+})
+
+describe('optional legacy FTPS monitoring', () => {
+  it('keeps existing FTP and SFTP checks when FTPS is enabled', () => {
+    expect(monitoredFileServices(false)).toEqual([
+      { process: 'edge-ftp', name: 'FTP' },
+      { process: 'edge-sftp', name: 'SFTP' },
+    ])
+  })
+  it('keeps SFTP checked when legacy FTPS is deliberately disabled', () => {
+    expect(monitoredFileServices(true)).toEqual([{ process: 'edge-sftp', name: 'SFTP' }])
   })
 })

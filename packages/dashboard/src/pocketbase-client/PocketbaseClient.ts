@@ -26,6 +26,7 @@ import {
   assertExists,
   createRestHelper,
 } from 'pockethost/common'
+import type { WebRole } from '../../../pockethost/src/common/webAccess'
 
 export type AuthToken = string
 export type AuthStoreProps = {
@@ -85,6 +86,9 @@ export type OperatorSMTPSettings = {
   hasPassword: boolean
 }
 
+export type OperatorWebProjectAssignment = { projectId: string; role: WebRole }
+export type OperatorWebProject = { id: string; name: string; repository: string }
+
 export type OperatorUser = {
   id: string
   email: string
@@ -100,6 +104,7 @@ export type OperatorUser = {
   updated: string
   instanceCount: number
   managedInstances: string[]
+  webProjects: OperatorWebProjectAssignment[]
 }
 
 export type OperatorInstance = { id: string; subdomain: string; uid: string }
@@ -108,6 +113,7 @@ export type OperatorAdminOverview = {
   settings: OperatorSettings
   users: OperatorUser[]
   instances: OperatorInstance[]
+  webProjects: OperatorWebProject[]
   stats: {
     totalUsers: number
     verifiedUsers: number
@@ -580,7 +586,10 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
   }
 
   const getTotpStatus = () =>
-    client.send<{ enabled: boolean; recoveryCodesRemaining: number }>('/api/account/totp', { method: 'GET' })
+    client.send<{ required: boolean; enabled: boolean; recoveryCodesRemaining: number }>('/api/account/totp', {
+      method: 'GET',
+      requestKey: null,
+    })
   const setupTotp = (password: string) =>
     client.send<{ secret: string; uri: string; qrSvg: string }>('/api/account/totp/setup', {
       method: 'POST',
@@ -1058,6 +1067,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     })
 
   const createOperatorUser = (data: {
+    sendWelcomeEmail?: boolean
     email: string
     password: string
     verified: boolean
@@ -1066,8 +1076,9 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
     subscription_quantity: number
     suspension: string
     managedInstances?: string[]
+    webProjects?: OperatorWebProjectAssignment[]
   }) =>
-    client.send<{ user: OperatorUser; warning?: string }>('/api/admin/users', {
+    client.send<{ user: OperatorUser; warning?: string; welcomeEmailSent?: boolean }>('/api/admin/users', {
       method: 'POST',
       body: data,
     })
@@ -1083,6 +1094,7 @@ export const createPocketbaseClient = (config: PocketbaseClientConfig) => {
       subscription_quantity: number
       suspension: string
       managedInstances: string[]
+      webProjects: OperatorWebProjectAssignment[]
     }>
   ) =>
     client.send<{ user: OperatorUser }>(`/api/admin/users/${id}`, {

@@ -48,9 +48,9 @@ def main():
     password = secrets.token_urlsafe(30)
     email = 'totp-test@example.invalid'
 
-    def request(base, path, token='', method='GET', body=None, expected=200):
+    def request(base, path, token='', method='GET', body=None, expected=200, headers=None):
         req = urllib.request.Request(base + path, method=method,
-            headers={'Content-Type': 'application/json', **({'Authorization': token} if token else {})},
+            headers={'Content-Type': 'application/json', **({'Authorization': token} if token else {}), **(headers or {})},
             data=None if body is None else json.dumps(body).encode())
         try:
             with urllib.request.urlopen(req, timeout=30) as response:
@@ -103,6 +103,7 @@ def main():
                 script += 'onRecordAuthRequest((e)=>require(`${__hooks}/mothership`).HandleDashboardTotpAuth(e), "users");\n'
                 for method, suffix, name in [('GET','', 'Status'),('POST','/setup','Setup'),('POST','/confirm','Confirm'),('POST','/disable','Disable'),('POST','/recovery','Regenerate')]:
                     script += f'routerAdd("{method}","/api/account/totp{suffix}",(e)=>require(`${{__hooks}}/mothership`).HandleDashboardTotp{name}(e),$apis.requireAuth("users"));\n'
+                script += 'routerAdd("POST","/api/web-apps/_platform/delegate",e=>require(`${__hooks}/mothership`).HandleDashboardServiceDelegate(e),$apis.requireAuth("_superusers"));\n'
                 (hooks / 'test.pb.js').write_text(script)
             (hooks / 'mint.pb.js').write_text('routerAdd("GET","/__test/unmarked/{collection}/{id}",(e)=>{const r=$app.findRecordById(e.request.pathValue("collection"),e.request.pathValue("id"));return e.json(200,{token:r.newAuthToken()})},$apis.requireSuperuserAuth());')
             # Apply migrations before starting the real HTTP process.
@@ -128,7 +129,22 @@ def main():
             token = auth['token']
             auth_url = f'/api/collections/{auth_collection}/auth-with-password'
             record_id = auth['record']['id']
-            assert request(base, api_status, token)['enabled'] is False
+            status = request(base, api_status, token)
+            assert status['enabled'] is False and status['required'] is (not native)
+            if not native:
+                request(base, '/api/collections/instances/records', token, expected=403)
+                refreshed = request(base, '/api/collections/users/auth-refresh', token, 'POST')
+                request(base, '/api/collections/instances/records', refreshed['token'], expected=403)
+                request(base, '/api/account/totp/disable', token, 'POST', {'password': password, 'code': '000000'}, expected=403)
+                delegation = request(base, '/api/web-apps/_platform/delegate', admin['token'], 'POST', {'userId': auth['record']['id']})
+                request(base, '/api/web-apps/_platform/delegate', token, 'POST', {'userId': auth['record']['id']}, expected=403)
+                request(base, '/api/web-apps/_platform/delegate', admin['token'], 'POST', {'userId': auth['record']['id']}, headers={'Via': 'proxy'}, expected=403)
+                delegated = delegation['token']
+                assert request(base, '/api/collections/instances/records', delegated)['items'] == []
+                request(base, '/api/collections/instances/records', delegated, headers={'X-Forwarded-For': '127.0.0.1'}, expected=403)
+                request(base, '/api/collections/users/auth-refresh', delegated, 'POST', expected=401)
+                report['checks']['dashboard_first_login_restricted_to_enrollment'] = True
+                report['checks']['dashboard_local_service_delegation_no_public_bypass'] = True
             request(base, api + '/setup', token, 'POST', {'password': 'wrong-password'}, expected=401)
             setup = request(base, api + '/setup', token, 'POST', {'password': password})
             assert len(setup['secret']) == 32 and setup['qrSvg'].startswith('<svg') and setup['uri'].startswith('otpauth://')
@@ -193,12 +209,20 @@ def main():
             root_token = token if native else admin['token']
             states = request(base, '/api/collections/ph_two_factor/records', root_token)['items']
             request(base, '/api/collections/ph_two_factor/records/' + states[0]['id'], root_token, 'PATCH', {'failures': 0, 'lockedUntil': ''})
-            disabled = request(base, api + '/disable', token, 'POST', {'password': password, 'code': renewed[2]})
-            assert request(base, api_status, disabled['token'])['enabled'] is False
-            login = request(base, auth_url, method='POST', body={'identity': email, 'password': password})
-            assert login['token']
+            if native:
+                disabled = request(base, api + '/disable', token, 'POST', {'password': password, 'code': renewed[2]})
+                assert request(base, api_status, disabled['token'])['enabled'] is False
+                login = request(base, auth_url, method='POST', body={'identity': email, 'password': password})
+                assert login['token']
+            else:
+                request(base, api + '/disable', token, 'POST', {'password': password, 'code': renewed[2]}, expected=403)
+                assert request(base, api_status, token)['enabled'] is True
+                delegation = request(base, '/api/web-apps/_platform/delegate', admin['token'], 'POST', {'userId': record_id})
+                request(base, '/api/collections/instances/records', delegation['token'])
+                request(base, '/api/collections/instances/records', delegation['token'], headers={'Forwarded': 'for=127.0.0.1'}, expected=401)
+                report['checks']['dashboard_mandatory_totp_cannot_be_disabled'] = True
             report['checks'][realm + '_restart_authenticator_replay_and_lockout'] = True
-            report['checks'][realm + '_recovery_rotation_and_disable'] = True
+            report['checks'][realm + '_recovery_rotation_and_disable_policy'] = True
             fixtures.append({'base': base, 'realm': realm, 'email': email, 'password': password})
         report['result'] = 'passed'
         (root / 'browser-fixture.json').write_text(json.dumps(fixtures))

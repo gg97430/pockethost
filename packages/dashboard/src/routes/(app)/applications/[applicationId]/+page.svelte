@@ -56,6 +56,9 @@
   let error = ''
   let loadError = ''
   let message = ''
+  let renaming = false
+  let renamedName = ''
+  let renameInput: HTMLInputElement | undefined
   let mounted = false
   let disposed = false
   let observedId = ''
@@ -140,6 +143,7 @@
   $: if (mounted && applicationId !== observedId) {
     observedId = applicationId || ''
     initialized = false
+    renaming = false
     app = null
     deployments = []
     recentDeployments = []
@@ -280,6 +284,37 @@
               : 'La demande de démarrage est dans la file de traitement.'
     } catch (e) {
       error = webError(e)
+    } finally {
+      mutation = ''
+    }
+  }
+  const beginRename = async () => {
+    renamedName = app?.name || ''
+    renaming = true
+    await tick()
+    renameInput?.focus()
+    renameInput?.select()
+  }
+  const rename = async (event: SubmitEvent) => {
+    event.preventDefault()
+    if (!app || !canConfigure || mutation || !renamedName.trim()) return
+    const id = applicationId
+    const previousName = app.name
+    mutation = 'rename'
+    error = ''
+    message = ''
+    try {
+      const value = await webRequest<{ app: WebApp }>(`/${id}`, {
+        method: 'PATCH',
+        body: { name: renamedName.trim() },
+      })
+      if (applicationId !== id) return
+      app = value.app
+      if (name === previousName) name = value.app.name
+      renaming = false
+      message = 'Application renommée.'
+    } catch (e) {
+      if (applicationId === id) error = webError(e)
     } finally {
       mutation = ''
     }
@@ -631,7 +666,36 @@
     <div class="web-title">
       <span class="web-eyebrow">{app.runtimeKind === 'worker' ? 'Worker' : 'Application web'}</span>
       <div class="web-actions">
-        <h1>{app.name}</h1>
+        {#if renaming}
+          <form class="web-actions" aria-label="Renommer l’application" onsubmit={rename}>
+            <label class="web-field">
+              <input
+                aria-label="Nom de l’application"
+                bind:this={renameInput}
+                bind:value={renamedName}
+                required
+                maxlength="80"
+                disabled={!!mutation}
+                onkeydown={(event) => {
+                  if (event.key === 'Escape' && !mutation) renaming = false
+                }}
+              />
+            </label>
+            <button
+              class="web-button web-button--primary"
+              type="submit"
+              disabled={!!mutation || !renamedName.trim() || renamedName.trim() === app.name}
+              >{mutation === 'rename' ? 'Enregistrement…' : 'Enregistrer'}</button
+            >
+            <button class="web-button" type="button" disabled={!!mutation} onclick={() => (renaming = false)}
+              >Annuler</button
+            >
+          </form>
+        {:else}
+          <h1>{app.name}</h1>
+          {#if canConfigure}<button class="web-button" disabled={!!mutation} onclick={beginRename}>Renommer</button
+            >{/if}
+        {/if}
         <WebAppStatus
           status={app.status}
           online={app.status === 'running'}

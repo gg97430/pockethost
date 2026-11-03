@@ -20,6 +20,7 @@ import stat
 import struct
 import time
 import urllib.parse
+from web_private_db_limits import limits
 
 API_PATH = '/api/web-apps/_private-db/broker'
 IDENT = re.compile(r'^[a-z0-9]{15}$')
@@ -170,7 +171,7 @@ class Session:
 class Broker:
     def __init__(self, directory, control='http://127.0.0.1:8091', secret='', *,
                  poll_seconds=3, stale_seconds=10, handshake_seconds=2, idle_seconds=120,
-                 max_connections=512, max_app_connections=128, max_binding_connections=32,
+                 max_connections=512, max_app_connections=128, max_binding_connections=128,
                  targets_directory=TARGETS_ROOT, target_uid=10001, target_gid=1000, target_directory_uid=1000):
         self.directory = pathlib.Path(directory).absolute()
         self.control, self.secret = control, secret
@@ -201,6 +202,10 @@ class Broker:
 
     async def apply_configuration(self, value):
         applications, bindings = validate_configuration(value, self.targets_directory)
+        if 'limits' in value:
+            policy = limits(value['limits'])
+            self.max_connections, self.max_app_connections = policy['total'], policy['perApp']
+            self.max_binding_connections = policy['perBinding']
         if self.directory.is_symlink() or self.directory.resolve() != self.directory:
             raise InvalidConfiguration('Socket directory')
         self.directory.mkdir(mode=0o710, parents=True, exist_ok=True)

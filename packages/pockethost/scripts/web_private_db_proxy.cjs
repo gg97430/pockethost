@@ -58,7 +58,22 @@ function configuration(path) {
     ports.add(item.port)
     return { id: item.id, port: item.port, token: item.token, revision: item.revision }
   })
-  return { bindings, hash: crypto.createHash('sha256').update(raw).digest('hex') }
+  const limits = value.limits
+  if (
+    limits !== undefined &&
+    (!limits ||
+      typeof limits !== 'object' ||
+      Array.isArray(limits) ||
+      Object.keys(limits).sort().join(',') !== 'perApp,perBinding' ||
+      !Number.isInteger(limits.perApp) ||
+      limits.perApp < 1 ||
+      limits.perApp > 256 ||
+      !Number.isInteger(limits.perBinding) ||
+      limits.perBinding < 1 ||
+      limits.perBinding > limits.perApp)
+  )
+    throw Error('limits')
+  return { bindings, limits, hash: crypto.createHash('sha256').update(raw).digest('hex') }
 }
 
 function check(options) {
@@ -134,7 +149,10 @@ function createProxy(options = {}) {
     pollMs: 2000,
     handshakeMs: 2000,
     idleMs: 120000,
-    perBinding: 32,
+    // Normal SSR read bursts and HTTP keep-alive share a binding. The existing
+    // per-application cap of 128 still bounds the complete proxy.
+    perBinding: 128,
+    perApp: 128,
     ...options,
   }
   const servers = new Map(),
@@ -168,7 +186,7 @@ function createProxy(options = {}) {
   }
   function connect(entry, client) {
     client.pause()
-    if (stopping || entry.closed || entry.connections >= options.perBinding || connections.size >= 128) {
+    if (stopping || entry.closed || entry.connections >= options.perBinding || connections.size >= options.perApp) {
       client.destroy()
       return
     }
@@ -266,6 +284,7 @@ function createProxy(options = {}) {
     try {
       const config = configuration(options.config),
         wanted = new Map(config.bindings.map((binding) => [binding.id, binding]))
+      if (config.limits) Object.assign(options, config.limits)
       for (const [id, entry] of servers) {
         const replacement = wanted.get(id)
         if (!replacement || JSON.stringify(entry.binding) !== JSON.stringify(replacement)) {

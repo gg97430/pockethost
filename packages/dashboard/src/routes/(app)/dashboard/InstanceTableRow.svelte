@@ -1,4 +1,5 @@
 <script lang="ts">
+  import InstanceProjectLabel from '$components/InstanceProjectLabel.svelte'
   import { goto } from '$app/navigation'
   import { INSTANCE_ADMIN_URL, PUBLIC_APEX_DOMAIN } from '$lib/appEnv'
   import { client } from '$src/pocketbase-client'
@@ -52,6 +53,7 @@
           <span class="instance-table-name-text">{displayName}</span>
           <span class="instance-table-sub">.{PUBLIC_APEX_DOMAIN}</span>
         </button>
+        <InstanceProjectLabel {instance} />
       </div>
     </div>
   </td>

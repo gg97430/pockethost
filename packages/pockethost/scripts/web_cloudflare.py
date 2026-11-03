@@ -46,11 +46,11 @@ def public_ownership(hostname,ownership):
         values=[''.join(re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',value))for value in texts]
     except Exception:raise ValueError('Le TXT public de vérification est indisponible. Attendez sa propagation DNS.')from None
     if ownership not in values:raise ValueError('Le TXT public de vérification est absent ou incorrect. Attendez sa propagation DNS.')
-def provider_identity(current,hostname,public_ip,ownership,record_id=None,proxied=None):
+def provider_identity(current,hostname,public_ip,ownership,record_id=None,proxied=None,zone_name=None):
     hostrows=[row for row in current if row['name']==hostname]
     proofrows=[row for row in current if row['name']=='_pockethost.'+hostname]
     addresses=[row for row in hostrows if row['type']=='A']
-    if any(row['type']in('AAAA','CNAME','NS')for row in hostrows):raise ValueError('Le nom doit contenir une seule adresse A du serveur, sans AAAA, CNAME ni délégation NS.')
+    if any(row['type']in('AAAA','CNAME')or(row['type']=='NS'and hostname!=zone_name)for row in hostrows):raise ValueError('Le nom doit contenir une seule adresse A du serveur, sans AAAA, CNAME ni délégation NS.')
     if len(addresses)!=1 or addresses[0].get('content')!=public_ip:raise ValueError('L’enregistrement A Cloudflare ne pointe pas uniquement vers ce serveur. Relisez les DNS.')
     row=addresses[0]
     if type(row.get('proxied'))is not bool or(proxied is not None and row['proxied']is not proxied):raise ValueError('Le mode proxy Cloudflare ne correspond pas au changement demandé. Relisez les DNS.')
@@ -74,7 +74,7 @@ def preview(token,hostname,public_ip,ownership,proxied=False):
     if not zone:raise ValueError('Ce domaine ne fait partie d’aucune zone Cloudflare active accessible avec ce jeton.')
     zid=identifier(zone['id']);txtname='_pockethost.'+hostname
     current=current_records(token,zid,hostname)
-    if any(r['type']=='NS' for r in current):raise ValueError('Ce nom contient une délégation NS. Gérez cette délégation dans Cloudflare avant de continuer.')
+    if any(r['type']=='NS' and (r['name']!=hostname or hostname!=zone['name']) for r in current):raise ValueError('Ce nom contient une délégation NS. Gérez cette délégation dans Cloudflare avant de continuer.')
     batch={'deletes':[],'patches':[],'posts':[]};changes=[]
     def delete(r):
         batch['deletes'].append({'id':r['id']});changes.append({'action':'delete','before':r,'after':None})
@@ -102,22 +102,22 @@ def verify(token,hostname,public_ip,ownership,proxied=False,zone_id=None,record_
     if record_id is not None:identifier(record_id)
     plan=preview(token,hostname,public_ip,ownership,proxied)
     if zone_id is not None and zone_id!=plan['zone']['id']:raise ValueError('La zone Cloudflare a changé depuis sa configuration. Aucun proxy forcé.')
-    row=provider_identity(plan['current'],hostname,public_ip,ownership,record_id)
+    row=provider_identity(plan['current'],hostname,public_ip,ownership,record_id,zone_name=plan['zone']['name'])
     public_ownership(hostname,ownership)
     return {'verified':True,'zoneId':plan['zone']['id'],'recordId':row['id'],'proxied':row['proxied']}
 def activate(token,hostname,public_ip,ownership,zone_id,record_id):
     identifier(zone_id);identifier(record_id)
     plan=preview(token,hostname,public_ip,ownership,True)
     if zone_id!=plan['zone']['id']:raise ValueError('La zone Cloudflare a changé depuis sa configuration. Aucun proxy forcé.')
-    before=provider_identity(plan['current'],hostname,public_ip,ownership,record_id)
+    before=provider_identity(plan['current'],hostname,public_ip,ownership,record_id,zone_name=plan['zone']['name'])
     public_ownership(hostname,ownership)
-    fresh=provider_identity(current_records(token,zone_id,hostname),hostname,public_ip,ownership,record_id)
+    fresh=provider_identity(current_records(token,zone_id,hostname),hostname,public_ip,ownership,record_id,zone_name=plan['zone']['name'])
     # Re-read the exact pinned A immediately before the only permitted write.
     latest=request(token,'/zones/'+zone_id+'/dns_records/'+record_id)['result']
     if before!=fresh or clean(latest)!=before:raise ValueError('L’enregistrement A Cloudflare a changé pendant la vérification. Aucun proxy forcé.')
     if not before['proxied']:request(token,'/zones/'+zone_id+'/dns_records/batch',{'patches':[{'id':record_id,'proxied':True}]})
     # Never compensate by rewriting on error: preserve concurrent external changes.
-    provider_identity(current_records(token,zone_id,hostname),hostname,public_ip,ownership,record_id,True)
+    provider_identity(current_records(token,zone_id,hostname),hostname,public_ip,ownership,record_id,True,zone_name=plan['zone']['name'])
     public_ownership(hostname,ownership);origin_tls(hostname)
     return {'verified':True,'activated':True,'zoneId':zone_id,'recordId':record_id,'proxied':True}
 def run(data):
@@ -133,7 +133,7 @@ def run(data):
     if plan['changes']:request(data['token'],'/zones/'+plan['zone']['id']+'/dns_records/batch',plan['batch'])
     # Batch is atomic in Cloudflare's database, but public DNS propagation is asynchronous.
     previous=next((row['id']for row in plan['current']if row['name']==plan['hostname']and row['type']=='A'),None)
-    row=provider_identity(current_records(data['token'],plan['zone']['id'],plan['hostname']),plan['hostname'],data['publicIp'],data['ownershipValue'],previous,proxied)
+    row=provider_identity(current_records(data['token'],plan['zone']['id'],plan['hostname']),plan['hostname'],data['publicIp'],data['ownershipValue'],previous,proxied,zone_name=plan['zone']['name'])
     return {'applied':True,'changes':len(plan['changes']),'hostname':plan['hostname'],'zone':plan['zone']['name'],'zoneId':plan['zone']['id'],'recordId':row['id'],'proxied':row['proxied']}
 if __name__=='__main__':
     signal.signal(signal.SIGALRM,lambda *args:(_ for _ in ()).throw(TimeoutError()));signal.alarm(45)

@@ -137,22 +137,22 @@ export const WEB_NOTIFICATION_LABELS: Record<WebNotificationEvent, { title: stri
     tab: '',
   },
   app_deployment_failed: {
-    title: 'Échec de déploiement (copie plateforme)',
+    title: 'Échec de déploiement',
     sentence: 'Un déploiement d’application a échoué.',
     tab: 'deployments',
   },
   app_deployment_succeeded: {
-    title: 'Déploiement réussi (copie plateforme)',
+    title: 'Déploiement réussi',
     sentence: 'La nouvelle version de l’application a été publiée et a passé le contrôle de santé.',
     tab: 'deployments',
   },
   app_backup_failed: {
-    title: 'Échec de sauvegarde (copie plateforme)',
+    title: 'Échec de sauvegarde',
     sentence: 'Une sauvegarde d’application a échoué.',
     tab: 'backups',
   },
   app_health_degraded: {
-    title: 'Site indisponible (copie plateforme)',
+    title: 'Site indisponible',
     sentence: 'Un site ne répond plus au contrôle de santé.',
     tab: 'health',
   },

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Test operator administration against disposable PocketBase and a local-only SMTP capture server."""
+from email.parser import BytesParser
+from email import policy as email_policy
 import argparse,json,os,pathlib,secrets,shutil,socket,socketserver,subprocess,tempfile,threading,time,urllib.request,urllib.error
 parser=argparse.ArgumentParser();parser.add_argument('--source',required=True,type=pathlib.Path);parser.add_argument('--pocketbase',required=True);args=parser.parse_args()
 os.umask(0o077);root=pathlib.Path(tempfile.mkdtemp(prefix='ph-admin-test-'));process=None
 captured=[]
+reject_delivery=False
 checks=[]
 class SMTP(socketserver.StreamRequestHandler):
  def handle(self):
@@ -16,6 +19,7 @@ class SMTP(socketserver.StreamRequestHandler):
     else:lines.append(line)
    elif line.upper().startswith(b'EHLO'):self.wfile.write(b'250-localhost\r\n250-AUTH PLAIN LOGIN\r\n250 SIZE 1000000\r\n')
    elif line.upper().startswith(b'AUTH'):self.wfile.write(b'535 5.7.8 credentials rejected\r\n')
+   elif reject_delivery and line.upper().startswith(b'MAIL FROM'):self.wfile.write(b'451 delivery unavailable\r\n')
    elif line.upper().startswith(b'DATA'):data=True;lines=[];self.wfile.write(b'354 go\r\n')
    elif line.upper().startswith(b'QUIT'):self.wfile.write(b'221 bye\r\n');return
    else:self.wfile.write(b'250 ok\r\n')
@@ -34,13 +38,13 @@ def req(path,token='',body=None,method=None,status=200):
 try:
  source=args.source/'packages/pockethost/src/mothership-app';migrations=root/'migrations';shutil.copytree(source/'pb_migrations',migrations);hooks=root/'hooks';hooks.mkdir();shutil.copy(source/'pb_hooks/mothership.js',hooks/'mothership.js')
  script='onBootstrap(e=>{e.next();require(`${__hooks}/mothership`).InitializeDashboardTotp()});\nrouterUse(e=>require(`${__hooks}/mothership`).GuardDashboardTotp(e));\n'
- routes=[('GET','/api/instance/{id}/overview','HandleInstanceOverview'),('PUT','/api/instance/{id}','HandleInstanceUpdate'),('GET','/api/instances/metrics','HandleInstancesMetrics'),('GET','/api/instance/{id}/monitoring','HandleInstanceMonitoringGet'),('GET','/api/instance/{id}/backups','HandleInstanceBackupsList'),('GET','/api/instance/{id}/actions','HandleInstanceActionLog'),('POST','/api/instance/{id}/console','HandleInstanceConsoleTicket'),('POST','/api/instance/{id}/console/consume','HandleInstanceConsoleConsume'),('GET','/api/admin/overview','HandleOperatorAdminOverview'),('POST','/api/admin/users','HandleOperatorAdminCreateUser'),('PATCH','/api/admin/users/{id}','HandleOperatorAdminUpdateUser'),('PUT','/api/admin/settings','HandleOperatorAdminUpdateSettings'),('POST','/api/admin/settings/smtp/test','HandleOperatorAdminTestSMTP'),('POST','/api/admin/settings/backup-s3/test','HandleOperatorAdminTestBackupS3'),('GET','/api/admin/disk-cleanup','HandleOperatorAdminDiskCleanupPreview'),('POST','/api/admin/disk-cleanup','HandleOperatorAdminDiskCleanupRun')]
+ routes=[('GET','/api/web-access/me','HandleWebAccessMe'),('PUT','/api/web-access/users/{userId}/projects','HandleWebUserProjectsPut'),('GET','/api/instance/{id}/overview','HandleInstanceOverview'),('PUT','/api/instance/{id}','HandleInstanceUpdate'),('GET','/api/instances/metrics','HandleInstancesMetrics'),('GET','/api/instance/{id}/monitoring','HandleInstanceMonitoringGet'),('GET','/api/instance/{id}/backups','HandleInstanceBackupsList'),('GET','/api/instance/{id}/actions','HandleInstanceActionLog'),('POST','/api/instance/{id}/console','HandleInstanceConsoleTicket'),('POST','/api/instance/{id}/console/consume','HandleInstanceConsoleConsume'),('GET','/api/admin/overview','HandleOperatorAdminOverview'),('POST','/api/admin/users','HandleOperatorAdminCreateUser'),('PATCH','/api/admin/users/{id}','HandleOperatorAdminUpdateUser'),('PUT','/api/admin/settings','HandleOperatorAdminUpdateSettings'),('POST','/api/admin/settings/smtp/test','HandleOperatorAdminTestSMTP'),('POST','/api/admin/settings/backup-s3/test','HandleOperatorAdminTestBackupS3'),('GET','/api/admin/disk-cleanup','HandleOperatorAdminDiskCleanupPreview'),('POST','/api/admin/disk-cleanup','HandleOperatorAdminDiskCleanupRun')]
  for method,path,handler in routes:
   script+=f'routerAdd({json.dumps(method)},{json.dumps(path)},e=>{{try{{return require(`${{__hooks}}/mothership`).{handler}(e)}}catch(error){{return e.json(error.status||500,{{message:String(error),data:JSON.parse(JSON.stringify(error))}})}}}},$apis.requireAuth("users"));\n'
  script+='onModelValidate(e=>{if(e.model.tableName()==="_params"){let fail=false;try{$os.stat($os.getenv("DATA_ROOT")+"/reject-settings");fail=true}catch{}if(fail)throw new Error("Simulated native settings validation failure")}e.next()});\n'
  (hooks/'test.pb.js').write_text(script)
  tools=root/'bin';tools.mkdir();docker=tools/'docker';docker.write_text('#!/usr/bin/env python3\nimport pathlib,sys\nif pathlib.Path('+repr(str(root/'docker-fail'))+').exists():sys.exit(1)\nprint("container000001")\n');docker.chmod(0o700)
- env=dict(os.environ,DATA_ROOT=str(root/'data'),APP_URL=base,APEX_DOMAIN='example.invalid',PH_SUPPORT_EMAIL='support@example.invalid');env.pop('PH_SECRET',None);env['PATH']=str(tools)+':'+env['PATH']
+ env=dict(os.environ,WEB_APPS_ENABLED='true',DATA_ROOT=str(root/'data'),APP_URL=base,APEX_DOMAIN='example.invalid',PH_SUPPORT_EMAIL='support@example.invalid');env.pop('PH_SECRET',None);env['PATH']=str(tools)+':'+env['PATH']
  password='Test-'+secrets.token_urlsafe(30);email='admin@example.invalid';db=root/'pb_data'
  subprocess.run([args.pocketbase,'superuser','upsert',email,password,'--dir',str(db),'--hooksDir',str(root/'empty-hooks'),'--migrationsDir',str(migrations)],check=True,capture_output=True,env=env)
  log=(root/'process.log').open('wb');process=subprocess.Popen([args.pocketbase,'serve','--dir',str(db),'--hooksDir',str(hooks),'--migrationsDir',str(migrations),'--http',f'127.0.0.1:{port}'],env=env,stdout=log,stderr=subprocess.STDOUT)
@@ -105,9 +109,80 @@ try:
  req('/api/admin/users',token,{'email':'spaces@example.invalid','password':spaced,'verified':True})
  req('/api/collections/users/auth-with-password',body={'identity':'spaces@example.invalid','password':spaced})
  checks.append('literal_user_password_preserved')
+ # Welcome mail is explicit, single-recipient, branded and preserves the literal initial password.
+ count=len(captured)
+ optout=req('/api/admin/users',token,{'email':'optout@example.invalid','password':password,'verified':True,'sendWelcomeEmail':False})
+ assert optout['welcomeEmailSent']is False and len(captured)==count
+ literal_mail_password='  Pass<&"word-123  '
+ welcome=req('/api/admin/users',token,{'email':'welcome@example.invalid','password':literal_mail_password,'verified':True,'sendWelcomeEmail':True})
+ assert welcome['welcomeEmailSent']is True and not welcome['warning']and len(captured)==count+1
+ mail=BytesParser(policy=email_policy.default).parsebytes(captured[-1])
+ assert str(mail['To'])=='welcome@example.invalid'and mail['Cc']is None and mail['Bcc']is None
+ plain=mail.get_body(preferencelist=('plain',)).get_content();html=mail.get_body(preferencelist=('html',)).get_content()
+ assert literal_mail_password in plain and 'Pass&lt;&amp;&quot;word-123' in html and 'KOLAB' in html and base+'/login' in html
+ assert literal_mail_password not in json.dumps(welcome)and 'password'not in welcome['user']
+ user_data=req('/api/collections/users/records/'+welcome['user']['id'],su);assert literal_mail_password not in json.dumps(user_data)
+ checks.append('welcome_opt_in_single_recipient_branded_html_plaintext_and_no_password_response_or_record')
+ count=len(captured)
+ unverified=req('/api/admin/users',token,{'email':'confirm-welcome@example.invalid','password':password,'verified':False,'sendWelcomeEmail':True})
+ assert unverified['welcomeEmailSent']and len(captured)==count+1
+ mail=BytesParser(policy=email_policy.default).parsebytes(captured[-1]);plain=mail.get_body(preferencelist=('plain',)).get_content()
+ import re
+ verification=re.search(r'/login/confirm-account/([A-Za-z0-9_.-]+)',plain).group(1)
+ req('/api/collections/users/confirm-verification',body={'token':verification},status=204)
+ assert req('/api/collections/users/records/'+unverified['user']['id'],su)['verified']is True
+ checks.append('welcome_combines_native_email_verification_without_a_second_message')
+ count=len(captured);reject_delivery=True
+ failed=req('/api/admin/users',token,{'email':'failed-welcome@example.invalid','password':password,'verified':True,'sendWelcomeEmail':True})
+ reject_delivery=False
+ assert failed['user']['email']=='failed-welcome@example.invalid'and failed['warning']and not failed['welcomeEmailSent']and len(captured)==count
+ req('/api/collections/users/auth-with-password',body={'identity':'failed-welcome@example.invalid','password':password})
+ req('/api/admin/users',token,{'email':'invalid-optin@example.invalid','password':password,'verified':True,'sendWelcomeEmail':'yes'},status=400)
+ assert not req('/api/collections/users/records?filter=email%3D%22invalid-optin%40example.invalid%22',su)['items']
+ req('/api/admin/settings',token,{'smtp':{'enabled':False}},'PUT')
+ req('/api/admin/users',token,{'email':'missing-smtp@example.invalid','password':password,'verified':True,'sendWelcomeEmail':True},status=400)
+ assert not req('/api/collections/users/records?filter=email%3D%22missing-smtp%40example.invalid%22',su)['items']
+ req('/api/admin/settings',token,{'smtp':{'enabled':True}},'PUT')
+ checks.append('welcome_smtp_failure_keeps_account_and_reports_warning_missing_smtp_or_invalid_flag_prevent_creation')
+
  edited=req('/api/admin/users/'+created['id'],token,{'subscription_quantity':7,'suspension':'Test suspendu'},'PATCH')['user'];assert edited['subscription_quantity']==7 and edited['suspension']=='Test suspendu'
  normal=req('/api/collections/users/auth-with-password',body={'identity':'created@example.invalid','password':password})['token']
  req('/api/admin/overview',normal,status=403);req('/api/admin/settings',normal,{'notes':'forbidden'},'PUT',403);req('/api/admin/overview',status=401)
+ before_forbidden=len(captured)
+ req('/api/admin/users',normal,{'email':'forbidden-welcome@example.invalid','password':password,'sendWelcomeEmail':True},status=403)
+ assert len(captured)==before_forbidden
+ checks.append('welcome_mail_cannot_be_triggered_by_non_admin')
+ # Hosting grants are saved atomically with the account, through the same membership policy.
+ project=req('/api/collections/web_projects/records',su,{'name':'Hosting access fixture','repository':'team/site'})
+ unrelated=req('/api/collections/web_projects/records',su,{'name':'Other hosting fixture','repository':'other/site'})
+ grant={'projectId':project['id'],'role':'developer'}
+ host=req('/api/admin/users',token,{'email':'hosting@example.invalid','password':password,'verified':True,'subscription_quantity':0,'webProjects':[grant]})['user']
+ assert host['webProjects']==[grant] and host['managedInstances']==[]
+ hosting_token=req('/api/collections/users/auth-with-password',body={'identity':host['email'],'password':password})['token']
+ access=req('/api/web-access/me',hosting_token)
+ assert [p['id'] for p in access['projects']]==[project['id']]
+ caps=access['projects'][0]['capabilities'];assert caps['app.deploy'] and not caps['terminal.open'] and not caps['project.delete']
+ req('/api/admin/users/'+host['id'],hosting_token,{'webProjects':[{'projectId':unrelated['id'],'role':'owner'}]},'PATCH',403)
+ req('/api/admin/users/'+host['id'],token,{'subscription_quantity':3},'PATCH')
+ assert req('/api/web-access/me',hosting_token)['projects'][0]['memberRole']=='developer'
+ for invalid in [[{'projectId':'missing00000000','role':'viewer'}],[{'projectId':project['id'],'role':'platform'}],[grant,grant],[{'projectId':[project['id']],'role':'viewer'}]]:
+  req('/api/admin/users',token,{'email':'invalid-hosting@example.invalid','password':password,'webProjects':invalid},status=400)
+  assert req('/api/collections/users/records?filter=email="invalid-hosting@example.invalid"',su)['totalItems']==0
+ req('/api/admin/users/'+host['id'],token,{'subscription_quantity':999,'webProjects':[{'projectId':'missing00000000','role':'viewer'}]},'PATCH',400)
+ after=next(u for u in req('/api/admin/overview',token)['users'] if u['id']==host['id']);assert after['subscription_quantity']==3 and after['webProjects']==[grant]
+ owner={'projectId':project['id'],'role':'owner'}
+ req('/api/admin/users/'+host['id'],token,{'webProjects':[owner]},'PATCH')
+ req('/api/admin/users/'+host['id'],token,{'webProjects':[],'subscription_quantity':999},'PATCH',400)
+ assert req('/api/web-access/me',hosting_token)['projects'][0]['memberRole']=='owner'
+ req('/api/web-access/users/'+host['id']+'/projects',token,{'projects':[]},'PUT',400)
+ req('/api/web-access/users/'+admin['id']+'/projects',token,{'projects':[owner]},'PUT')
+ req('/api/admin/users/'+host['id'],token,{'webProjects':[]},'PATCH')
+ assert req('/api/web-access/me',hosting_token)['projects']==[]
+ req('/api/admin/users/'+host['id'],token,{'webProjects':[grant]},'PATCH')
+ assert req('/api/web-access/me',hosting_token)['projects'][0]['memberRole']=='developer'
+ overview=req('/api/admin/overview',token)
+ assert {p['id'] for p in overview['webProjects']}=={project['id'],unrelated['id']}
+ checks.append('hosting_creation_roles_isolation_revocation_last_owner_and_atomic_rollback')
  # Only disposable directories are eligible; Docker is simulated for fail-closed tests.
  owned=req('/api/collections/instances/records',su,{'uid':admin['id'],'subdomain':'owned-test','version':'0.39.*','power':False,'status':'idle'})
  # Additional access never changes the owner; exercise actual native rules and dashboard endpoints.
@@ -143,8 +218,10 @@ try:
  global_user=req('/api/admin/users',token,{'email':'global@example.invalid','password':password,'verified':True,'superAdmin':True,'managedInstances':[owned['id']]})['user']
  global_token=req('/api/collections/users/auth-with-password',body={'identity':global_user['email'],'password':password})['token']
  assert global_user['superAdmin'] is True
+ global_access=req('/api/web-access/me',global_token);assert global_access['allProjects'] and global_access['isPlatformAdmin'] and all(global_access['globalCapabilities'].values())
  assert len(req('/api/collections/instances/records',global_token)['items'])==2
  req('/api/admin/users/'+global_user['id'],token,{'superAdmin':False},'PATCH')
+ demoted_access=req('/api/web-access/me',global_token);assert not demoted_access['allProjects'] and not demoted_access['isPlatformAdmin'] and demoted_access['projects']==[]
  assert {r['id'] for r in req('/api/collections/instances/records',global_token)['items']}=={owned['id']}
  req('/api/admin/users/'+global_user['id'],token,{'suspension':'blocked'},'PATCH')
  assert not req('/api/collections/instances/records',global_token)['items']

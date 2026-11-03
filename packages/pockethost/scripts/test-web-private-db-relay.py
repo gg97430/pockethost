@@ -236,6 +236,28 @@ class SocketTests(unittest.IsolatedAsyncioTestCase):
         self.broker.max_app_connections = 1
         _, _, busy = await self.connect(); self.assertEqual(busy, b'ERR BUSY\n')
 
+    async def test_default_binding_allows_a_normal_parallel_server_render_burst(self):
+        # A page can perform dozens of independent reads while keep-alive
+        # connections from previous requests remain open. No live DB is used.
+        for _ in range(48):
+            reader, writer, result = await self.connect()
+            self.assertEqual(result, b'OK\n')
+            writer.write(b'page');await writer.drain()
+            self.assertEqual(await asyncio.wait_for(reader.readexactly(4),1),b'page')
+        self.assertLessEqual(len(self.broker.sessions),self.broker.max_app_connections)
+
+    async def test_live_policy_keeps_existing_streams_and_bounds_new_ones(self):
+        reader, writer, _ = await self.connect()
+        value = config(self.target)
+        value['limits'] = {'total': 4, 'perApp': 2, 'perBinding': 1, 'perDatabase': 2}
+        await self.broker.apply_configuration(value)
+        writer.write(b'kept'); await writer.drain()
+        self.assertEqual(await reader.readexactly(4), b'kept')
+        self.assertEqual((await self.connect())[2], b'ERR BUSY\n')
+        value['limits']['perBinding'] = 2
+        await self.broker.apply_configuration(value)
+        self.assertEqual((await self.connect())[2], b'OK\n')
+
     async def test_socket_collisions_are_not_deleted_and_removed_apps_disconnect(self):
         third = 'f' * 15; path = self.broker.socket_path(third); path.symlink_to(self.root / 'outside')
         value = config(self.target); value['applications'].append(third)
@@ -306,6 +328,31 @@ class ProxyTests(SocketTests):
 
     def write_config(self, bindings):
         path = self.config_file.with_suffix('.tmp'); path.write_text(json.dumps({'version': 1, 'bindings': bindings})); path.replace(self.config_file)
+
+    async def test_loopback_proxy_preserves_parallel_reads_on_one_binding(self):
+        for _ in range(48):
+            reader,writer=await asyncio.open_connection('127.0.0.1',self.local_port)
+            self.clients.append(writer);writer.write(b'read');await writer.drain()
+            self.assertEqual(await asyncio.wait_for(reader.readexactly(4),2),b'read')
+        self.assertLessEqual(len(self.broker.sessions),self.broker.max_app_connections)
+
+    async def test_proxy_reloads_limits_without_disconnecting_an_existing_reader(self):
+        reader, writer = await asyncio.open_connection('127.0.0.1', self.local_port); self.clients.append(writer)
+        writer.write(b'open'); await writer.drain(); self.assertEqual(await reader.readexactly(4), b'open')
+        value = json.loads(self.config_file.read_text()); value['limits'] = {'perApp': 1, 'perBinding': 1}
+        temporary = self.config_file.with_suffix('.new'); temporary.write_text(json.dumps(value)); temporary.replace(self.config_file)
+        expected = hashlib.sha256(self.config_file.read_bytes()).hexdigest()
+        for _ in range(100):
+            if self.status_file.exists() and json.loads(self.status_file.read_text()).get('configHash') == expected:break
+            await asyncio.sleep(.02)
+        else:self.fail('Proxy did not acknowledge new policy')
+        writer.write(b'kept'); await writer.drain(); self.assertEqual(await reader.readexactly(4), b'kept')
+        blocked, other = await asyncio.open_connection('127.0.0.1', self.local_port); self.clients.append(other)
+        self.assertEqual(await asyncio.wait_for(blocked.read(), 1), b'')
+        value['limits'] = {'perApp': 2, 'perBinding': 2}; temporary.write_text(json.dumps(value)); temporary.replace(self.config_file)
+        await asyncio.sleep(.12)
+        accepted, third = await asyncio.open_connection('127.0.0.1', self.local_port); self.clients.append(third)
+        third.write(b'next'); await third.drain(); self.assertEqual(await asyncio.wait_for(accepted.readexactly(4), 1), b'next')
 
     async def wait_ready(self):
         for _ in range(100):
@@ -442,6 +489,19 @@ class TargetTests(unittest.IsolatedAsyncioTestCase):
         async def send(): writer.write(payload); await writer.drain()
         received, _ = await asyncio.gather(reader.readexactly(len(payload)), send()); self.assertEqual(received, payload)
         writer.write_eof(); self.assertEqual(await asyncio.wait_for(reader.read(), 1), b'')
+
+    async def test_target_policy_changes_without_restarting_or_closing_existing_connections(self):
+        policy = self.root / 'limits.json'; policy.write_text(json.dumps({'maxConnections': 1}))
+        await self.launch(limits=str(policy))
+        reader, writer = await asyncio.open_unix_connection(str(self.path)); self.clients.append(writer)
+        writer.write(b'one'); await writer.drain(); self.assertEqual(await reader.readexactly(3), b'one')
+        blocked, other = await asyncio.open_unix_connection(str(self.path)); self.clients.append(other)
+        self.assertEqual(await asyncio.wait_for(blocked.read(), 1), b'')
+        policy.write_text(json.dumps({'maxConnections': 2}))
+        accepted, third = await asyncio.open_unix_connection(str(self.path)); self.clients.append(third)
+        third.write(b'two'); await third.drain(); self.assertEqual(await accepted.readexactly(3), b'two')
+        policy.write_text(json.dumps({'maxConnections': 1}))
+        writer.write(b'kept'); await writer.drain(); self.assertEqual(await reader.readexactly(4), b'kept')
 
     async def test_database_stop_removes_readiness_and_cannot_select_a_new_port(self):
         await self.launch(); self.assertEqual(await self.check(), 0)

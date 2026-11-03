@@ -45,6 +45,7 @@ import {
   WEB_IP_RATE_LIMIT,
   WEBHOOK_IP_RATE_LIMIT,
 } from './webLimit'
+import { createWebLimitPolicy } from './webLimitPolicy'
 import { isWorkerOnlyPath, refuseWorkerRoutes } from './workerRoutes'
 
 export type FirewallOptions = {
@@ -105,7 +106,14 @@ export const firewall = async ({ logger }: FirewallOptions) => {
   })
 
   const webIpLimit = rateLimitFromEnv(process.env.WEB_APPS_IP_RATE_LIMIT, WEB_IP_RATE_LIMIT)
-  const webLimiter = createWebLimiter({ limit: webIpLimit, clientIp: ips.clientIp })
+  const webLimiter = createWebLimiter({
+    limit: webIpLimit,
+    clientIp: ips.clientIp,
+    readLimit: createWebLimitPolicy(
+      process.env.WEB_APPS_ROOT || resolve(process.env.DATA_ROOT || '.', 'web-apps'),
+      webIpLimit
+    ),
+  })
   if (webEnabled) {
     info(`Web sites rate limit: ${webIpLimit ? `${webIpLimit}/min/IP` : 'disabled'} (WEB_APPS_IP_RATE_LIMIT)`)
   }

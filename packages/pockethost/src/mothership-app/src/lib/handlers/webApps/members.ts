@@ -292,81 +292,93 @@ export const HandleWebUserProjectsGet = (e: core.RequestEvent) => {
   requirePlatformAdmin(e)
   return webJson(e, assignments(assignedUser(e)))
 }
-export const HandleWebUserProjectsPut = (e: core.RequestEvent) => {
-  const actor = requirePlatformAdmin(e),
-    user = assignedUser(e),
-    input = webInput(e)
+export const validateWebUserProjects = (projects: unknown) => {
   if (
-    Object.keys(input).some((key) => key !== 'projects') ||
-    !Array.isArray(input.projects) ||
-    input.projects.length > 1000 ||
-    input.projects.some(
+    !Array.isArray(projects) ||
+    projects.length > 1000 ||
+    projects.some(
       (p: any) =>
         !p ||
         typeof p !== 'object' ||
+        Array.isArray(p) ||
+        typeof p.projectId !== 'string' ||
         Object.keys(p).some((key) => !['projectId', 'role'].includes(key)) ||
         !ID.test(p.projectId || '') ||
         !isWebRole(p.role)
     )
   )
     throw new BadRequestError('Liste attendue : [{ projectId, role }] avec un rôle viewer, developer, admin ou owner.')
+  if (new Set(projects.map((p: any) => p.projectId)).size !== projects.length)
+    throw new BadRequestError('Un projet ne peut être sélectionné qu’une fois.')
+  return projects as { projectId: string; role: WebRole }[]
+}
+
+/** Shares membership checks and audit with the per-user endpoint; caller owns the transaction. */
+export const saveWebUserProjects = (tx: any, actor: core.Record, user: core.Record, projects: unknown) => {
   const wanted: Record<string, WebRole> = {}
-  for (const p of input.projects) wanted[p.projectId] = p.role
-  $app.runInTransaction((tx) => {
-    const current: Record<string, core.Record> = {}
-    for (const row of tx.findRecordsByFilter(WEB_MEMBERS, 'user={:user}', '', 1000, 0, { user: user.id }))
-      current[row!.getString('project')] = row!
-    for (const projectId of Object.keys(wanted)) {
-      try {
-        tx.findRecordById('web_projects', projectId)
-      } catch {
-        throw new BadRequestError('Projet introuvable.')
-      }
-      const role = wanted[projectId]!,
-        row = current[projectId]
-      if (!row) {
-        const created = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS))
-        created.set('project', projectId)
-        created.set('user', user.id)
-        created.set('role', role)
-        created.set('invitedBy', actor.id)
-        tx.save(created)
-        auditWebProject(
-          projectId,
-          actor.id,
-          'member-added',
-          { userId: user.id, email: user.getString('email'), role },
-          tx
-        )
-        continue
-      }
-      const from = row.getString('role') as WebRole
-      if (from === role) continue
-      fail(webMemberChangeError('platform', { kind: 'change', from, role, ownerCount: ownerCount(projectId, tx) }))
-      row.set('role', role)
-      tx.save(row)
+  for (const p of validateWebUserProjects(projects)) wanted[p.projectId] = p.role
+  const current: Record<string, core.Record> = {}
+  for (const row of tx.findRecordsByFilter(WEB_MEMBERS, 'user={:user}', '', 1000, 0, { user: user.id }))
+    current[row!.getString('project')] = row!
+  for (const projectId of Object.keys(wanted)) {
+    try {
+      tx.findRecordById('web_projects', projectId)
+    } catch {
+      throw new BadRequestError('Projet introuvable.')
+    }
+    const role = wanted[projectId]!,
+      row = current[projectId]
+    if (!row) {
+      const created = new Record(tx.findCollectionByNameOrId(WEB_MEMBERS))
+      created.set('project', projectId)
+      created.set('user', user.id)
+      created.set('role', role)
+      created.set('invitedBy', actor.id)
+      tx.save(created)
       auditWebProject(
         projectId,
         actor.id,
-        'member-role-changed',
-        { userId: user.id, email: user.getString('email'), from, role },
+        'member-added',
+        { userId: user.id, email: user.getString('email'), role },
         tx
       )
+      continue
     }
-    for (const projectId of Object.keys(current)) {
-      if (wanted[projectId]) continue
-      const row = current[projectId]!,
-        from = row.getString('role') as WebRole
-      fail(webMemberChangeError('platform', { kind: 'remove', from, ownerCount: ownerCount(projectId, tx) }))
-      auditWebProject(
-        projectId,
-        actor.id,
-        'member-removed',
-        { userId: user.id, email: user.getString('email'), role: from },
-        tx
-      )
-      tx.delete(row)
-    }
-  })
+    const from = row.getString('role') as WebRole
+    if (from === role) continue
+    fail(webMemberChangeError('platform', { kind: 'change', from, role, ownerCount: ownerCount(projectId, tx) }))
+    row.set('role', role)
+    tx.save(row)
+    auditWebProject(
+      projectId,
+      actor.id,
+      'member-role-changed',
+      { userId: user.id, email: user.getString('email'), from, role },
+      tx
+    )
+  }
+  for (const projectId of Object.keys(current)) {
+    if (wanted[projectId]) continue
+    const row = current[projectId]!,
+      from = row.getString('role') as WebRole
+    fail(webMemberChangeError('platform', { kind: 'remove', from, ownerCount: ownerCount(projectId, tx) }))
+    auditWebProject(
+      projectId,
+      actor.id,
+      'member-removed',
+      { userId: user.id, email: user.getString('email'), role: from },
+      tx
+    )
+    tx.delete(row)
+  }
+}
+
+export const HandleWebUserProjectsPut = (e: core.RequestEvent) => {
+  const actor = requirePlatformAdmin(e),
+    user = assignedUser(e),
+    input = webInput(e)
+  if (Object.keys(input).some((key) => key !== 'projects')) throw new BadRequestError('Champ inconnu.')
+  validateWebUserProjects(input.projects)
+  $app.runInTransaction((tx) => saveWebUserProjects(tx, actor, user, input.projects))
   return webJson(e, assignments(user))
 }

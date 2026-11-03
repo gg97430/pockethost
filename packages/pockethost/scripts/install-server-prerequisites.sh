@@ -5,7 +5,7 @@
 set -euo pipefail
 packages=(
   ca-certificates curl git openssh-client openssh-server
-  python3 python3-boto3 python3-cryptography build-essential pkg-config
+  python3 python3-boto3 python3-cryptography awscli build-essential pkg-config
   tar gzip zip unzip rsync sqlite3 jq util-linux cpulimit
   uidmap dbus-user-session slirp4netns fuse-overlayfs
   ufw fail2ban unattended-upgrades logrotate
@@ -30,4 +30,5 @@ for binary in cpulimit sqlite3 tar gzip nice ionice unzip python3 git ssh ssh-ke
   command -v "$binary" >/dev/null || { echo "Missing executable: $binary" >&2; exit 1; }
 done
 python3 -c 'import boto3, cryptography, sqlite3'
+aws --version
 echo 'Prerequisites installed. Configure and validate the host before activation.'

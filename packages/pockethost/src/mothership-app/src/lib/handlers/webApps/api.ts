@@ -1,6 +1,7 @@
 import { type WebPermission, isWebPlatformPermission, webRoleAllows } from '../../../../../common/webAccess'
 import { nextWebQueuedJob } from '../../../../../common/webQueue'
 import { canSetWebRepository } from '../../security/webProjectAccess'
+import { readWebRequestLimit } from '../operatorAdmin/webRequestLimit'
 import {
   isWebPlatformAdmin,
   requirePlatformAdmin,
@@ -987,7 +988,7 @@ export const HandleWebWorkerProjectLimits = (e: core.RequestEvent) => {
     const projectId = row.getString('projectId')
     if (projects[projectId]) apps[row.getString('appId')] = projectId
   }
-  return webJson(e, { version: 1, projects, apps })
+  return webJson(e, { version: 1, projects, apps, ipRequestsPerMinute: readWebRequestLimit() })
 }
 export const HandleWebWorkerClaim = (e: core.RequestEvent) => {
   requireWorker(e)

@@ -795,7 +795,10 @@ const setInstancePower = (instanceId: string, power: boolean) => {
 const waitUntilIdle = (instanceId: string) => {
   for (let i = 0; i < MAX_STOP_WAIT_SECONDS; i++) {
     const current = findInstance(instanceId)
-    if (!current.getBool('power') && current.getString('status').toLowerCase() === 'idle') return current
+    // An in-flight daemon status save can finish after our power-off write.
+    // Keep the filesystem operation's stop intent until the daemon has acknowledged idle.
+    if (current.getBool('power')) setInstancePower(instanceId, false)
+    else if (current.getString('status').toLowerCase() === 'idle') return current
     sleepOneSecond()
   }
 

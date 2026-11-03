@@ -32,7 +32,7 @@
     showPassword = false
     try {
       await authViaEmail(email, password, totpCode)
-      window.location.href = '/dashboard'
+      window.location.href = '/home'
     } catch (error) {
       if (isTotpRequiredError(error)) needsTotp = true
       const e = error as Error

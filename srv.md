@@ -42,6 +42,10 @@ CLOUDFLARE_API_TOKEN='token-cloudflare-zone-read-dns-edit' \
 bash script.sh
 ```
 
+Troisieme installation : `DOMAIN=app3.monappli.re`, `APP_HOST=app3.monappli.re`, `SERVER_IP=135.125.67.39`, utilisateur `ubuntu`. Le projet est dans `/home/ubuntu/pockethost`, les donnees dans `/home/ubuntu/.local/share/pockethost` et les instances sous `*.app3.monappli.re`. Le certificat couvre l'adresse du dashboard et le wildcard des instances.
+
+La configuration Docker de ce serveur publie les ports des conteneurs sur `127.0.0.1` par defaut ; les acces publics passent par le firewall PocketHost sur HTTPS. Les journaux Docker sont plafonnes a trois fichiers de 10 Mo. Les cles TOTP restent en mode 0600, avec le proprietaire du service hote pour permettre leur inclusion dans les sauvegardes.
+
 Le token Cloudflare doit avoir au minimum:
 
 - `Zone:Read`
@@ -425,6 +429,11 @@ Creer un compte utilisateur normal depuis l'interface si l'inscription est activ
 
 Pour une utilisation interne, il est preferable que le superadmin gere ensuite les utilisateurs depuis le backoffice.
 
+Dans `Administration > Nouveau compte`, le rôle `Superuser` donne accès à toute la plateforme et à toutes les bases.
+Pour un utilisateur standard, `Bases rattachées` ajoute des accès à la gestion et à la console sans changer le propriétaire.
+Les accès peuvent aussi être modifiés depuis le bouton de la colonne `Bases` des comptes existants, puis enregistrés avec `OK`.
+La migration `1793270600_created_user_instance_access.js` et les nouveaux hooks doivent être installés avec le dashboard.
+
 ## 13. DNS des instances
 
 Chaque instance est disponible sur:
@@ -510,6 +519,48 @@ Apres modification:
 pm2 restart mothership --update-env
 pm2 save
 ```
+
+### Tester la sauvegarde continue Litestream
+
+L'onglet `Sauvegardes > Litestream` replique uniquement `pb_data/data.db` vers S3/R2.
+Conserver les archives completes pour les fichiers uploades, hooks et migrations. Le statut PM2 `online`
+confirme que le processus tourne; une restauration depuis le stockage distant confirme que les donnees sont recuperables.
+
+Un test isole est disponible avec Python 3, un executable PocketBase et Litestream:
+
+```bash
+python3 packages/pockethost/scripts/test-litestream-recovery.py \
+  --pocketbase /home/ubuntu/.local/share/pockethost/pocketbase/0.39.11/linux_amd64/pocketbase \
+  --litestream /usr/bin/litestream
+```
+
+Le script cree sa propre instance sur `127.0.0.1` et un dossier temporaire prive. Il utilise les intervalles du projet
+(`monitor-interval: 10s`, `sync-interval: 10s`), verifie une premiere copie puis les creations, modifications et
+suppressions. Il poursuit les ecritures pendant 35 secondes, tue uniquement ses deux processus de test avec `SIGKILL`,
+deplace la base source et restaure depuis la replique seule. Il controle ensuite l'integrite SQLite, la conservation
+des donnees deja confirmees dans la replique, la coherence des dernieres ecritures et le redemarrage de PocketBase restaure.
+Tous les processus de test sont arretes a la fin. Le dossier affiche conserve `report.json`, les journaux et les bases
+pour inspection; il peut ensuite etre supprime.
+
+Par defaut, la destination est un autre dossier local: ce test valide la replication et la restauration, mais pas la
+protection contre la perte du serveur. Pour verifier aussi S3/R2, fournir les variables d'authentification Litestream
+(`LITESTREAM_ACCESS_KEY_ID`, `LITESTREAM_SECRET_ACCESS_KEY`) dans l'environnement, puis lancer:
+
+```bash
+python3 packages/pockethost/scripts/test-litestream-recovery.py \
+  --pocketbase /home/ubuntu/.local/share/pockethost/pocketbase/0.39.11/linux_amd64/pocketbase \
+  --litestream /usr/bin/litestream \
+  --replica-url s3://mon-bucket/tests \
+  --endpoint https://mon-endpoint-s3
+```
+
+Le script ajoute un sous-dossier `recovery-test-<identifiant aleatoire>` a cette destination pour isoler les objets du
+test. L'endpoint utilise la region `auto` et l'adressage par chemin. Les objets distants restent disponibles pour
+verification et doivent ensuite etre supprimes uniquement dans ce sous-dossier. Aucun acces n'est affiche dans le rapport.
+
+Les mesures portent sur un petit jeu de donnees. Elles ne donnent ni le temps de restauration d'une base de 24 Go,
+ni une garantie de perte maximale. Avant activation sur une grosse instance, verifier le bucket, la retention, la
+frequence des copies completes, le retard reel des envois et la protection distincte des fichiers uploades.
 
 ### Importer une grosse archive
 
@@ -634,6 +685,50 @@ faite depuis l'interface est prise en compte sans redemarrage.
 pm2 restart mothership
 ```
 
+### Transferer une instance vers un autre serveur PocketHost
+
+Sur le serveur cible, autoriser explicitement le serveur source dans `.env`, puis redemarrer la mothership avec son environnement actualise :
+
+```env
+INSTANCE_TRANSFER_ALLOWED_HOSTS=app.monappli.re
+INSTANCE_TRANSFER_MAX_BYTES=107374182400
+```
+
+Plusieurs hotes peuvent etre separes par des virgules. Les ports non standards doivent etre precises. HTTPS est obligatoire en exploitation ; `INSTANCE_TRANSFER_ALLOW_HTTP=1` est reserve aux essais isoles. Les deux serveurs doivent disposer de `curl`, `tar`, `sqlite3`, `sha256sum` et d'une version PocketBase compatible avec l'instance.
+
+Avec un compte superadmin, ouvrir `Sauvegardes > Transfert`, confirmer l'arret de la source puis copier le lien temporaire. Sur le dashboard cible, choisir `Importer un transfert`, coller le lien, verifier les informations et choisir le nouveau nom. Le code peut aussi etre fourni separement. Le lien contient un secret : le transmettre comme un mot de passe. Il expire apres 24 heures et ne peut etre reserve que par une destination. Un nouveau lien invalide l'ancien tant que le transfert n'est pas reserve.
+
+La preparation et la restauration tournent en arriere-plan, avec demarrage au prochain passage du cron (une minute). En cas d'interruption, `Reprendre` conserve la destination et reprend le telechargement. Taille et empreinte SHA-256 sont verifiees avant restauration. La source est conservee arretee pour un retour arriere ; la destination reste arretee jusqu'a son demarrage manuel. L'annulation d'un export non reserve peut retablir l'etat initial de la source. Une fois la destination utilisee, revenir a la source exige de traiter les nouvelles ecritures faites depuis le transfert.
+
+Prevoir l'espace pour l'archive et la base extraite sur la cible, ainsi que pour l'archive sur la source. Le transfert copie les fichiers, hooks, parametres PocketBase et secrets d'instance. L'adresse publique change ; mettre a jour les applications clientes. Les archives restent dans l'historique des sauvegardes et peuvent etre supprimees apres la fin ou l'annulation du transfert.
+
+Test isole, sans utiliser les bases de production :
+
+```bash
+python3 packages/pockethost/scripts/test-instance-transfer.py \
+  --pocketbase /chemin/vers/pocketbase \
+  --bundle packages/pockethost/src/mothership-app/pb_hooks/mothership.js \
+  --migrations packages/pockethost/src/mothership-app/pb_migrations
+```
+
+### Activer le TOTP sur le dashboard et les consoles
+
+Apres deploiement et migration de la mothership, chaque utilisateur peut activer le TOTP dans `Compte > Securite` avec son mot de passe, un QR code et un premier code a six chiffres. Dix codes de secours a usage unique sont affiches une seule fois : les telecharger et les conserver hors du serveur. Les anciens jetons de session sont invalides lors de l'activation et de la desactivation. Cinq echecs de verification bloquent les nouvelles tentatives pendant cinq minutes.
+
+Pour les consoles PocketBase >=0.23, le build genere les hooks `_ph_totp.js` et `_ph_totp.pb.js`. Les conteneurs deja existants doivent etre redemarres pour monter ces nouveaux fichiers ; planifier cet arret avec les utilisateurs. Le lien de console du dashboard passe par `/_/ph-auth`. L'activation se fait par compte administrateur via `/_/ph-auth?security=1`. Les consoles plus anciennes doivent etre mises a niveau avant de disposer de cette protection.
+
+La cle de chiffrement `.pockethost-totp.key` est creee en mode 0600 dans le `pb_data` de chaque base protegee. **Sauvegarder cette cle avec la base correspondante** et la conserver lors des restaurations. Litestream ne copie que SQLite ; il faut donc une copie externe de la cle en plus de la replication. Une base contenant des secrets TOTP sans sa cle ne peut pas redemarrer correctement avec ces hooks. Les sauvegardes completes et les transferts d'instance incluent ce fichier. Les comptes de service `_superusers` de la mothership restent utilisables par les services internes.
+
+Test des deux parcours sur des bases jetables :
+
+```bash
+python3 packages/pockethost/scripts/test-totp.py \
+  --pocketbase /chemin/vers/pocketbase \
+  --bundle packages/pockethost/src/mothership-app/pb_hooks/mothership.js \
+  --migrations packages/pockethost/src/mothership-app/pb_migrations \
+  --instance-hooks packages/pockethost/src/instance-app/v23/pb_hooks
+```
+
 ## 15. Sauvegarde serveur complete
 
 En plus des sauvegardes par instance, garder une sauvegarde serveur de:
@@ -721,6 +816,16 @@ packages/pockethost/src/mothership-app/pb_hooks/mothership.pb.js
 ```
 
 ## 17. Commandes utiles
+
+### Deploiement transfert et TOTP du 28 octobre 2026
+
+Les serveurs `app.monappli.re` (6 instances) et `app2.monappli.re` (11 instances) utilisent la release `totp-transfer-20261028T120732Z`. Les builds ont ete prepares dans un dossier separe avant activation. Les 17 instances ont ete redemarrees une par une avec leurs binaires PocketBase d'origine ; les donnees metier n'ont pas ete migrees entre serveurs.
+
+Chaque serveur conserve `/home/ubuntu/pockethost-releases/totp-transfer-20261028T120732Z/rollback/` : code precedent, ancien build dashboard, configurations et copie SQLite coherente du plan de controle. Le dossier de release contient aussi `rolling-results.json`, `final-audit.json` et une archive privee `totp-keys.tar.gz`. Ces fichiers contiennent des informations sensibles et doivent rester accessibles uniquement a `ubuntu`.
+
+Le transfert entre serveurs 1 et 2 a ete valide sur une base jetable, y compris la restauration d'un enregistrement et le maintien du TOTP apres changement d'identifiant proprietaire. Les comptes et bases de test ont ete supprimes. Le TOTP doit etre active par chaque utilisateur via `Compte > Securite`, puis dans les consoles d'instances qu'il souhaite proteger.
+
+Lors d'une prochaine mise a jour, arreter la mothership avant de remplacer ses hooks, preparer le build a part et redemarrer le plan de controle avant le daemon. Les nouvelles cles TOTP doivent etre sauvegardees avec les bases correspondantes.
 
 Etat PM2:
 
@@ -860,3 +965,7 @@ pm2 restart firewall
 - [ ] sauvegarde d'une instance testee.
 - [ ] cron de sauvegarde serveur configure.
 - [ ] dernier commit pousse sur GitHub.
+
+### Accès à la console depuis le dashboard (28/10/2026)
+
+Déployé sur app1, app2 et app3 : le lien Administration passe par `/console/<instanceId>` et échange une autorisation temporaire de 60 secondes, utilisable une seule fois, contre une session native PocketBase. La session dashboard et les droits sur l’instance sont vérifiés côté serveur. Sans session dashboard valide, retour à `/_/ph-auth?manual=1` et connexion PocketBase avec TOTP si activé. Les conteneurs reçoivent `PH_INSTANCE_ID` et `PH_MOTHERSHIP_URL` de la plateforme. Release et rollback : `/home/ubuntu/pockethost-releases/console-sso-20261028/`.

@@ -14,6 +14,12 @@ export function sshPublicKeyFingerprint(keyData: Buffer): string {
   return `SHA256:${hash.replace(/=+$/, '')}`
 }
 
+/** PocketBase single relations may be returned as one ID rather than an array. */
+export const sshKeyInstanceIds = (value: unknown): string[] => {
+  const values = typeof value === 'string' ? [value] : Array.isArray(value) ? value : []
+  return [...new Set(values.filter((id): id is string => typeof id === 'string' && /^[a-z0-9]{15}$/.test(id)))]
+}
+
 export async function findSshKeyByPublicKey(
   adminClient: PocketBase,
   email: string,
@@ -51,7 +57,7 @@ export async function findSshKeyByPublicKey(
       continue
     }
 
-    const instanceIds = key.all_instances ? null : key.instances?.length ? [...key.instances] : []
+    const instanceIds = key.all_instances ? null : sshKeyInstanceIds(key.instances)
 
     return { user, key, instanceIds }
   }

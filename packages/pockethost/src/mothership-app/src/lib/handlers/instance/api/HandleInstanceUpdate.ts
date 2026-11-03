@@ -1,6 +1,7 @@
 import { type InstanceWebhookCollection } from '$common'
 import { mkLog, StringKvLookup } from '$util/Logger'
 import { removeEmptyKeys } from '$util/removeEmptyKeys'
+import { normalizeInstanceProjectLabel } from '../../../../../../common/instanceProjectLabel'
 import { canManageInstance } from '../../../security/instanceAccess'
 import { assertNoWebDomainConflict } from '../../webApps/domains'
 import { assertInstanceHostnameOperator } from '../hostnames'
@@ -147,6 +148,15 @@ export const HandleInstanceUpdate = (e: core.RequestEvent) => {
     if (Object.prototype.hasOwnProperty.call(hostnameFields, name)) {
       assertInstanceHostnameOperator(authRecord)
       record.set(name, hostnameFields[name])
+    }
+  }
+
+  const labelFields = JSON.parse(JSON.stringify(e.requestInfo().body || {})).fields || {}
+  if (Object.prototype.hasOwnProperty.call(labelFields, 'projectLabel')) {
+    try {
+      record.set('projectLabel', normalizeInstanceProjectLabel(labelFields.projectLabel))
+    } catch (error) {
+      throw new BadRequestError(error instanceof Error ? error.message : 'Label invalide.')
     }
   }
 

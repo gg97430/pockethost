@@ -27,6 +27,7 @@ import {
   PocketBaseBinaryService,
   rmNamedContainerSync,
   spawnPocketBaseContainer,
+  syncCachedVersionsToMothership,
   TEST_EMAIL,
   tryFetch,
 } from '@'
@@ -169,6 +170,6 @@ export async function mothership({ logger }: MothershipConfig) {
       }
     )
   }
-  const ready = tryFetch(MOTHERSHIP_URL(`/api/health`), { logger })
-  return ready
+  await tryFetch(MOTHERSHIP_URL(`/api/health`), { logger })
+  await syncCachedVersionsToMothership(true)
 }

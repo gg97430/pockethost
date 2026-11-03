@@ -19,17 +19,20 @@
   let ipCopyMessage = ''
   let ipCopyTimer: ReturnType<typeof setTimeout> | undefined
   $: pathname = $page.url.pathname
-  $: section = pathname.startsWith('/applications')
-    ? 'Applications web'
-    : pathname.startsWith('/monitoring')
-      ? 'Supervision'
-      : pathname.startsWith('/admin')
-        ? 'Administration'
-        : pathname.startsWith('/activity')
-          ? 'Journal d’administration'
-          : pathname.startsWith('/account')
-            ? 'Mon compte'
-            : 'Bases de données'
+  $: section =
+    pathname === '/home'
+      ? 'Tableau de bord'
+      : pathname.startsWith('/applications')
+        ? 'Applications web'
+        : pathname.startsWith('/monitoring')
+          ? 'Supervision'
+          : pathname.startsWith('/admin')
+            ? 'Administration'
+            : pathname.startsWith('/activity')
+              ? 'Journal d’administration'
+              : pathname.startsWith('/account')
+                ? 'Mon compte'
+                : 'Bases de données'
   $: detail =
     pathname === '/instances/new'
       ? 'Nouvelle base'
@@ -120,7 +123,7 @@
   inert={isMobile && !drawerOpen}
   aria-label="Navigation principale"
 >
-  <a class="workspace-brand" href="/dashboard" aria-label="Kolab Hosting — Mes bases"><Logo /></a>
+  <a class="workspace-brand" href="/home" aria-label="Kolab Hosting — Tableau de bord"><Logo /></a>
   <div class="workspace-server">
     <span class="workspace-server-icon"><wa-icon name="server"></wa-icon></span>
     <div><strong>Mon espace</strong><span>{$page.url.hostname}</span></div>
@@ -128,6 +131,9 @@
   </div>
   <nav class="workspace-nav">
     <span class="workspace-nav-label">Plateforme</span>
+    <a href="/home" class:active={pathname === '/home'} aria-current={pathname === '/home' ? 'page' : undefined}
+      ><wa-icon name="chart-pie"></wa-icon>Tableau de bord</a
+    >
     <a
       href="/dashboard"
       class:active={pathname === '/dashboard' || (pathname.startsWith('/instances/') && pathname !== '/instances/new')}
@@ -152,11 +158,6 @@
         ><wa-icon name="heart-pulse"></wa-icon>Supervision</a
       >
     {/if}
-    <a
-      href="/instances/new"
-      class:active={pathname === '/instances/new'}
-      aria-current={pathname === '/instances/new' ? 'page' : undefined}><wa-icon name="plus"></wa-icon>Nouvelle base</a
-    >
     {#if $workspaceFeatureNavigation}
       <div class="workspace-feature-context">
         <wa-icon name="database"></wa-icon><span>{$workspaceFeatureNavigation.title}</span>

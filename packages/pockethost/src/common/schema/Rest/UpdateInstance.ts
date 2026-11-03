@@ -6,6 +6,7 @@ export type UpdateInstancePayload = {
   fields: Partial<
     Pick<
       InstanceFields,
+      | 'projectLabel'
       | 'power'
       | 'secrets'
       | 'webhooks'
@@ -36,6 +37,7 @@ export const UpdateInstancePayloadSchema: JSONSchemaType<UpdateInstancePayload> 
     fields: {
       type: 'object',
       properties: {
+        projectLabel: { type: 'string', nullable: true, maxLength: 120 },
         syncAdmin: { type: 'boolean', nullable: true },
         autoVacuum: { type: 'boolean', nullable: true },
         metricsHistoryEnabled: { type: 'boolean', nullable: true },

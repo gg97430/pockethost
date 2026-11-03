@@ -51,8 +51,16 @@ export const HandleInstanceConsoleTicket = (e: core.RequestEvent) => {
   )
   const expiresAt = Math.min(Date.now() + 60_000, Number(payload.exp) * 1000)
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new UnauthorizedError('Session expirée.')
-  const ticket = $security.randomString(64)
   const user = e.auth
+  return result(e, issueInstanceConsoleTicket(instance, user, expiresAt))
+}
+
+/** Used by server administration after its authenticated dashboard permission check. */
+export const issueInstanceConsoleTicket = (instance: core.Record, user: core.Record, expiresAt: number) => {
+  assertAccess(instance, user)
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 60000)
+    throw new UnauthorizedError('Session expirée.')
+  const ticket = $security.randomString(64)
   $app.store().setFunc(TICKETS, (raw: unknown) => {
     const tickets = prune(decode(raw))
     // One pending ticket per account and instance, without storing a dashboard bearer token.
@@ -68,7 +76,7 @@ export const HandleInstanceConsoleTicket = (e: core.RequestEvent) => {
     }
     return JSON.stringify(tickets)
   })
-  return result(e, { url: consoleUrl(instance), ticket, expiresAt: new Date(expiresAt).toISOString() })
+  return { url: consoleUrl(instance), ticket, expiresAt: new Date(expiresAt).toISOString() }
 }
 
 /** The instance exchanges a one-use capability; its own id comes from platform configuration. */

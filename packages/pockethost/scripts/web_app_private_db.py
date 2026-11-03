@@ -18,6 +18,8 @@ import threading
 import time
 import types
 import urllib.request
+from web_private_db_cpu import unlimited, cpu_unlimited
+from web_private_db_limits import limits
 
 ID = re.compile(r'^[a-z0-9]{15}$')
 CID = re.compile(r'^[a-f0-9]{64}$')
@@ -146,6 +148,7 @@ class PrivateDatabases:
         self.root, self.docker = pathlib.Path(root), docker
         self.folder = _directory(self.root / 'private-db-runtime', 0o700)
         self.bindings, self.last_good, self.last_fetch = {}, 0.0, 0.0
+        self.connection_limits = limits()
         self.last_report, self.report_fingerprint = 0.0, ''
         self.policy_lock, self.operations_lock = threading.RLock(), threading.RLock()
         self.stop = threading.Event()
@@ -169,7 +172,10 @@ class PrivateDatabases:
             if not force and now - self.last_fetch < 2:
                 return
             self.last_fetch = now
-            value = validate_bindings(self.api('worker'))
+            raw = self.api('worker')
+            policy = limits(raw.get('limits'))
+            value = validate_bindings(raw)
+            self.connection_limits = policy
             self.bindings, self.last_good = value, time.monotonic()
 
     def for_app(self, app, force=False):
@@ -293,7 +299,8 @@ class PrivateDatabases:
             current = os.lstat(socket_path)
             return stat.S_ISSOCK(current.st_mode) and str(current.st_dev) + ':' + str(current.st_ino) == socket_identity
         started = info['State'].get('StartedAt', '')
-        value = {'version': 1, 'bindings': [{k: row[k] for k in ('id', 'port', 'token', 'revision')} for row in rows]}
+        value = {'version': 1, 'limits': {k: self.connection_limits[k] for k in ('perApp', 'perBinding')},
+                 'bindings': [{k: row[k] for k in ('id', 'port', 'token', 'revision')} for row in rows]}
         text = json.dumps(value, separators=(',', ':'))
         with self.operations_lock:
             # A background tick can have captured Running=true before waiting
@@ -312,12 +319,17 @@ class PrivateDatabases:
             if not file.exists() or file.read_text() != text:
                 atomic(file, text)
             proxy = self._existing(name)
+            cpu = '0' if unlimited('applications', app) else '0.05'
             if proxy:
                 own = proxy.get('Config', {}).get('Labels') or {}
                 if own.get('pockethost.web.app') != app or own.get('pockethost.web.deployment') != deployment or own.get('pockethost.web.private-db') != 'true':
                     raise RuntimeError('Identité du relais privé invalide.')
                 if (own.get('pockethost.web.private-db.parent') != ident or own.get('pockethost.web.private-db.started') != started
                         or own.get('pockethost.web.private-db.socket') != socket_identity or own.get('pockethost.web.private-db.recipe') != self.recipe):
+                    self._remove(proxy); proxy = None
+                elif cpu == '0' and not cpu_unlimited(proxy.get('HostConfig') or {}):
+                    self.docker(['update', '--cpu-quota', '-1', proxy['Id']], timeout=15)
+                elif cpu != '0' and cpu_unlimited(proxy.get('HostConfig') or {}):
                     self._remove(proxy); proxy = None
             if proxy is None:
                 from web_app_storage import _helper
@@ -328,7 +340,7 @@ class PrivateDatabases:
                 image = _helper(self.docker)
                 args = ['create', '--name', name, '--network', 'container:' + ident,
                     '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--user=10001:10001',
-                    '--memory=96m', '--memory-swap=96m', '--cpus=0.05', '--pids-limit=64', '--init', '--restart=unless-stopped',
+                    '--memory=96m', '--memory-swap=96m', '--cpus=' + cpu, '--pids-limit=64', '--init', '--restart=unless-stopped',
                     '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=2m,uid=10001,gid=10001',
                     '--log-opt', 'max-size=1m', '--log-opt', 'max-file=2',
                     '--entrypoint', '/usr/local/bin/node', '--env', 'NODE_OPTIONS=--max-old-space-size=40',
@@ -343,6 +355,8 @@ class PrivateDatabases:
                     '--mount', 'type=bind,source=' + str(socket_path) + ',target=/run/kolab-db.sock,readonly',
                     '--mount', 'type=bind,source=' + str(SCRIPT_ROOT / 'web_private_db_proxy.cjs') + ',target=/run/kolab-proxy.cjs,readonly',
                     image, '/run/kolab-proxy.cjs']
+                if cpu == '0':
+                    args.insert(1, '--cpu-quota=-1')
                 self.docker(args, timeout=20)
                 self.docker(['start', name], timeout=15)
             elif not proxy.get('State', {}).get('Running') and not proxy.get('State', {}).get('Restarting'):

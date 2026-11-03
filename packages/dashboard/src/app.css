@@ -1194,6 +1194,94 @@ pre {
 :root .workspace-main .feature-content .compact-toggle input:checked + span::after {
   background: #fff;
 }
+/* Monitoring uses the same readable palette in both dashboard themes. */
+:root .workspace-main .feature-content .monitor-stack {
+  --monitor-positive: var(--app-accent-text);
+}
+:root .workspace-main .feature-content :is(.monitor-kicker, .metric-label) {
+  color: var(--app-text-muted);
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(
+    .monitor-command__meta strong,
+    .master-switch,
+    .monitor-empty-chart strong,
+    .incidents-empty strong,
+    .signal-reading strong,
+    .backup-rule strong,
+    .channel-toggle strong,
+    .incident-copy strong
+  ) {
+  color: var(--app-text-strong);
+}
+:root .workspace-main .feature-content :is(.target-preview code, .incident-copy p, .monitor-loading) {
+  color: var(--app-text);
+}
+:root .workspace-main .feature-content :is(.chart-y-label, .chart-x-label) {
+  fill: var(--app-text-muted);
+}
+:root .workspace-main .feature-content .chart-grid {
+  stroke: var(--app-border);
+}
+:root .workspace-main .feature-content :is(.secondary-action, .load-more, .target-preview) {
+  background: var(--app-surface-soft);
+  color: var(--app-text);
+  border-color: var(--app-border);
+}
+:root .workspace-main .feature-content .master-switch__track {
+  background: var(--app-surface-hover);
+  border-color: var(--app-border-strong);
+}
+:root .workspace-main .feature-content .master-switch__track span {
+  background: var(--app-text-muted);
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(.monitor-command--disabled, .monitor-command--paused)
+  .monitor-command__signal {
+  background: var(--app-surface-soft);
+  color: var(--app-text-muted);
+  border-color: var(--app-border-strong);
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(.monitor-command--disabled, .monitor-command--paused)
+  .monitor-command__signal
+  span {
+  animation: none;
+  border-color: transparent;
+}
+:root .workspace-main .feature-content :is(.signal-icon, .channel-toggle > span, .incident-marker) {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+  border-color: var(--app-accent-border);
+}
+:root .workspace-main .feature-content :is(.monitor-empty-chart wa-icon, .incidents-empty wa-icon) {
+  color: var(--app-text-muted);
+}
+:root
+  .workspace-main
+  .feature-content
+  :is(.master-switch input:focus-visible + span, .compact-toggle input:focus-visible + span) {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 3px;
+}
+:root .workspace-main .feature-content .monitor-notice {
+  border: 1px solid var(--app-accent-border);
+  border-radius: 6px;
+  background: var(--app-accent-soft);
+  padding: 12px 16px;
+  color: var(--app-text);
+  font-size: 13px;
+}
+:root .workspace-main .feature-content .monitor-notice p {
+  margin: 4px 0 0;
+  color: var(--app-text-muted);
+}
 :root .workspace-main .feature-content .ls-dashboard :is(.card, .panel, .headline) {
   border-color: var(--app-border);
   border-radius: 6px;

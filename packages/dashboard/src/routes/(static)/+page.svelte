@@ -5,7 +5,7 @@
   import LoginForm from './get-started/LoginForm.svelte'
 
   $: if (browser && $isAuthStateInitialized && $isUserLoggedIn) {
-    goto('/dashboard')
+    goto('/home')
   }
 </script>
 

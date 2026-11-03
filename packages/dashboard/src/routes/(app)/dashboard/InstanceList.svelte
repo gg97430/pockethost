@@ -1,7 +1,11 @@
 <script lang="ts">
+  import InstanceSortButton from '$components/InstanceSortButton.svelte'
+  import { compareInstanceList } from '$util/instanceListOrder'
   import { globalInstancesStore, globalInstancesStoreReady } from '$util/stores'
   import {
     DEFAULT_INSTANCE_LIST_PREFS,
+    INSTANCE_SORT_OPTIONS,
+    type InstanceListSortBy,
     instanceListPrefsHasUrlParams,
     loadInstanceFavoritesFromStorage,
     loadInstanceListPrefsFromStorage,
@@ -12,7 +16,6 @@
     type InstanceListSortDirection,
     type InstanceListViewMode,
   } from '$util/instanceListPrefs'
-  import { type InstanceFields } from 'pockethost/common'
   import { client, type DashboardInstanceMetric } from '$src/pocketbase-client'
   import InstanceCard from './InstanceCard.svelte'
   import InstanceTableRow from './InstanceTableRow.svelte'
@@ -25,6 +28,8 @@
     ? loadInstanceListPrefsFromUrl(page.url.searchParams)
     : DEFAULT_INSTANCE_LIST_PREFS
 
+  let sortBy = initialPrefs.sortBy
+  let groupFilter = initialPrefs.groupFilter
   let searchQuery = initialPrefs.searchQuery
   let sortDirection: InstanceListSortDirection = initialPrefs.sortDirection
   let viewMode: InstanceListViewMode = initialPrefs.viewMode
@@ -45,6 +50,8 @@
   onMount(() => {
     if (!syncReady) {
       const stored = loadInstanceListPrefsFromStorage()
+      sortBy = stored.sortBy
+      groupFilter = stored.groupFilter
       searchQuery = stored.searchQuery
       sortDirection = stored.sortDirection
       viewMode = stored.viewMode
@@ -73,6 +80,8 @@
 
   const updateUrl = () => {
     const params = new URLSearchParams()
+    if (sortBy !== DEFAULT_INSTANCE_LIST_PREFS.sortBy) params.set('by', sortBy)
+    if (groupFilter !== 'all') params.set('group', groupFilter)
     if (sortDirection !== DEFAULT_INSTANCE_LIST_PREFS.sortDirection) params.set('sort', sortDirection)
     if (searchQuery) params.set('q', searchQuery)
     if (viewMode !== DEFAULT_INSTANCE_LIST_PREFS.viewMode) params.set('view', viewMode)
@@ -81,7 +90,7 @@
   }
 
   $: if (syncReady) {
-    saveInstanceListPrefs({ searchQuery, sortDirection, viewMode })
+    saveInstanceListPrefs({ searchQuery, sortDirection, viewMode, sortBy, groupFilter })
     updateUrl()
   }
 
@@ -89,26 +98,41 @@
     sortDirection = sortDirection === 'asc' ? 'desc' : 'asc'
   }
 
-  const compareInstanceNames = (a: InstanceFields, b: InstanceFields, multiplier: number) =>
-    (a.cname || a.subdomain).localeCompare(b.cname || b.subdomain, undefined, { sensitivity: 'base' }) * multiplier
-
-  $: sortMultiplier = sortDirection === 'asc' ? 1 : -1
+  const selectSort = (column: InstanceListSortBy) => {
+    if (sortBy === column) toggleSortDirection()
+    else {
+      sortBy = column
+      sortDirection = ['cpu', 'memory', 'disk', 'power'].includes(column) ? 'desc' : 'asc'
+    }
+  }
+  const ariaSort = (column: InstanceListSortBy) =>
+    sortBy === column ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'
   $: favoriteSet = new Set(favoriteIds)
-
+  $: projectLabels = [
+    ...new Set(
+      Object.values($globalInstancesStore)
+        .map((row) => row.projectLabel || '')
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b, 'fr'))
+  $: selectedMissingLabel =
+    groupFilter.startsWith('label:') && !projectLabels.includes(groupFilter.slice(6)) ? groupFilter.slice(6) : ''
   $: filteredInstances = Object.values($globalInstancesStore)
     .filter((instance) => {
-      const target = (instance.cname || instance.subdomain).toLowerCase()
-      return target.includes(searchQuery.toLowerCase())
+      const target = [instance.cname, instance.subdomain, instance.projectLabel].filter(Boolean).join(' ').toLowerCase()
+      const groupMatches =
+        groupFilter === 'all' ||
+        (groupFilter === 'ungrouped' ? !instance.projectLabel : instance.projectLabel === groupFilter.slice(6))
+      return groupMatches && target.includes(searchQuery.toLowerCase())
     })
     .sort((a, b) => {
-      const aFav = favoriteSet.has(a.id)
-      const bFav = favoriteSet.has(b.id)
-      if (aFav !== bFav) return aFav ? -1 : 1
-      return compareInstanceNames(a, b, sortMultiplier)
+      if (sortBy === 'favorites' && favoriteSet.has(a.id) !== favoriteSet.has(b.id))
+        return favoriteSet.has(a.id) ? -1 : 1
+      return compareInstanceList(a, b, sortBy, sortDirection, instanceMetrics)
     })
 </script>
 
-<div class="instance-list-toolbar">
+<div class="database-list-controls">
   <div class="instance-list-search">
     <wa-icon name="magnifying-glass" class="instance-list-search-icon"></wa-icon>
     <input
@@ -120,7 +144,22 @@
     />
   </div>
 
-  <div class="instance-list-toolbar-actions">
+  <label class="instance-filter">
+    <span>Projet / label</span>
+    <select bind:value={groupFilter}>
+      <option value="all">Tous les labels</option>
+      <option value="ungrouped">Sans label</option>
+      {#if selectedMissingLabel}<option value={groupFilter}>{selectedMissingLabel} (aucune base)</option>{/if}
+      {#each projectLabels as label}<option value={`label:${label}`}>{label}</option>{/each}
+    </select>
+  </label>
+  <div class="database-list-actions">
+    <label class="instance-filter">
+      <span>Trier par</span>
+      <select bind:value={sortBy}>
+        {#each INSTANCE_SORT_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}
+      </select>
+    </label>
     <wa-button
       variant="neutral"
       size="s"
@@ -177,12 +216,68 @@
       </colgroup>
       <thead>
         <tr>
-          <th>Nom</th>
-          <th>État</th>
-          <th>Ressources</th>
-          <th>Version</th>
+          <th aria-sort={ariaSort('name')}
+            ><InstanceSortButton
+              column="name"
+              label="Nom"
+              active={sortBy}
+              direction={sortDirection}
+              onSelect={selectSort}
+            /></th
+          >
+          <th aria-sort={ariaSort('status')}
+            ><InstanceSortButton
+              column="status"
+              label="État"
+              active={sortBy}
+              direction={sortDirection}
+              onSelect={selectSort}
+            /></th
+          >
+          <th aria-sort={['cpu', 'memory', 'disk'].includes(sortBy) ? 'other' : 'none'}>
+            <div class="resource-sort-headings">
+              <InstanceSortButton
+                column="cpu"
+                label="CPU"
+                active={sortBy}
+                direction={sortDirection}
+                onSelect={selectSort}
+              />
+              <InstanceSortButton
+                column="memory"
+                label="RAM"
+                active={sortBy}
+                direction={sortDirection}
+                onSelect={selectSort}
+              />
+              <InstanceSortButton
+                column="disk"
+                label="Disque"
+                active={sortBy}
+                direction={sortDirection}
+                onSelect={selectSort}
+              />
+            </div>
+          </th>
+          <th aria-sort={ariaSort('version')}
+            ><InstanceSortButton
+              column="version"
+              label="Version"
+              active={sortBy}
+              direction={sortDirection}
+              onSelect={selectSort}
+            /></th
+          >
           <th>Actions</th>
-          <th>Alimentation</th>
+          <th aria-sort={ariaSort('power')}
+            ><InstanceSortButton
+              column="power"
+              label="Alimentation"
+              active={sortBy}
+              direction={sortDirection}
+              onSelect={selectSort}
+            /></th
+          >
         </tr>
       </thead>
       <tbody>
@@ -211,10 +306,37 @@
 {/if}
 
 <style>
-  .instance-list-toolbar {
+  .instance-filter {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    flex-direction: column;
+    gap: 0.25rem;
+    color: var(--app-text-muted);
+    font-size: 0.7rem;
+  }
+  .instance-filter select {
+    width: 100%;
+    min-width: 0;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--app-border);
+    border-radius: 0.375rem;
+    background: var(--app-surface);
+    color: var(--app-text-strong);
+    font-size: 0.8rem;
+  }
+  .instance-filter select:focus-visible {
+    outline: 2px solid var(--app-accent);
+    outline-offset: 2px;
+  }
+  .resource-sort-headings {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.7rem;
+  }
+
+  .database-list-controls {
+    display: grid;
+    grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 14rem) auto;
+    align-items: end;
     gap: 0.75rem;
     margin-top: 2rem;
     margin-bottom: 1.25rem;
@@ -259,15 +381,16 @@
     color: var(--app-text-faint);
   }
 
-  .instance-list-toolbar-actions {
+  .database-list-actions {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    flex-wrap: nowrap;
+    align-items: end;
     gap: 0.5rem;
     margin-left: auto;
   }
 
   .instance-list-view-toggle {
+    flex-shrink: 0;
     display: inline-flex;
     border: 1px solid var(--app-border);
     border-radius: 0.375rem;
@@ -444,11 +567,25 @@
     }
   }
 
+  @media (max-width: 1000px) {
+    .database-list-controls {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .instance-list-search {
+      grid-column: 1 / -1;
+    }
+  }
   @media (max-width: 640px) {
-    .instance-list-toolbar-actions {
+    .database-list-controls {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .database-list-actions {
       width: 100%;
       margin-left: 0;
-      justify-content: flex-end;
+      justify-content: flex-start;
+    }
+    .database-list-actions .instance-filter {
+      flex: 1;
     }
 
     .instance-table :global(td) {

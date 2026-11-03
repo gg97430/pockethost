@@ -144,6 +144,31 @@ try:
     request('/api/web-projects/groups', tok['suspended'], status=403); request('/api/web-projects/groups', status=401)
     checks.append('groups_filtered_by_membership_roles_counts_previews_and_unassigned_for_platform')
 
+    # Deployment badge: the published version can stay online while another job is queued/running.
+    assert all(x['deploymentInProgress'] is False for x in a['apps'])
+    def deployment(ident, state):
+        return request('/api/collections/web_deployments/records', su, {'appId': ident, 'action': 'deploy', 'status': state})['id']
+    def finish(ident, state):
+        request('/api/collections/web_deployments/records/' + ident, su, {'status': state}, method='PATCH')
+    running = deployment(main, 'running')
+    queued_main = deployment(main, 'queued')
+    published = deployment(main, 'ready')
+    queued_api = deployment(api, 'queued')
+    queued_orphan = deployment(orphan, 'queued')
+    request('/api/collections/web_apps/records/' + main, su, {'status': 'running', 'activeDeployment': published}, method='PATCH')
+    listed = {x['id']: x for x in group(groups('view_a'), project_a)['apps']}
+    assert listed[main]['status'] == 'running' and listed[main]['activeDeployment'] == published
+    assert {ident for ident, value in listed.items() if value['deploymentInProgress']} == {main, api}
+    assert groups('platform')['unassigned']['apps'][0]['deploymentInProgress'] is True
+    assert groups('outsider')['groups'] == [] and groups('outsider')['unassigned'] is None
+    finish(queued_main, 'cancelled')
+    assert next(x for x in group(groups('view_a'), project_a)['apps'] if x['id'] == main)['deploymentInProgress'] is True
+    finish(running, 'ready'); finish(queued_api, 'failed'); finish(queued_orphan, 'cancelled')
+    assert all(x['deploymentInProgress'] is False for x in group(groups('view_a'), project_a)['apps'])
+    assert groups('platform')['unassigned']['apps'][0]['deploymentInProgress'] is False
+    request('/api/collections/web_apps/records/' + main, su, {'status': 'stopped', 'activeDeployment': ''}, method='PATCH')
+    checks.append('deployment_badge_includes_queued_running_and_unassigned_excludes_terminal_preserves_scope_and_online_state')
+
     # 3. Move A -> B refusals: owner on BOTH projects; the application never leaves A.
     move = {'projectId': project_b}
     fails(404, NOT_PROJECT, f'/api/web-apps/{main}/project', tok['own_a'], move, 'PUT')

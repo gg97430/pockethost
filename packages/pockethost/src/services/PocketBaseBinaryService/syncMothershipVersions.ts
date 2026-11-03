@@ -44,7 +44,7 @@ export const mkVersionCatalogFromPatches = (patches: string[]): PocketbaseVersio
   return entries
 }
 
-export const syncMothershipVersions = async (versions: PocketbaseVersionEntry[]) => {
+export const syncMothershipVersions = async (versions: PocketbaseVersionEntry[], onlyIfMissing = false) => {
   const { info, warn } = LoggerService().create('syncMothershipVersions')
   const mothershipUrl = MOTHERSHIP_URL()
 
@@ -60,10 +60,24 @@ export const syncMothershipVersions = async (versions: PocketbaseVersionEntry[])
     const settings = client.collection('settings')
     const payload = { name: POCKETBASE_VERSIONS_SETTING, value }
 
+    let existing
     try {
-      const existing = await settings.getFirstListItem(`name="${POCKETBASE_VERSIONS_SETTING}"`)
+      existing = await settings.getFirstListItem(`name="${POCKETBASE_VERSIONS_SETTING}"`)
+    } catch (error) {
+      if ((error as { status?: number }).status !== 404) throw error
+    }
+    if (existing) {
+      if (onlyIfMissing) {
+        let current
+        try {
+          current = typeof existing.value === 'string' ? JSON.parse(existing.value) : existing.value
+        } catch {
+          /* Repair an invalid catalog. */
+        }
+        if (Array.isArray(current?.versions) && current.versions.length) return true
+      }
       await settings.update(existing.id, payload)
-    } catch {
+    } else {
       await settings.create(payload)
     }
 

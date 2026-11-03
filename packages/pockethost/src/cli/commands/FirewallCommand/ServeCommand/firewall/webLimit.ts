@@ -83,6 +83,7 @@ export const createIpRateLimit = (options: {
   clientIp: ClientIp
   skip?: (req: Request) => boolean
   limiter?: ReturnType<typeof createIpWindowLimiter>
+  source?: string
 }) => {
   const limiter = options.limiter || createIpWindowLimiter(options)
   return (req: Request, res: Response, next: NextFunction) => {
@@ -90,6 +91,7 @@ export const createIpRateLimit = (options: {
     const { allowed, retryAfter } = limiter.hit(options.clientIp(req))
     if (allowed) return next()
     res.set({ 'Retry-After': String(retryAfter), 'Cache-Control': 'no-store' })
+    if (options.source) res.setHeader('X-Kolab-Rate-Limit-Source', options.source)
     res.status(429).type('text/plain').send('Trop de requêtes. Réessayez dans un instant.')
   }
 }
@@ -131,21 +133,45 @@ export const rejectUpgrade = (socket: Socket) =>
  * Limiteur des sites hébergés, indépendant de `PH_DISABLE_FIREWALL_RATE_LIMIT` : uniquement par IP client, jamais par
  * hôte (un site visité par beaucoup d'IP ne doit pas se bloquer lui-même).
  */
-export const createWebLimiter = (options: { limit: number; clientIp: ClientIp; now?: () => number }) => {
-  const { limit, clientIp, now } = options
-  const windows = createIpWindowLimiter({ limit, now })
-  const upgrades = createUpgradeLimit({ clientIp })
-  return {
-    middleware: createIpRateLimit({
+export const createWebLimiter = (options: {
+  limit: number
+  clientIp: ClientIp
+  now?: () => number
+  readLimit?: () => number
+}) => {
+  const { clientIp, now } = options
+  let limit = options.limit,
+    windows = createIpWindowLimiter({ limit, now })
+  let middleware = createIpRateLimit({
+    limit,
+    clientIp,
+    limiter: windows,
+    source: 'hosting-ip',
+    skip: (req) => isNextStaticRequest(req.method, req.path),
+  })
+  const refresh = () => {
+    const next = options.readLimit?.()
+    if (next === undefined || next === limit || !Number.isSafeInteger(next) || next < 0 || next > 1000000) return
+    limit = next
+    windows = createIpWindowLimiter({ limit, now })
+    middleware = createIpRateLimit({
       limit,
       clientIp,
       limiter: windows,
+      source: 'hosting-ip',
       skip: (req) => isNextStaticRequest(req.method, req.path),
-    }),
+    })
+  }
+  const upgrades = createUpgradeLimit({ clientIp })
+  return {
+    middleware(req: Request, res: Response, next: NextFunction) {
+      refresh()
+      return middleware(req, res, next)
+    },
     /** Une ouverture compte comme une requête : sans cela, ouvrir et refermer en boucle resterait gratuit. */
     upgrade(req: IncomingMessage, socket: Socket) {
-      if (limit <= 0) return true
-      if (windows.hit(clientIp(req)).allowed && upgrades.admit(req, socket)) return true
+      refresh()
+      if ((limit <= 0 || windows.hit(clientIp(req)).allowed) && upgrades.admit(req, socket)) return true
       rejectUpgrade(socket)
       return false
     },

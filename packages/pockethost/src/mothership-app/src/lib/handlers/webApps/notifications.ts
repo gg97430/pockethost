@@ -59,6 +59,7 @@ const COPIED = ['health_degraded', 'deployment_failed', 'deployment_succeeded', 
 const DEPLOYMENT_FAILURES = ['deployment_failed', 'app_deployment_failed']
 const DEPLOYMENT_SUCCESSES = ['deployment_succeeded', 'app_deployment_succeeded']
 const DEPLOYMENT_RESULTS = [...DEPLOYMENT_FAILURES, ...DEPLOYMENT_SUCCESSES]
+const DEPLOYMENT_EMAIL_MODES = ['inherit', 'all', 'failed', 'none']
 const RATE_LIMITED = 'Notification regroupée par la limite de fréquence.'
 const WORKER_DOWN_AFTER = 180000
 const stamp = (time = Date.now()) => new Date(time).toISOString().replace('T', ' ')
@@ -72,6 +73,7 @@ const defaults = () => ({
   events: [...WEB_NOTIFICATION_DEFAULT_EVENTS],
   cooldownSeconds: 300,
   copyAppEvents: false,
+  deploymentEmails: 'inherit',
 })
 const platformDefaults = () => ({ ...defaults(), events: [...WEB_PLATFORM_DEFAULT_EVENTS] })
 const merge = (base: any, stored: any) => ({
@@ -91,6 +93,15 @@ const config = (row: core.Record | null, platform = false) => {
   const base = platform ? platformDefaults() : defaults()
   const stored = row?.getString('configEncrypted') ? decryptWebValue(row.getString('configEncrypted')) : null
   return stored ? merge(base, stored) : base
+}
+/** Application preference also governs operator copies, independently of webhook subscriptions. */
+const deploymentEmailChoice = (appId: string, event: string, store: any, finishedAt = ''): boolean | null => {
+  const value = config(find(appId, store)),
+    mode = value.deploymentEmails
+  if (!mode || mode === 'inherit') return null
+  if (mode === 'none' || (mode === 'failed' && DEPLOYMENT_SUCCESSES.includes(event))) return false
+  // Enabling emails must never replay deployments completed before this choice.
+  return !finishedAt || !value.deploymentEmailsActivatedAt || finishedAt >= value.deploymentEmailsActivatedAt
 }
 const platformCollection = (store: any = $app) => {
   try {
@@ -246,6 +257,7 @@ const response = (row: core.Record | null, appId: string) => {
     projectId = projectOf(appId)
   return {
     revision: row?.getString('revision') || '',
+    deploymentEmails: value.deploymentEmails,
     ...view,
     email: { ...view.email, projectAdminCount: projectAdmins(appId).length },
     inProject: !!projectId,
@@ -412,6 +424,8 @@ export const resetWebNotificationChannels = (appId: string, actorId: string, sto
       row.getBool('enabled') || !!value.webhook.url || !!value.email.recipients.length || !!value.email.projectAdmins
   value.webhook = base.webhook
   value.email = base.email
+  value.deploymentEmails = 'inherit'
+  delete value.deploymentEmailsActivatedAt
   row.set('actorId', actorId)
   row.set('revision', $security.randomString(24))
   row.set('configEncrypted', encryptWebValue(value))
@@ -432,13 +446,26 @@ export const HandleWebNotificationsPut = (e: core.RequestEvent) => {
     input = webInput(e)
   let result: any,
     generatedSecret = ''
-  if (Object.keys(input).some((key) => !['revision', 'webhook', 'email', 'events', 'cooldownSeconds'].includes(key)))
+  if (
+    Object.keys(input).some(
+      (key) => !['revision', 'webhook', 'email', 'events', 'cooldownSeconds', 'deploymentEmails'].includes(key)
+    )
+  )
     throw new BadRequestError('Options de notification invalides.')
   $app.runInTransaction((tx) => {
     const old = find(app.id, tx),
       value = config(old)
     if (input.revision !== (old?.getString('revision') || ''))
       throw new BadRequestError('Les canaux ont changé. Rechargez leur configuration.')
+    if (input.deploymentEmails !== undefined) {
+      if (!DEPLOYMENT_EMAIL_MODES.includes(input.deploymentEmails))
+        throw new BadRequestError('Choisissez tous les déploiements, les échecs uniquement ou aucun email.')
+      if (input.deploymentEmails !== value.deploymentEmails) {
+        value.deploymentEmailsActivatedAt = stamp()
+        if (input.deploymentEmails === 'all') value.deploymentSuccessActivatedAt = stamp()
+      }
+      value.deploymentEmails = input.deploymentEmails
+    }
     generatedSecret = applyChannels(
       input,
       value,
@@ -512,11 +539,17 @@ const enqueue = (
       details,
     }
   const created: core.Record[] = []
-  if (trigger === 'auto' && !value.events.includes(event)) return created
   if (!platform && app && PLATFORM_ONLY.includes(event) && !platformOperated(app.id, store)) return created
   const appId = platform ? '' : app!.id
   for (const channel of ['webhook', 'email']) {
     if (only && only !== channel) continue
+    if (trigger === 'auto') {
+      const selected =
+        channel === 'email' && app && DEPLOYMENT_RESULTS.includes(event)
+          ? deploymentEmailChoice(app.id, event, store, details.finishedAt || '')
+          : null
+      if (selected === false || (selected === null && !value.events.includes(event))) continue
+    }
     const recipients = channel === 'email' ? recipientsFor(scope, value, appId, store) : []
     if (channel === 'webhook' ? !value.webhook.url : !recipients.length) continue
     if (trigger !== 'test' && !value[channel].enabled) continue
@@ -700,9 +733,10 @@ const deploymentTargetActive = (row: core.Record, store: any = $app) => {
   if (row.getString('trigger') === 'test' || !DEPLOYMENT_RESULTS.includes(row.getString('event'))) return true
   try {
     const payload = JSON.parse(row.getString('payload') || '{}')
-    return !!deploymentEmailApplication(
-      row.getString('scope') === 'platform' ? payload.details?.appId : row.getString('appId'),
-      store
+    const appId = row.getString('scope') === 'platform' ? payload.details?.appId : row.getString('appId')
+    return (
+      !!deploymentEmailApplication(appId, store) &&
+      (row.getString('channel') !== 'email' || deploymentEmailChoice(appId, row.getString('event'), store) !== false)
     )
   } catch {
     return false
@@ -754,7 +788,12 @@ const sendDeliveryEmail = (row: core.Record) => {
       )[0] ||
       '',
     open = payload.application?.dashboardUrl || payload.dashboardUrl || '',
-    manage = platform ? `${dashboardBase()}/applications/recovery` : dashboardLink(appId, 'notifications'),
+    manage =
+      payload.application?.id && DEPLOYMENT_RESULTS.includes(row.getString('event'))
+        ? dashboardLink(payload.application.id, 'notifications')
+        : platform
+          ? `${dashboardBase()}/applications/recovery`
+          : dashboardLink(appId, 'notifications'),
     lines = [
       text.title + (test ? ' (test)' : ''),
       text.sentence,
@@ -1147,7 +1186,7 @@ const scanPlatformOutbox = (p: core.Record, store: any) => {
   let advanced = rows.length > 0
   const value = config(p, true)
   // Platform copies must also cover applications without an app-level alert configuration.
-  if (value.copyAppEvents && value.events.some((event: string) => DEPLOYMENT_RESULTS.includes(event))) {
+  if (value.copyAppEvents) {
     const jobs = takeRows(
       store,
       cursors,

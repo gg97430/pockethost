@@ -143,13 +143,13 @@
   }
 
   function historyAxisTimes(range: InstanceMonitoringHistoryRange) {
-    const now = Date.now()
+    const now = Date.parse(history?.collectedAt || '') || Date.now()
     const duration = rangeDuration(range)
     return [now - duration, now - duration / 2, now]
   }
 
   const xFor = (timestamp: number) => {
-    const start = Date.now() - rangeDuration(selectedRange)
+    const start = (Date.parse(history?.collectedAt || '') || Date.now()) - rangeDuration(selectedRange)
     return chart.left + ((timestamp - start) / rangeDuration(selectedRange)) * chart.width
   }
 
@@ -159,7 +159,7 @@
 
   function buildAvailabilityPath(values: InstanceMonitoringHistoryPoint[]) {
     return values
-      .filter((point) => point.availabilityPercent !== null)
+      .filter((point) => Number.isFinite(point.availabilityPercent) && Number.isFinite(Date.parse(point.collectedAt)))
       .map((point, index) => {
         const timestamp = Date.parse(point.collectedAt)
         return `${index === 0 ? 'M' : 'L'}${xFor(timestamp).toFixed(2)},${availabilityY(point.availabilityPercent!).toFixed(2)}`
@@ -169,7 +169,7 @@
 
   function buildLatencyPath(values: InstanceMonitoringHistoryPoint[]) {
     return values
-      .filter((point) => Number.isFinite(point.averageLatencyMs))
+      .filter((point) => Number.isFinite(point.averageLatencyMs) && Number.isFinite(Date.parse(point.collectedAt)))
       .map((point, index) => {
         const timestamp = Date.parse(point.collectedAt)
         return `${index === 0 ? 'M' : 'L'}${xFor(timestamp).toFixed(2)},${latencyY(point.averageLatencyMs).toFixed(2)}`
@@ -329,8 +329,8 @@
 <FeatureTab title="Surveillance" bind:errorMessage {successMessage} successFlash>
   <svelte:fragment slot="summary">
     <p>
-      PocketHost vérifie la disponibilité et les ressources chaque minute. Les incidents sont confirmés sur plusieurs
-      mesures pour éviter les faux positifs, puis notifiés par les canaux configurés.
+      Kolab vérifie la disponibilité et les ressources chaque minute. Les incidents sont confirmés sur plusieurs mesures
+      pour éviter les faux positifs, puis notifiés par les canaux configurés.
     </p>
   </svelte:fragment>
 
@@ -373,6 +373,16 @@
           <span>{draft.enabled ? 'Activée' : 'Désactivée'}</span>
         </label>
       </section>
+
+      {#if !policy.enabled}
+        <aside class="monitor-notice">
+          <strong>Surveillance désactivée pour cette base</strong>
+          <p>
+            Activez la surveillance pour collecter la disponibilité et la latence et appliquer vos règles d’alerte. Les
+            ressources restent consultables dans <a href={`/instances/${id}/performance`}>Performances</a>.
+          </p>
+        </aside>
+      {/if}
 
       <section class="monitor-metrics" aria-label="Résumé de la surveillance">
         <article>

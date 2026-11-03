@@ -295,6 +295,57 @@ describe('web terminal broker boundaries', () => {
 })
 
 describe('Docker terminal transport', () => {
+  it('accepts only the exact read-only readiness mounts belonging to this publication', () => {
+    const current = info()
+    current.Config.Labels!['pockethost.web.private-db.wait'] = 'true'
+    const root = process.env.WEB_APPS_ROOT || '/home/pockethost-web/data'
+    const home = `${root}/private-db-runtime/${app}/${deployment}-web`
+    current.Mounts = [
+      { Type: 'bind', Source: `${home}/ready`, Destination: '/run/kolab-ready', RW: false },
+      { Type: 'bind', Source: `${home}/wait-env`, Destination: '/run/kolab-wait-env', RW: false },
+      {
+        Type: 'bind',
+        Source: '/opt/pockethost-web/web_private_db_wait.cjs',
+        Destination: '/run/kolab-wait.cjs',
+        RW: false,
+      },
+    ]
+    expect(validPublishedContainer(current, grant())).toBe(true)
+    const clone = () => structuredClone(current)
+    const writable = clone()
+    writable.Mounts![0]!.RW = true
+    const otherTenant = clone()
+    otherTenant.Mounts![0]!.Source = `${root}/private-db-runtime/${actor}/${deployment}-web/ready`
+    const otherVersion = clone()
+    otherVersion.Mounts![1]!.Source = `${root}/private-db-runtime/${app}/${actor}-web/wait-env`
+    const wrongScript = clone()
+    wrongScript.Mounts![2]!.Source = '/etc/passwd'
+    const extra = clone()
+    extra.Mounts!.push({ Type: 'bind', Source: '/etc', Destination: '/host', RW: false })
+    const nested = clone()
+    nested.Mounts!.push({ Type: 'volume', Destination: '/run/kolab-ready/injected', RW: true })
+    const duplicate = clone()
+    duplicate.Mounts![1] = { ...duplicate.Mounts![0]! }
+    const missing = clone()
+    missing.Mounts!.pop()
+    const unlabelled = clone()
+    delete unlabelled.Config.Labels!['pockethost.web.private-db.wait']
+    const legacyBind = clone()
+    legacyBind.HostConfig!.Binds = ['/etc:/host:ro']
+    for (const invalid of [
+      writable,
+      otherTenant,
+      otherVersion,
+      wrongScript,
+      extra,
+      nested,
+      duplicate,
+      missing,
+      unlabelled,
+      legacyBind,
+    ])
+      expect(validPublishedContainer(invalid, grant())).toBe(false)
+  })
   it('never permits host/root or mismatched published container metadata', () => {
     expect(validPublishedContainer(info(), grant())).toBe(true)
     for (const altered of [

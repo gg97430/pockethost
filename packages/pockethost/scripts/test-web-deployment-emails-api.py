@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Native PB + local SMTP integration checks. Uses only a disposable loopback dataset, never a live controller."""
 import argparse
+import base64
 import datetime
 import email.policy
 from email.parser import BytesParser
 import json
+import hashlib
+import hmac
 import os
 import pathlib
 import secrets
@@ -12,6 +15,7 @@ import shutil
 import socket
 import socketserver
 import subprocess
+import struct
 import tempfile
 import threading
 import time
@@ -149,6 +153,11 @@ try:
         ',e=>require(`${__hooks}/mothership`).' + handler + '(e)' +
         (',$apis.requireAuth("users")' if auth else '') + ');' for method, path, handler, auth in routes))
     with fixture.open('a') as output:
+        output.write('onBootstrap(e=>{e.next();require(`${__hooks}/mothership`).InitializeDashboardTotp()});\n')
+        output.write('routerUse(e=>require(`${__hooks}/mothership`).GuardDashboardTotp(e));\n')
+        output.write('onRecordAuthRequest(e=>require(`${__hooks}/mothership`).HandleDashboardTotpAuth(e),"users");\n')
+        for suffix, handler in [('setup', 'HandleDashboardTotpSetup'), ('confirm', 'HandleDashboardTotpConfirm')]:
+            output.write(f'routerAdd("POST","/api/account/totp/{suffix}",e=>require(`${{__hooks}}/mothership`).{handler}(e),$apis.requireAuth("users"));\n')
         output.write("""
 routerAdd('POST','/test/failure',e=>{
  if(e.auth?.collection().name!=='_superusers')throw new ForbiddenError();
@@ -190,7 +199,14 @@ routerAdd('POST','/test/failure',e=>{
         row = request('/api/collections/users/records', su, {'email': name + '@example.invalid', 'username': name,
             'password': password, 'passwordConfirm': password, 'verified': True, 'superAdmin': admin,
             'subscription': 'premium', 'subscription_quantity': 1})
-        return row, request('/api/collections/users/auth-with-password', body={'identity': row['email'], 'password': password})['token']
+        token = request('/api/collections/users/auth-with-password', body={'identity': row['email'], 'password': password})['token']
+        setup = request('/api/account/totp/setup', token, {'password': password})
+        key = base64.b32decode(setup['secret'] + '=' * (-len(setup['secret']) % 8))
+        digest = hmac.new(key, struct.pack('>Q', int(time.time()) // 30), hashlib.sha1).digest()
+        offset = digest[-1] & 15
+        code = str((struct.unpack('>I', digest[offset:offset + 4])[0] & 0x7fffffff) % 1000000).zfill(6)
+        enabled = request('/api/account/totp/confirm', token, {'password': password, 'code': code})
+        return row, enabled['token']
 
     actor, token = user('operator')
     second, second_token = user('operator2')
@@ -387,6 +403,89 @@ routerAdd('POST','/test/failure',e=>{
     assert test['done'] and len(messages) == before + 1 and 'Journal fictif' in attachment(messages[-1][1])
     assert 'FOREIGN-LOG' not in attachment(messages[-1][1])
     checks.append('manual_synthetic_test_never_opens_a_real_deployment_log')
+
+    # App preferences govern automatic email on both the app channel and platform copies.
+    preferred = app('Per app preference')
+    endpoint = '/api/web-apps/' + preferred['id'] + '/notifications'
+    initial = request(endpoint, token)
+    assert initial['deploymentEmails'] == 'inherit'
+    request(endpoint, plain, {'revision': initial['revision'], 'deploymentEmails': 'none'}, 'PUT', status=404)
+    for invalid in ['bad', '', None, True, [], {}]:
+        request(endpoint, token, {'revision': initial['revision'], 'deploymentEmails': invalid}, 'PUT', status=400)
+    assert request(endpoint, token)['revision'] == initial['revision']
+
+    def preference(mode, **values):
+        current = request(endpoint, token)
+        result = request(endpoint, token, {'revision': current['revision'], 'deploymentEmails': mode, **values}, 'PUT')
+        assert result['deploymentEmails'] == mode
+        assert request(endpoint, token)['deploymentEmails'] == mode
+        return result
+
+    preference('failed')
+    failure(preferred, status='ready')
+    expected_failure = failure(preferred)
+    queued = claim()
+    assert queued and queued['payload']['details']['deploymentId'] == expected_failure
+    assert queued['scope'] == 'platform' and claim() is None
+    message = send(queued, recipients)
+    assert list(message.iter_attachments())
+    assert endpoint.replace('/api/web-apps/', 'https://dashboard.example.invalid/applications/').replace('/notifications', '?tab=notifications') in message.get_body(preferencelist=('plain',)).get_content()
+    checks.append('per_app_failures_only_saved_without_local_channel_and_platform_copies_respect_it')
+
+    # An explicit app choice overrides the platform deployment event selection, never its disabled channels.
+    platform = request('/api/web-platform-notifications', token)
+    request('/api/web-platform-notifications', token, {'revision': platform['revision'], 'events': ['app_deployment_failed']}, 'PUT')
+    preference('all')
+    failure(preferred, status='ready', finishedAt=now(-60))
+    success = failure(preferred, status='ready')
+    queued = claim()
+    assert queued and queued['payload']['details']['deploymentId'] == success and claim() is None
+    assert not list(send(queued, recipients).iter_attachments())
+    checks.append('per_app_all_overrides_platform_event_filter_without_replaying_old_deployments')
+
+    success = failure(preferred, status='ready')
+    queued = claim()
+    assert queued and queued['payload']['details']['deploymentId'] == success
+    preference('failed')
+    before = len(messages)
+    worker('email', {'id': queued['id'], 'proof': queued['proof']}, 400)
+    assert len(messages) == before
+    patch('web_notification_deliveries', queued['id'], {'status': 'pending', 'leaseHash': '', 'nextAttemptAt': now(-1)})
+    assert claim() is None
+    assert request('/api/collections/web_notification_deliveries/records/' + queued['id'], su)['status'] == 'suppressed'
+    preference('none')
+    failure(preferred)
+    failure(preferred, status='ready')
+    assert claim() is None
+    unrelated = failure(other)
+    queued = claim()
+    assert queued and queued['payload']['details']['deploymentId'] == unrelated
+    send(queued, recipients)
+    checks.append('mode_changes_revalidated_before_claim_and_smtp_no_emails_when_disabled_other_apps_unchanged')
+
+    # Webhook subscriptions stay independent; both local and platform email obey the same app preference.
+    preference('failed', email={'enabled': True, 'recipients': [actor['email']]},
+        webhook={'enabled': True, 'url': 'https://hooks.example.invalid/receive'},
+        events=['deployment_succeeded', 'deployment_failed'])
+    failure(preferred, status='ready')
+    queued = claim()
+    assert queued and queued['channel'] == 'webhook' and queued['payload']['event'] == 'deployment_succeeded'
+    worker('report', {'id': queued['id'], 'proof': queued['proof'], 'success': True, 'httpStatus': 200})
+    assert claim() is None
+    checks.append('email_preferences_leave_webhook_events_unchanged')
+    preference('failed', webhook={'enabled': False}, events=[])
+    expected_failure = failure(preferred)
+    first, second_job = claim(), claim()
+    assert first and second_job and first['scope'] != second_job['scope'] and claim() is None
+    for queued in [first, second_job]:
+        assert queued['payload']['details']['deploymentId'] == expected_failure
+        assert list(send(queued, [actor['email']] if queued['scope'] == 'app' else recipients).iter_attachments())
+    stale = request(endpoint, token)['revision']
+    preference('all')
+    request(endpoint, token, {'revision': stale, 'deploymentEmails': 'none'}, 'PUT', status=400)
+    assert request(endpoint, token)['deploymentEmails'] == 'all'
+    checks.append('explicit_failure_emails_reach_both_channels_and_stale_edits_are_rejected')
+    preference('none', webhook={'enabled': False}, email={'enabled': False})
 
     # No notifications from orphaned/deleting/suspended applications.
     for state in ['deleting', 'suspended']:

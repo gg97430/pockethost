@@ -11,6 +11,7 @@
     type NotificationSettings,
     type NotificationDelivery,
     type NotificationTestResult,
+    type DeploymentEmailMode,
   } from '$lib/webObservability'
   import { WEB_NO_CAPABILITIES, type WebCapabilityMap } from '$lib/webAccessView'
   /** Application concernée ; vide pour le canal de la plateforme. */
@@ -53,6 +54,7 @@
     revealed = ''
   let testEvent: Record<Channel, string> = { webhook: 'test', email: 'test' },
     testResult: Record<Channel, TestState> = { webhook: null, email: null }
+  let deploymentEmails: DeploymentEmailMode = 'inherit'
   const labels: Record<string, string> = {
     pending: 'Nouvel essai prévu',
     sending: 'Envoi en cours',
@@ -84,6 +86,7 @@
     // avant l'enregistrement explicite).
     projectAdmins = value.revision === '' && !platform ? !!value.inProject : !!value.email.projectAdmins
     copyAppEvents = !!value.copyAppEvents
+    deploymentEmails = value.deploymentEmails || 'inherit'
     events = [...value.events]
     cooldownSeconds = value.cooldownSeconds
     url = ''
@@ -161,7 +164,7 @@
         },
         events,
         cooldownSeconds: Number(cooldownSeconds),
-        ...(platform ? { copyAppEvents } : {}),
+        ...(platform ? { copyAppEvents } : { deploymentEmails }),
       },
       'Canaux enregistrés. Seuls les canaux activés recevront les prochains événements.'
     )
@@ -261,13 +264,13 @@
         ? 'Envois suspendus'
         : settings?.webhook.enabled || settings?.email.enabled
           ? 'Canal actif'
-          : 'Aucun envoi automatique'}</span
+          : 'Canaux dédiés inactifs'}</span
     >
   </div>
   <p class="web-help">
     {#if platform}Worker muet, espace disque, échecs de reprise et de capture : ces alertes ne concernent que les
-      opérateurs du serveur.{:else}Choisissez les destinataires et activez les canaux souhaités. Aucun webhook ni email
-      n’est envoyé tant qu’un canal n’a pas été explicitement configuré.{/if}
+      opérateurs du serveur.{:else}Réglez les emails de déploiement de cette application et ses autres alertes. Les
+      emails utilisent les destinataires configurés ici ou par les opérateurs de la plateforme.{/if}
   </p>
   {#if platform && settings?.worker}<p class="web-help" role="status">
       Dernier contact du worker : {settings.worker.lastClaimAt
@@ -303,6 +306,31 @@
       class="web-form"
       onsubmit={save}
     >
+      {#if !platform}<fieldset class="channel-card deployment-emails" disabled={!!busy || !canManage}>
+          <legend>Emails de déploiement</legend>
+          <label class="web-field">
+            <span>Quand recevoir un email pour cette application ?</span>
+            <select bind:value={deploymentEmails}>
+              <option value="inherit">Conserver les réglages actuels</option>
+              <option value="all">Tous les déploiements · réussis et échoués</option>
+              <option value="failed">Seulement les déploiements échoués</option>
+              <option value="none">Aucun email de déploiement</option>
+            </select>
+          </label>
+          <p class="web-help">
+            Ce choix s’applique aussi aux emails envoyés aux opérateurs de la plateforme. En cas d’échec, le journal
+            reste joint avec les valeurs sensibles masquées.
+          </p>
+          <div class="web-actions">
+            <button
+              class="web-button web-button--primary"
+              type="button"
+              disabled={!!busy || deploymentEmails === (settings.deploymentEmails || 'inherit')}
+              onclick={() => put({ deploymentEmails }, 'Préférence des emails de déploiement enregistrée.')}
+              >{busy === 'save' ? 'Enregistrement…' : 'Enregistrer ce choix'}</button
+            >
+          </div>
+        </fieldset>{/if}
       <fieldset class="web-fieldset" disabled={!canManage}>
         <fieldset class="channel-card">
           <legend>Webhook HTTPS</legend><label class="web-field"
@@ -431,6 +459,9 @@
         </fieldset>
         <fieldset class="channel-card">
           <legend>Événements à recevoir</legend>
+          {#if !platform && deploymentEmails !== 'inherit'}<p class="web-help">
+              Pour les déploiements, ces cases règlent les webhooks. Les emails suivent le choix ci-dessus.
+            </p>{/if}
           {#if !platform && settings.healthMonitoring === 'disabled' && (events.includes('health_degraded') || events.includes('health_recovered'))}<div
               class="web-alert"
               role="status"
@@ -454,9 +485,12 @@
               >{/each}
           </div>
           {#if platform}<label class="web-check"
-              ><input type="checkbox" bind:checked={copyAppEvents} disabled={!!busy} /> Recevoir aussi une copie des échecs
-              de toutes les applications</label
-            >{/if}
+              ><input type="checkbox" bind:checked={copyAppEvents} disabled={!!busy} /> Recevoir aussi les événements des
+              applications</label
+            >
+            <p class="web-help">
+              Les emails de déploiement respectent le choix enregistré dans chaque application.
+            </p>{/if}
           <label class="web-field cooldown"
             ><span>Regrouper un même type d’alerte pendant · secondes</span><input
               type="number"
@@ -469,8 +503,8 @@
             /></label
           >
           <p class="web-help">
-            Un même événement n’est envoyé qu’une fois par canal. Maximum 12 alertes automatiques par canal et par heure
-            ; les tests ne sont jamais regroupés (10 par heure).
+            Les emails de déploiement ne sont pas regroupés. Les autres alertes automatiques sont limitées à 12 par
+            canal et par heure ; les tests ne sont jamais regroupés (10 par heure).
           </p>
         </fieldset>
       </fieldset>
@@ -555,6 +589,9 @@
     font-size: 0.8125rem;
     font-weight: 600;
     padding: 0 0.4rem;
+  }
+  .deployment-emails {
+    border-inline-start: 3px solid var(--web-brand, #4878f8);
   }
   .event-choices {
     display: grid;

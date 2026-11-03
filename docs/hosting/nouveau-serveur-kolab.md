@@ -2,7 +2,17 @@
 
 Procédure opérateur pour un serveur regroupant **PocketBase, hébergement web, accès privé aux BDD, sauvegardes et supervision**.
 
-Référence : installation d’app4 et correctifs vérifiés jusqu’au **1er novembre 2026**, dont l’installation de `cpulimit`, la validation Cloudflare avant activation du proxy et le respect du dossier de construction des workers et Dockerfiles. Le code de référence comprend le commit `5f9044ec35c8e5e98d9b999d7bf97d620e266588` ; choisir ensuite une release validée plus récente si nécessaire.
+L'allocation de RAM automatique fait partie de la réception d'un nouvel hôte. Après initialisation du contrôleur, du worker et du moteur rootless dédié, exécuter depuis le répertoire de la version :
+
+```sh
+sudo python3 packages/pockethost/scripts/install-memory-allocation.py
+sudo systemctl is-active pockethost-memory-allocation
+sudo cat /var/lib/kolab-memory-allocation/status.json
+```
+
+Vérifier le contrôle « Allocation automatique de RAM » dans la supervision. L'installateur conserve la configuration locale existante ; la politique, les exceptions aux quotas explicites et le retour arrière sans arrêt des sites sont décrits dans [WEB_RESOURCE_ALLOCATION.md](../../WEB_RESOURCE_ALLOCATION.md). Ne pas copier l'état mémoire d'un autre serveur.
+
+Référence : installations d’app4 et d’app5 et correctifs vérifiés jusqu’au **1er novembre 2026**, dont l’installation de `cpulimit`, la validation Cloudflare avant activation du proxy et le respect du dossier de construction des workers et Dockerfiles. Le code de référence comprend le commit `5f9044ec35c8e5e98d9b999d7bf97d620e266588` ; choisir ensuite une release validée plus récente si nécessaire.
 
 Ce document sert à préparer et à réceptionner une installation. **Ce n’est pas un script à exécuter intégralement.** Les commandes sont repérées par contexte ; les valeurs entre `<...>` sont à remplacer. Conserver une copie remplie de la fiche serveur dans le dossier opérateur privé, avec les preuves de recette, sans y recopier les secrets.
 
@@ -606,6 +616,8 @@ Lire le JSON sous une identité autorisée si ses permissions le nécessitent. A
 
 Le terminal exige son bundle compilé et sa propre unité ; l’activer après sa recette. Ses fichiers d’environnement ne doivent pas lui transmettre les clés S3/archives inutiles. Ne pas ouvrir son port interne comme service public : le dashboard et le firewall portent l’authentification.
 
+Tester une vraie session depuis le dashboard sur un site ordinaire **et sur un site lié à une BDD privée** : ouverture, `id -u` égal à `10001`, saisie, redimensionnement et fermeture auditée. Le broker doit reconnaître les trois montages de préparation BDD de la publication courante (`/run/kolab-ready`, `/run/kolab-wait-env`, `/run/kolab-wait.cjs`), uniquement depuis leurs chemins de plateforme exacts et en lecture seule. Refuser tous les autres montages hôte, ceux d’une autre application/version et les superpositions. Un simple `/health` positif ne prouve pas que le terminal peut ouvrir le conteneur. Après modification du broker TypeScript, reconstruire et livrer aussi `/opt/pockethost-web/terminal-broker.cjs`.
+
 ### 9.2 Builder et Railpack
 
 - Builder `ph-web-builder`, moteur rootless exclusivement, réseau dédié distinct de ceux des sites.
@@ -635,7 +647,7 @@ Les protections du serveur restent nécessaires indépendamment de ces options :
 
 ## 10. Accès privé aux bases
 
-Suivre [la procédure du relais privé](../../WEB_HOSTING.md#installation-du-relais-privé). Installer les fichiers broker/provider/proxy/target/wait et le modèle d’unité, puis l’image Node officielle déjà vérifiée dans Docker rootful.
+Suivre [la procédure du relais privé](../../WEB_HOSTING.md#installation-du-relais-privé). Installer les fichiers broker/provider/proxy/target/wait, leurs modules `web_private_db_cpu.py` et `web_private_db_limits.py`, le helper `instance_request_limits.py` et le modèle d’unité, puis l’image Node officielle déjà vérifiée dans Docker rootful. Les fichiers de confiance sous `/opt/pockethost-web` doivent appartenir à root et ne pas être modifiables par le groupe ou les autres utilisateurs ; l’installateur vérifie ces prérequis avant toute configuration.
 
 ```bash
 sudo python3 /opt/pockethost-web/install-private-db-bridge.py \
@@ -650,6 +662,7 @@ Recette obligatoire avec une BDD et une application jetables :
 - Autoriser explicitement cette application dans **BDD → Utilisation → Accès privé**.
 - Redéployer/démarrer l’application pour recevoir le proxy et la variable serveur.
 - Tester `http://127.0.0.1:4825/api/health` depuis le runtime de **cette application**.
+- Vérifier une rafale de 48 lectures parallèles, en consommant les réponses, sans fermeture prématurée des connexions. Le relais accepte désormais jusqu’à 128 connexions par liaison et par application, avec un plafond global de 512 ; les connexions HTTP persistantes comptent aussi. Conserver les limites et les tests d’isolation lors d’une évolution de capacité.
 - Tester HTTP, authentification et WebSocket si utilisés par le produit.
 - Refuser le même accès à une autre application ; tester la révocation et la fermeture des connexions déjà ouvertes.
 - Vérifier qu’aucun nouveau port BDD n’est joignable depuis Internet.
@@ -657,6 +670,24 @@ Recette obligatoire avec une BDD et une application jetables :
 Cette adresse n’existe ni dans le navigateur, ni dans un build, ni sur un autre serveur. Ne jamais la placer dans `NEXT_PUBLIC_*` ou une variable publique équivalente. Les appels côté navigateur gardent l’URL publique ; les appels serveur peuvent utiliser la variable `KOLAB_DB_4825_URL`. Les règles et comptes PocketBase restent applicables.
 
 Une base volontairement arrêtée n’est pas réveillée par le relais. La connexion privée ne ferme pas automatiquement son URL publique.
+
+Le limiteur de requêtes natif PocketBase est un réglage propre à chaque base, distinct des plafonds de connexions du relais. Vérifier les réponses HTTP 429 dans les journaux avant de lui attribuer un incident. Une désactivation explicitement demandée s’effectue via l’API de paramètres de cette seule base, avec sauvegarde du réglage et vérification de sa persistance, sans modifier les autres paramètres ni les comptes. Ne pas recopier ce choix sur les autres bases lors d’une publication de plateforme.
+
+### 10.1 Réglages administrateur
+
+**Administration → Limites de requêtes**, réservé aux superadmins ayant validé le TOTP, regroupe trois réglages indépendants :
+
+| Réglage | Portée et application |
+| --- | --- |
+| Trafic des hébergements | Nombre de requêtes par minute et par IP, partagé entre les sites du serveur ; **0 désactive ce limiteur**. Valeur initiale issue de `WEB_APPS_IP_RATE_LIMIT`, sinon 1 200. Application automatique via le registre du worker, sans redémarrer les sites. |
+| Relais BDD privé | Plafonds de connexions simultanées : total, application, liaison et base. Valeurs initiales 512 / 128 / 128 / 128. Réglage rechargé par le broker, les proxys et les cibles ; une baisse ne coupe pas les connexions existantes. |
+| Limiteur PocketBase | Choisir une base démarrée, lire son réglage réel, activer/désactiver et modifier ses règles. Enregistrement par l’API native, exceptions IP et autres paramètres conservés. Une base arrêtée n’est pas démarrée automatiquement. |
+
+Les formulaires détectent une modification concurrente et demandent un rechargement plutôt que d’écraser un réglage récent. Les valeurs enregistrées appartiennent au serveur et restent dans sa base de contrôle ; ne pas les copier avec le code vers les autres serveurs. Les règles propres aux projets et aux applications restent indépendantes.
+
+Attention : `PH_DISABLE_FIREWALL_RATE_LIMIT=true` ne désactive pas le limiteur spécifique des hébergements. Pour identifier un HTTP 429 émis par ce dernier après cette mise à jour, rechercher l’en-tête `X-Kolab-Rate-Limit-Source: hosting-ip`. Ne pas confondre le plafond HTTP avec les limites de connexions ouvertes ou les protections d’authentification.
+
+À la réception d’un nouveau serveur, vérifier une modification puis sa relecture dans chaque formulaire sur des ressources jetables ; vérifier aussi les refus pour un compte ordinaire et pour un superadmin n’ayant pas encore terminé son TOTP. Les hooks natifs de console doivent être disponibles pour gérer les règles d’une base depuis Kolab.
 
 ## 11. Git, GitHub et déploiements automatiques
 
@@ -667,6 +698,22 @@ Une base volontairement arrêtée n’est pas réveillée par le relais. La conn
 - Pour la CI par images : registre, authentification et droits limités à l’application concernée.
 
 **Recette de bout en bout :** pousser un commit factice sur un dépôt de test, observer la livraison GitHub reçue, le job réellement déclenché, le bon commit publié et la réponse HTTPS. Une option « auto-déploiement » cochée ou un webhook HTTP 200 ne prouve pas ce parcours.
+
+Un webhook créé directement dans les réglages d’un **dépôt** n’a pas le même message qu’un webhook de GitHub App : son push peut ne pas contenir `installation`. Ne pas le brancher sur une connexion App sans déclarer son origine. Utiliser une connexion supplémentaire dédiée, avec un secret HMAC distinct, puis la lier explicitement via `PATCH /api/web-apps/github/connections/{id}` :
+
+```json
+{
+  "repositoryWebhook": {
+    "repository": "organisation/depot",
+    "repositoryId": "123456789",
+    "hookId": "987654321"
+  }
+}
+```
+
+Cette option est réservée à l’administration de la plateforme, indisponible sur la connexion principale et limitée aux push du dépôt et du webhook déclarés. La signature HMAC reste obligatoire, une installation explicitement incorrecte reste refusée et la tête de branche est relue avec les droits GitHub de cette connexion avant de déployer. `repositoryWebhook: null` rétablit le fonctionnement GitHub App strict. Les secrets et l’URL du webhook partagé des autres serveurs ne doivent pas être changés pour corriger une seule application.
+
+Après une migration, vérifier **un vrai push**, pas seulement un ping. Si le dernier push a été refusé, sa relivraison depuis GitHub doit être acceptée après correction ; si ce commit est déjà publié, aucun second déploiement n’est attendu. Les identifiants de livraison GitHub peuvent dépasser la précision des nombres JavaScript : les conserver exactement pour une relivraison REST.
 
 Tester aussi une erreur de build : l’ancienne version doit rester publiée et l’e-mail d’échec doit contenir les logs d’erreur masqués en pièce jointe. Voir [la recette des alertes](../../WEB_ALERTS_RUNBOOK.md#42-échec-de-déploiement-deployment_failed).
 
@@ -684,6 +731,8 @@ Tester aussi une erreur de build : l’ancienne version doit rester publiée et 
 Configurer bucket, région, préfixes uniques par serveur, identifiants à droits limités, chiffrement, rétention et horaires. Vérifier le résultat réel d’un envoi et d’une relecture S3. Ne pas donner au nettoyage d’un serveur la possibilité de purger les sauvegardes d’un autre.
 
 Une réplication saine, un objet présent dans S3 ou une archive dont le nom semble correct ne remplace pas un test de restauration.
+
+Le contrôle Litestream affiche un état simple : **Synchro OK** quand les positions sont confirmées à jour, **Synchronisation en cours** pour un envoi restant à confirmer, **Synchro active** quand le service et S3 fonctionnent mais que l’inventaire est partiel, et **À vérifier** pour une anomalie ou une mesure insuffisante. Les positions et compteurs sont repliés dans « Détails techniques ». Le contrôle S3 est borné à 3 000 objets : un inventaire partiel n’est ni une panne ni une preuve de synchronisation complète. Une ancienne date d’objet sur une base sans écriture ne prouve pas un retard.
 
 ### 12.2 Sauvegardes et restauration BDD
 
@@ -771,6 +820,8 @@ Configurer dans l’administration :
 - Clé de chiffrement de supervision conservée et permissions des caches correctes.
 
 Les notifications de supervision partent sur incident confirmé et rétablissement, sans bilan horaire quand tout va bien. Les notifications de déploiement sont indépendantes ; activer les réussites ne rejoue pas l’historique. Vérifier aussi le rendu HTML sur mobile et la version texte.
+
+Dans chaque **Hébergement → Notifications → Emails de déploiement**, choisir tous les déploiements (réussis et échoués), seulement les échecs, ou aucun email. « Conserver les réglages actuels » maintient les abonnements existants. Ce choix filtre aussi les copies envoyées aux opérateurs de la plateforme ; il conserve leurs destinataires et ne modifie pas les webhooks. Un échec conserve son journal masqué en pièce jointe. Vérifier avec une application jetable que le passage à « échecs uniquement » bloque un mail de réussite encore en attente, puis que les autres applications restent indépendantes. Le lien « Gérer ces alertes » d’un mail de déploiement ouvre les notifications de l’application concernée.
 
 Commencer par les contrôles sans notifications pendant l’installation. Après validation des destinataires et activation des canaux, envoyer un test explicite puis provoquer un incident sur un service **jetable**, vérifier sa notification et son rétablissement. Confirmer la réception en boîte, pas seulement l’acceptation SMTP. Ne pas envoyer un test à un webhook ou destinataire d’un ancien serveur par inadvertance.
 
@@ -895,8 +946,11 @@ Pour le dashboard, conserver les anciens assets immuables pendant la transition 
 | Worker indisponible                                                     | unité, secret partagé, URL loopback, socket rootless, cgroup v2/systemd, quotas effectifs, fraîcheur de `worker-status.json`                                   |
 | Railpack indisponible                                                   | module + binaires/mise + empreintes + images ; installateur réellement présent                                                                                 |
 | Build terminé par `Killed`, code 137                                    | mémoire/cgroup du builder et du parent, budget déclaré par le plan, mémoire consommée par les autres services ; ne pas supprimer les limites                   |
+| Construction en attente de ressources pendant 120 secondes              | distinguer RAM physique, budget du groupe web et pression PSI ; prévoir les sites actifs, le plafond complet du builder et la marge. La RAM résidente du builder est déjà dans le groupe : ne pas la compter deux fois. Ajuster le budget local seulement après contrôle de la réserve physique, puis conserver ce réglage dans la reprise globale |
+| SWC `file too short`, puis erreur de chargement de `next.config.ts`      | dépendance native tronquée : comparer le même commit et le binaire installé, reconstruire complètement cette application avec un cache neuf ; vérifier les installations concurrentes sur un cache pnpm partagé |
 | Erreurs Google Fonts/Turbopack ou dépendance externe `pg-...` manquante | version et sortie du framework, contenu de l’image, dépendances nécessaires au runtime ; ne pas traiter cela comme une panne DNS du serveur                    |
 | Accès privé BDD sans connexion                                          | base démarrée, bon serveur, autorisation de l’application, proxy prêt, variable serveur/runtime et redéploiement initial ; pas de localhost dans le navigateur |
+| React nº 441 ou rendu serveur échoué, avec `fetch failed` / `UND_ERR_SOCKET` | corréler le digest du navigateur aux journaux serveur ; contrôler la liaison privée et ses connexions simultanées. Le numéro React ne constitue pas un statut HTTP 441 ou une preuve de limitation PocketBase |
 | Certificat/proxy Cloudflare bloqué                                      | TXT/A/AAAA, propagation, certbot/contact, droits du jeton, certificat local, passage du challenge, restrictions de zone et compte                              |
 | Échec au redémarrage d’un site à volume                                 | ressources parent disponibles, image auxiliaire, publication loopback stable et délai de santé du service                                                      |
 | Graphes absents ou disque non réparti                                   | collecteur actif, droits caches, cgroups réels, `diskRoots` remplis, deux échantillons CPU et premier scan terminés                                            |
@@ -904,6 +958,12 @@ Pour le dashboard, conserver les anciens assets immuables pendant la transition 
 | TLS/routes lisibles en SSH mais pas par les services                    | groupes effectifs des enfants systemd/PM2 et droits de traversée des dossiers                                                                                  |
 | Console BDD ou webhook renvoie vers un ancien hôte                      | domaines protégés, origines publiques, paramètres GitHub, liens hérités et anciens IDs copiés                                                                  |
 | `node:sqlite` inconnu                                                   | Node réel utilisé par pnpm/service trop ancien ; fixer PATH/exécutable sur Node 24 validé                                                                      |
+
+Pour un binaire SWC tronqué, relever la première erreur native avant l’erreur finale de configuration : le repli de Next.js peut ensuite produire un message sur les imports JSON. Conserver le commit, les journaux et les tailles/empreintes avant récupération. Contrôler l’espace disque et les événements mémoire pour distinguer cet incident d’un manque de ressources. La reconstruction complète d’une application doit ignorer ses couches et utiliser un namespace de cache neuf ; ne pas purger le builder partagé ou les caches des autres projets.
+
+Le message de production [React nº 441](https://react.dev/errors/441) masque la cause précise de l’échec du rendu serveur. Le digest permet de retrouver l’erreur dans les journaux de l’application ; conserver cette corrélation avant toute intervention. Une rupture TCP du relais peut provoquer une erreur de connexion sans réponse HTTP 429.
+
+Le Dockerfile personnalisé reste responsable de ses montages de cache. Deux étapes qui installent des dépendances dans le même store pnpm doivent coordonner leur accès : utiliser `sharing=locked` sur le montage et fixer explicitement le même `--store-dir`. Un contrôle de chargement de SWC juste après l’installation permet d’identifier une dépendance invalide avant de lancer la compilation. Une corruption constatée ne prouve pas à elle seule que la concurrence en est la cause. Référence : [montages et coordination des caches Docker](https://docs.docker.com/build/cache/optimize/#use-cache-mounts).
 
 ## 19. Checklist de réception finale
 
@@ -1004,3 +1064,25 @@ L’installateur utilise directement les empreintes du worker, valide les deux b
 ### Régressions exécutées en CI
 
 Le job `server-provisioning` vérifie la syntaxe des installateurs, les contrôles de réception, les runtimes, Railpack et le worker. Il couvre notamment le refus d’un budget d’admission insuffisant, les demandes adaptatives, la pression mémoire et les priorités, les prérequis oubliés, les scripts installés obsolètes, les binaires non conformes et les chemins de construction. Le job existant de fraîcheur des hooks empêche de publier un bundle PocketBase divergent de ses sources TypeScript. Ces tests automatiques complètent la recette sur un hôte Linux vierge ; ils ne la remplacent pas.
+
+
+## 22. Points confirmés pendant l’installation d’app5
+
+- Installer aussi **AWS CLI** : `boto3` seul ne suffit pas aux sauvegardes des BDD, dont les transferts distants utilisent `aws`. Vérifier `aws --version`, puis une vraie copie distante et une restauration.
+- Vérifier l’architecture de l’image PocketBase **avant le premier démarrage** (`docker image inspect --format '{{.Architecture}}' <image>`). Le tag public `benallfree/pockethost-instance:latest` observé le 1er novembre 2026 était ARM64 ; il échoue sur AMD64 avec `exec format error`. Utiliser une image AMD64 validée, conservée dans le stockage opérateur, et fixer son identifiant immuable dans `DOCKER_INSTANCE_IMAGE_NAME`. Un digest issu d’une image chargée localement n’est pas nécessairement téléchargeable depuis le registre.
+- Fournir `TEST_EMAIL` dans l’environnement du contrôleur, en plus des autres paramètres obligatoires ; sinon il peut s’arrêter avant d’écouter.
+- Après initialisation du contrôleur, vérifier par API la présence et la connexion du **compte utilisateur superAdmin**. La disponibilité de `/api/health` pendant un bootstrap ne prouve pas que toutes les écritures d’initialisation ont terminé.
+- Configuration du collecteur : fichier **root:root 0600**. Les services worker et terminal sont dans `user.slice/user-1001.slice/`, et non `system.slice/`.
+- Retirer les limites provisoires de staging. Contrôler le fichier persistant `user-1001.slice.d/web-limits.conf` et les propriétés réelles, puis les vérifier après reboot ; une limite appliquée seulement avec `--runtime` disparaît au redémarrage.
+- Le renouvellement TLS utilise le vrai client PM2 sous `ubuntu` pour recharger le pare-feu. Le petit adaptateur de supervision PM2 n’accepte que les lectures `jlist`.
+- Le service de reprise et ses fichiers privés doivent avoir un propriétaire cohérent. Prévoir des clés indépendantes pour le contrôleur, le chiffrement des images et la reprise globale ; conserver une copie privée externe des clés de déchiffrement.
+- Les sauvegardes d’app5 utilisent `app5/instances`, `app5/web-app-backups` et `app5/platform-recovery` ; aucun de ces préfixes ne doit recouvrir ceux d’un autre hôte.
+- Ajouter le nouveau serveur à `platform-fleet.json`, à la liste des cibles obligatoires et aux tests de publication avant réception. App1/app2 restent retirés.
+
+Pour une installation SFTP seule, ne pas activer `edge-ftp`, ne pas ouvrir le port 21 ni la plage passive, et définir `PH_FTP_DISABLED=true` dans l’environnement utilisé par la supervision. Les contrôles SFTP restent actifs. App5 utilise ce profil ; FTPS est un protocole historique déprécié.
+
+## Première connexion et création de base
+
+Le TOTP du tableau de bord Kolab est obligatoire pour chaque compte, y compris les superadmins, dès la première connexion sur tous les serveurs. Vérifier le parcours mot de passe → QR → premier code valide → conservation des codes de secours → tableau de bord. Tester que les API métier sont refusées avant cette validation et que la désactivation est interdite. Conserver la clé `.pockethost-totp.key` dans les sauvegardes chiffrées. Les intégrations techniques ne doivent pas utiliser le compte humain ; la préparation de reprise utilise une délégation SU locale signée, sans en-têtes de proxy.
+
+Avant réception, vérifier que `/api/versions` liste les binaires PocketBase réellement présents, et créer puis supprimer une base de validation. Le démarrage initialise le catalogue absent à partir du cache local sans écraser un catalogue déjà rempli. Un catalogue vide ne doit jamais apparaître comme un quota épuisé.

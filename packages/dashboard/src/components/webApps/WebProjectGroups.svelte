@@ -189,6 +189,7 @@
           online={app.status === 'running'}
           label={app.status === 'running' ? 'En ligne' : app.status === 'stopped' ? 'Arrêté' : ''}
         />
+        {#if app.deploymentInProgress}<WebAppStatus status="running" label="En cours de déploiement" />{/if}
       </div>
       <div class="web-app-meta">
         {#each siteMeta(app) as item}<span>{item}</span>{/each}

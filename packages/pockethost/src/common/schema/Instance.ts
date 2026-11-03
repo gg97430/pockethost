@@ -40,6 +40,8 @@ export type InstanceFields<TExtra = {}> = BaseFields & {
   publicHostname?: string
   /** Exact historical generated addresses; custom cname remains independently revocable. */
   legacyHostnames?: string[]
+  /** Organizational project label, independent of ownership and hosting projects. */
+  projectLabel?: string
   subdomain: Subdomain
   uid: UserId
   status: InstanceStatus

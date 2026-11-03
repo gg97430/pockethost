@@ -41,7 +41,9 @@ export const webhookFormats: Record<WebWebhookFormat, string> = {
   discord: 'Discord',
 }
 export const WEBHOOK_FORMATS = WEB_WEBHOOK_FORMATS
+export type DeploymentEmailMode = 'inherit' | 'all' | 'failed' | 'none'
 export type NotificationSettings = {
+  deploymentEmails?: DeploymentEmailMode
   paused?: boolean
   pausedLegacy?: boolean
   revision: string

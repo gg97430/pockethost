@@ -334,10 +334,10 @@ class Job:
   deadline=time.monotonic()+timeout;announced=False
   while True:
    try:return admit_resources(build=build)
-   except ResourcePressure:
+   except ResourcePressure as error:
     self.heartbeat(True)  # Cancellation and lease renewal continue while waiting.
-    if time.monotonic()>=deadline:raise ResourcePressure('Capacité toujours insuffisante après 120 s d’attente. Réessayez plus tard ; les sites publiés sont conservés.')from None
-    if not announced:self.log('Attente de ressources : priorité aux sites publiés, contrôle toutes les 5 secondes (120 s maximum).\n');announced=True
+    if time.monotonic()>=deadline:raise ResourcePressure(str(error)+' Capacité toujours insuffisante après '+str(timeout)+' s d’attente. Les sites publiés sont conservés.')from None
+    if not announced:self.log(str(error)+'\nAttente de ressources : priorité aux sites publiés, contrôle toutes les 5 secondes ('+str(timeout)+' s maximum).\n');announced=True
     time.sleep(5)
 
  def build(self,context,work):

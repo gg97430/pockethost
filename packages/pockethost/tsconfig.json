@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "ignoreDeprecations": "6.0",
-    "lib": ["ES2021.String"],
+    "lib": ["ES2021.String", "ES2022.Object"],
     "allowJs": true,
     "checkJs": true,
     "esModuleInterop": true,

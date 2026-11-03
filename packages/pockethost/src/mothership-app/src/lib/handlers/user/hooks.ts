@@ -1,3 +1,9 @@
+routerAdd(
+  'POST',
+  '/api/web-apps/_platform/delegate',
+  (e) => require(`${__hooks}/mothership`).HandleDashboardServiceDelegate(e),
+  $apis.requireAuth('_superusers')
+)
 onBootstrap((e) => {
   e.next()
   require(`${__hooks}/mothership`).InitializeDashboardTotp()

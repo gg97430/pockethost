@@ -3,6 +3,7 @@
   import FeatureTab from '$components/FeatureTab.svelte'
   import { client } from '$src/pocketbase-client'
   import { instance } from '../store'
+  import { litestreamStatus } from '$util/litestreamStatus'
 
   type Check = {
     status?: string
@@ -76,18 +77,7 @@
   }
   $: checking = ['queued', 'running'].includes(report?.verification.status || '')
   $: localErrors = report?.metrics.sync_error_count
-  $: position =
-    report?.positionState === 'caught-up'
-      ? 'Positions concordantes'
-      : report?.positionState === 'pending'
-        ? 'Envoi à confirmer'
-        : 'Position distante à confirmer'
-  $: problem =
-    !!report?.enabled &&
-    (report.service.state !== 'online' ||
-      !report.remote.ok ||
-      report.positionState === 'unknown' ||
-      report.metrics.disk_full === 1)
+  $: sync = report ? litestreamStatus(report) : null
   const refresh = async () => {
     if (busy || disposed) return
     busy = true
@@ -163,15 +153,10 @@
     {#if !report}
       <p role="status">Chargement des contrôles…</p>
     {:else}
-      <div class:warning={problem || !report.enabled} class="headline" role="status">
-        <strong
-          >{!report.enabled
-            ? 'Réplication désactivée'
-            : problem
-              ? 'Un contrôle demande votre attention'
-              : position}</strong
-        >
-        <span>Contrôle local : {date(report.checkedAt)} · S3 : {date(report.remote.checkedAt)}</span>
+      <div class="headline" data-tone={sync?.tone} role="status">
+        <div class="sync-heading"><span class="sync-dot" aria-hidden="true"></span><strong>{sync?.label}</strong></div>
+        <p>{sync?.message}</p>
+        <span>Dernier contrôle : {date(report.checkedAt)}</span>
       </div>
       {#if !report.enabled}
         <p>
@@ -217,17 +202,10 @@
           </div>{/if}
         <section class="panel">
           <div class="section-heading">
-            <h3>Synchronisation et envois</h3>
-            <span class="tag">{position}</span>
+            <h3>Synchronisation</h3>
+            <span class="tag" data-tone={sync?.tone}>{sync?.label}</span>
           </div>
-          <div class="positions">
-            <div><span>Position locale</span><code>{report.local.local_txid || 'Inconnue'}</code></div>
-            <div><span>Position S3 observée</span><code>{report.remote.maxTxid || 'Inconnue'}</code></div>
-          </div>
-          <p>
-            Ces positions identifient les lots Litestream. Une base sans écriture peut conserver un ancien horodatage
-            sans être en retard. Un inventaire partiel ne permet pas de conclure à une synchronisation complète.
-          </p>
+          <p>{sync?.message}</p>
           {#each report.remote.uploads || [] as upload}
             <div class="upload">
               <div class="section-heading">
@@ -242,28 +220,45 @@
                 ></progress>{:else}<progress aria-label="Envoi S3 en cours, taille totale inconnue"></progress>{/if}
               <small>Début : {date(upload.startedAt)}{upload.partial ? ' · parties comptées partiellement' : ''}</small>
             </div>
-          {:else}<p>
+          {/each}
+          <details class="technical-details">
+            <summary>Détails techniques de la synchronisation</summary>
+            <div class="positions">
+              <div><span>Position locale</span><code>{report.local.local_txid || 'Inconnue'}</code></div>
+              <div><span>Position S3 observée</span><code>{report.remote.maxTxid || 'Inconnue'}</code></div>
+            </div>
+            <p>
+              Ces identifiants suivent les changements sauvegardés. Un inventaire S3 partiel ne permet pas de confirmer
+              une synchronisation complète. Une base sans écriture peut conserver une ancienne date sans être en retard.
+            </p>
+            <p class="muted">
+              Contrôle S3 : {date(report.remote.checkedAt)} · {report.remote.partial
+                ? 'Inventaire partiel'
+                : 'Inventaire complet'}
+            </p>
+            <p class="muted">
               {report.remote.multipartAvailable
-                ? 'Aucun envoi multipart observé lors du dernier contrôle.'
-                : 'Progression multipart indisponible : les droits de consultation peuvent manquer.'}
-            </p>{/each}
-          <div class="facts">
-            <div><span>Dernier objet modifié sur S3</span><strong>{date(report.remote.newestObjectAt)}</strong></div>
-            <div>
-              <span>Erreurs locales cumulées depuis le démarrage</span><strong
-                >{localErrors == null ? 'Métriques indisponibles' : localErrors.toLocaleString('fr-FR')}</strong
-              >
+                ? 'Aucun envoi multipart observé ne signifie pas qu’aucun petit envoi n’a lieu.'
+                : 'La progression des gros envois n’est pas disponible.'}
+            </p>
+            <div class="facts">
+              <div><span>Dernier objet modifié sur S3</span><strong>{date(report.remote.newestObjectAt)}</strong></div>
+              <div>
+                <span>Erreurs locales cumulées depuis le démarrage</span><strong
+                  >{localErrors == null ? 'Métriques indisponibles' : localErrors.toLocaleString('fr-FR')}</strong
+                >
+              </div>
+              <div>
+                <span>Erreurs de vérification de compaction</span><strong
+                  >{report.metrics.compaction_verify_error_count ?? 'Non disponible'}</strong
+                >
+              </div>
             </div>
-            <div>
-              <span>Erreurs de vérification de compaction</span><strong
-                >{report.metrics.compaction_verify_error_count ?? 'Non disponible'}</strong
-              >
-            </div>
-          </div>
-          <p class="muted">
-            Les compteurs peuvent inclure des erreurs déjà résolues. Ils repartent de zéro au redémarrage. Les erreurs
-            locales ne couvrent pas toutes les erreurs d’envoi S3.
-          </p>
+            <p class="muted">
+              Les compteurs peuvent inclure des erreurs déjà résolues. Ils repartent de zéro au redémarrage. Les erreurs
+              locales ne couvrent pas toutes les erreurs d’envoi S3.
+            </p>
+          </details>
         </section>
         <section class="panel">
           <div class="section-heading">
@@ -366,6 +361,9 @@
 
 <style>
   .ls-dashboard {
+    --ls-success: #65d99f;
+    --ls-info: #8db5ff;
+    --ls-warning: #edbd68;
     display: grid;
     gap: 1.25rem;
     min-width: 0;
@@ -416,9 +414,62 @@
     display: grid;
     gap: 0.4rem;
     padding: 1rem 1.2rem;
-    border: 1px solid #9ec991;
+    border: 1px solid var(--app-border, #34343b);
     border-radius: 0.75rem;
-    background: #6aaa4b12;
+    background: var(--app-surface, #1a1a1d);
+  }
+  .headline p {
+    margin: 0;
+  }
+  .sync-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .sync-heading strong {
+    font-size: 1.2rem;
+  }
+  .sync-dot {
+    width: 0.65rem;
+    height: 0.65rem;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  :global(html[data-theme='light']) .ls-dashboard {
+    --ls-success: #146c43;
+    --ls-info: #245ec7;
+    --ls-warning: #885704;
+  }
+  [data-tone='success'] {
+    color: var(--ls-success);
+    border-color: #3ecf8e66;
+  }
+  [data-tone='info'] {
+    color: var(--ls-info);
+    border-color: #3b7cff66;
+  }
+  [data-tone='warning'] {
+    color: var(--ls-warning);
+    border-color: #d99b3266;
+  }
+  .headline p,
+  .headline > span {
+    color: var(--app-text, #ededef);
+  }
+  .technical-details {
+    border-top: 1px solid var(--app-border, #34343b);
+    margin-top: 1rem;
+    padding-top: 1rem;
+  }
+  .technical-details summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .technical-details summary:focus-visible {
+    outline: 2px solid var(--app-accent, #3b7cff);
+    outline-offset: 4px;
   }
   .headline span,
   small,

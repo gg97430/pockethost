@@ -109,7 +109,7 @@ class Controller:
             users = self.records('users', 'superAdmin=true', fields='id,superAdmin')
             if not users: raise engine.RecoveryError('Aucun administrateur dashboard ne peut autoriser la préparation.')
             actor = users[0]['id']
-        auth = self.request('/api/collections/users/impersonate/' + actor, {'duration': 3600}, superuser=True)
+        auth = self.request('/api/web-apps/_platform/delegate', {'userId': actor}, superuser=True)
         if not auth.get('token') or auth.get('record', {}).get('superAdmin') is not True: raise engine.RecoveryError('Le compte dashboard technique n’est pas administrateur.')
         self.token = auth['token']
     def records(self, collection, filter='', fields=''):

@@ -6,6 +6,7 @@ import os
 import pathlib
 import re
 import socket
+import stat
 import time
 import urllib.parse
 
@@ -16,6 +17,7 @@ DIGEST = re.compile(r'^(?:[a-z0-9.-]+(?::[0-9]{1,5})?/)?[a-z0-9][a-z0-9._/-]*@sh
 RESERVE = 512 * 1024**2
 CGROUP_ROOT = pathlib.Path('/sys/fs/cgroup')
 PROC_MEMINFO = pathlib.Path('/proc/meminfo')
+PROC_ROOT = pathlib.Path('/proc')
 COMPOSE_LIMITS = {'cpuMillicores': 4000, 'memoryMiB': 8192, 'pids': 512}
 DEPENDENCY_TIMEOUT_SECONDS = 120
 
@@ -288,6 +290,45 @@ def admission_memory(profile):
     return sum(memory_requests(profile).values())
 
 
+def builder_resident_memory(docker, maximum):
+    """Locate our existing builder's complete cgroup; a failed check grants no credit.
+
+    Its resident memory is already included in ancestor working sets. Replace it
+    with the full build reservation, rather than adding that reservation twice.
+    Include nested BuildKit workers, not only the container's /init subgroup.
+    """
+    try:
+        rows=json.loads(docker(['inspect','buildx_buildkit_ph-web-builder0']))
+        if not isinstance(rows,list) or len(rows)!=1:return None
+        info=rows[0];cid=info.get('Id','');state=info.get('State')or{};host=info.get('HostConfig')or{}
+        if (not isinstance(cid,str) or not re.fullmatch(r'[a-f0-9]{64}',cid)
+                or info.get('Name')!='/buildx_buildkit_ph-web-builder0' or state.get('Running')is not True
+                or type(state.get('Pid'))is not int or state['Pid']<=1 or host.get('Memory')!=maximum
+                or host.get('NetworkMode')!='ph-web-build-network'
+                or (info.get('Config')or{}).get('Cmd')!=['--oci-worker-net=bridge']):return None
+        text=(PROC_ROOT/str(state['Pid'])/'cgroup').read_text().strip()
+        if not text.startswith('0::/') or '\n'in text:return None
+        parts=pathlib.PurePosixPath(text[3:]).parts
+        if '..'in parts:return None
+        index=parts.index('docker-'+cid+'.scope')
+        scope=CGROUP_ROOT.joinpath(*parts[1:index+1])
+        expected=CGROUP_ROOT/'user.slice'/('user-'+str(os.getuid())+'.slice')
+        if not scope.is_relative_to(expected) or scope.resolve()!=scope:return None
+        if int((scope/'memory.max').read_text())!=maximum:return None
+        current=int((scope/'memory.current').read_text());stats={}
+        for line in(scope/'memory.stat').read_text().splitlines():
+            key,value=line.split()
+            if key in stats:raise ValueError()
+            stats[key]=int(value)
+            if stats[key]<0:raise ValueError()
+        if current<0 or 'inactive_file'not in stats:return None
+        return {'scope':scope,'workingSetBytes':min(maximum,max(0,current-stats['inactive_file']))}
+    except Exception:
+        # Keep conservative admission if Docker/proc/cgroup identity or counters
+        # cannot be verified; never mistake an unrelated process for the builder.
+        return None
+
+
 def admit(docker, memory_mib=0, cpu_millicores=0, build=False, mode=None):
     mode=allocation_mode(mode)
     constraints=effective_memory(); reserved=0; requested=0; cpu=0
@@ -295,7 +336,8 @@ def admit(docker, memory_mib=0, cpu_millicores=0, build=False, mode=None):
     if ids:
         for info in json.loads(docker(['inspect',*ids])):
             host=info.get('HostConfig') or {}
-            memory=host.get('Memory',0); nano=host.get('NanoCpus',0)
+            from web_private_db_cpu import accounted_nano_cpus
+            memory=host.get('Memory',0); nano=accounted_nano_cpus(info)
             if type(memory)is not int or memory<=0 or type(nano)is not int or nano<=0:
                 raise RuntimeError('Admission refusée : un conteneur web n’a pas de quota explicite.')
             reservation=host.get('MemoryReservation')or memory
@@ -312,10 +354,16 @@ def admit(docker, memory_mib=0, cpu_millicores=0, build=False, mode=None):
         host=host_memory()
         if host['availableBytes']<extra+max(1024**3,host['totalBytes']//10):
             raise ResourcePressure('Admission différée : mémoire disponible du serveur insuffisante ; priorité aux services et aux bases de données.')
+        builder=builder_resident_memory(docker,build_mib*1024**2)if build else None
         # Requests constrain admission; limits constrain peaks. Existing fixed
         # containers retain their full commitment until explicitly redeployed.
-        if any(max(row['workingSetBytes'],requested)+extra+max(RESERVE,row['limitBytes']//10)>row['limitBytes']for row in constraints):
-            raise ResourcePressure('Admission différée : mémoire disponible insuffisante ; les sites publiés restent actifs.')
+        for row in constraints:
+            resident=builder['workingSetBytes']if builder and builder['scope'].is_relative_to(pathlib.Path(row['scope']))else 0
+            required=max(max(0,row['workingSetBytes']-resident),requested)+extra+max(RESERVE,row['limitBytes']//10)
+            if required>row['limitBytes']:
+                raise ResourcePressure('Admission différée : budget mémoire de l’hébergement insuffisant ('+
+                                       str((required+1024**2-1)//1024**2)+' Mio nécessaires, '+
+                                       str(row['limitBytes']//1024**2)+' Mio autorisés, construction et marge comprises).')
         if extra and memory_pressure(constraints):
             raise ResourcePressure('Admission différée : pression mémoire élevée ; attente avant de démarrer la nouvelle charge.')
     tightest=min(constraints,key=lambda row:row['limitBytes']-row['workingSetBytes'])
@@ -350,6 +398,27 @@ def validate_image_volumes(info,targets):
         if not isinstance(path,str)or path not in targets or path=='/__pockethost_tools'or path.startswith('/__pockethost_tools/'):
             raise RuntimeError('L’image déclare un volume non géré. Enregistrez un volume nommé exactement à chaque cible avant de déployer.')
     return declarations
+
+
+def readable_source(context):
+    """Normalize repository modes before COPY runs as root and runtime uses UID 10001.
+
+    Only the isolated checkout changes; never follow symlinks or touch Git metadata.
+    Secret mounts and worker credentials live outside this directory.
+    """
+    context=pathlib.Path(context);count=0
+    for folder,dirs,files in os.walk(context,followlinks=False):
+        dirs[:]=[name for name in dirs if name!='.git']
+        for name in dirs+files:
+            if name=='.git':continue
+            count+=1
+            if count>100000:raise RuntimeError('Archive source trop volumineuse.')
+            path=pathlib.Path(folder)/name;mode=path.lstat().st_mode
+            if stat.S_ISLNK(mode):continue
+            if stat.S_ISDIR(mode):path.chmod(0o755)
+            elif stat.S_ISREG(mode):path.chmod(0o755 if mode&0o111 else 0o644)
+            else:raise RuntimeError('Type de fichier source non autorisé.')
+    context.chmod(0o755)
 
 
 def exclude_vcs(context,dockerfile):
@@ -484,6 +553,7 @@ class RuntimeEngine:
         path=pathlib.Path(context)/relative(profile.get('dockerfile','Dockerfile'))
         if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(pathlib.Path(context).resolve()): raise RuntimeError('Dockerfile absent ou hors du dépôt.')
         exclude_vcs(context,path)
+        readable_source(context)
         tag='ph-web/'+self.job.app+':'+self.job.id+('-'+profile['_service'] if profile.get('_service') else '')
         envfile=pathlib.Path(work)/'runtime-build.env'
         import shlex

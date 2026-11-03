@@ -1,0 +1,40 @@
+[Unit]
+Description=Kolab dynamic memory allocation for hosting and databases
+After=docker.service pockethost-web-worker.service
+
+[Service]
+Type=simple
+User=root
+Group=ubuntu
+UMask=0077
+ExecStart=/usr/bin/python3 -I -B /opt/pockethost-web/platform_memory_allocator.py
+Restart=on-failure
+RestartSec=10
+StateDirectory=kolab-memory-allocation
+StateDirectoryMode=0750
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/kolab-memory-allocation
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+MemoryMax=256M
+CPUQuota=25%
+TasksMax=8
+LimitNOFILE=128
+LimitCORE=0
+Nice=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

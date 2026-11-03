@@ -16,6 +16,27 @@ import {
 } from '../../../common/platformMonitoring'
 
 const exec = promisify(execFile)
+export const memoryAllocationStatus = (report: any, now = Date.now()): { state: MonitorState; detail: string } => {
+  const checkedAt = Date.parse(report?.checkedAt || '')
+  if (
+    !Number.isFinite(checkedAt) ||
+    checkedAt > now + 30000 ||
+    now - checkedAt > 45000 ||
+    !Array.isArray(report?.resources)
+  )
+    return { state: 'error', detail: 'Gestionnaire de RAM automatique absent ou périmé.' }
+  const unavailable = report.resources.filter((row: any) => row.decision === 'unavailable').length
+  return unavailable
+    ? { state: 'warning', detail: `${unavailable} service(s) sans mesure fiable ; limites conservées.` }
+    : { state: 'ok', detail: `${report.resources.length} service(s) suivis · réserve serveur préservée.` }
+}
+/** New installations can expose SFTP without enabling the deprecated FTPS service. */
+export const monitoredFileServices = (ftpDisabled = process.env.PH_FTP_DISABLED === 'true') =>
+  [
+    { process: 'edge-ftp', name: 'FTP' },
+    { process: 'edge-sftp', name: 'SFTP' },
+  ].filter((service) => !ftpDisabled || service.name !== 'FTP')
+
 const ID = /^[a-z0-9]{15}$/
 const clean = (value: unknown, max = 160) => `${value || ''}`.replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, max)
 const age = (value: unknown) => Date.now() - Date.parse(`${value || ''}`)
@@ -182,7 +203,13 @@ export async function collectPlatformHealth(options: CollectOptions) {
   await Promise.all([
     guard('services', 'infrastructure', 'Processus de la plateforme', async () => {
       const processes = JSON.parse(await command('pm2', ['jlist']))
-      for (const name of ['firewall', 'edge-daemon', 'edge-ftp', 'edge-sftp', 'mothership', 'dashboard']) {
+      for (const name of [
+        'firewall',
+        'edge-daemon',
+        'mothership',
+        'dashboard',
+        ...monitoredFileServices().map((service) => service.process),
+      ]) {
         const process = processes.find((p: any) => p.name === name)
         add(
           'pm2:' + name,
@@ -261,14 +288,19 @@ export async function collectPlatformHealth(options: CollectOptions) {
       const result = await originProbe(options.domain, '/api/firewall/health')
       add('origin', 'infrastructure', 'Pare-feu HTTPS à l’origine', result.ok ? 'ok' : 'error', result.detail)
     }),
-    ...[
-      ['FTP', options.ftpPort],
-      ['SFTP', options.sftpPort],
-    ].map(([name, port]) =>
-      guard('tcp:' + name, 'infrastructure', `${name}`, async () =>
-        add('tcp:' + name, 'infrastructure', `${name}`, (await tcpProbe(Number(port))) ? 'ok' : 'error', `Port ${port}`)
-      )
-    ),
+    ...monitoredFileServices()
+      .map(({ name }) => ({ name, port: name === 'FTP' ? options.ftpPort : options.sftpPort }))
+      .map(({ name, port }) =>
+        guard('tcp:' + name, 'infrastructure', `${name}`, async () =>
+          add(
+            'tcp:' + name,
+            'infrastructure',
+            `${name}`,
+            (await tcpProbe(Number(port))) ? 'ok' : 'error',
+            `Port ${port}`
+          )
+        )
+      ),
     ...['fail2ban', 'ssh'].map((service) =>
       guard('security:' + service, 'security', service, async () => {
         let active = ''
@@ -285,6 +317,11 @@ export async function collectPlatformHealth(options: CollectOptions) {
       })
     ),
   ])
+  if (existsSync('/opt/pockethost-web/platform_memory_allocator.py'))
+    await guard('memory-allocation', 'infrastructure', 'Allocation automatique de RAM', async () => {
+      const status = memoryAllocationStatus(await readStatus('/var/lib/kolab-memory-allocation/status.json'))
+      add('memory-allocation', 'infrastructure', 'Allocation automatique de RAM', status.state, status.detail)
+    })
   const load = (loadavg()[1] || 0) / Math.max(1, cpus().length)
   add(
     'cpu',

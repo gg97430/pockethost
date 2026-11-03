@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { lstatSync, realpathSync } from 'node:fs'
 import { createServer, request as httpRequest, type Server } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
+import { isAbsolute, join, normalize } from 'node:path'
 import type { Duplex } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
 import {
@@ -32,7 +33,7 @@ export type ContainerInfo = {
   State: { Running: boolean }
   Config: { User: string; Labels?: Record<string, string>; Env?: string[] }
   HostConfig?: { Privileged?: boolean; Binds?: string[] | null; ReadonlyRootfs?: boolean }
-  Mounts?: { Type?: string; Name?: string; Destination?: string; RW?: boolean }[]
+  Mounts?: { Type?: string; Name?: string; Source?: string; Destination?: string; RW?: boolean }[]
 }
 export type TerminalControl = {
   claim(token: string): Promise<TerminalGrant>
@@ -91,6 +92,32 @@ export function terminalControl(base: string, secret: string): TerminalControl {
   }
 }
 
+/** Only the worker's exact read-only private-DB readiness mounts may cross this boundary. */
+const validTerminalMounts = (info: ContainerInfo, grant: TerminalGrant) => {
+  if ((info.HostConfig?.Binds || []).length) return false
+  const mounts = info.Mounts || [],
+    binds = mounts.filter((mount) => mount.Type === 'bind')
+  if (info.Config.Labels?.['pockethost.web.private-db.wait'] !== 'true') return binds.length === 0
+  const root = process.env.WEB_APPS_ROOT || '/home/pockethost-web/data'
+  if (!isAbsolute(root) || normalize(root) !== root || !ID.test(grant.appId) || !ID.test(grant.deploymentId))
+    return false
+  const home = join(root, 'private-db-runtime', grant.appId, `${grant.deploymentId}-web`)
+  const expected: Record<string, string> = {
+    '/run/kolab-ready': join(home, 'ready'),
+    '/run/kolab-wait-env': join(home, 'wait-env'),
+    '/run/kolab-wait.cjs': '/opt/pockethost-web/web_private_db_wait.cjs',
+  }
+  if (binds.length !== 3 || new Set(binds.map((mount) => mount.Destination)).size !== 3) return false
+  return mounts.every((mount) => {
+    const destination = mount.Destination || ''
+    const overlaps = Object.keys(expected).some(
+      (path) => destination === path || destination.startsWith(path + '/') || path.startsWith(destination + '/')
+    )
+    if (mount.Type !== 'bind') return !overlaps
+    return mount.RW === false && Object.hasOwn(expected, destination) && mount.Source === expected[destination]
+  })
+}
+
 export const validPublishedContainer = (info: ContainerInfo, grant: TerminalGrant) => {
   const labels = info.Config?.Labels || {}
   return (
@@ -102,8 +129,7 @@ export const validPublishedContainer = (info: ContainerInfo, grant: TerminalGran
     labels['pockethost.web.deployment'] === grant.deploymentId &&
     info.HostConfig?.Privileged !== true &&
     info.HostConfig?.ReadonlyRootfs === true &&
-    !(info.HostConfig.Binds || []).length &&
-    !(info.Mounts || []).some((mount) => mount.Type === 'bind')
+    validTerminalMounts(info, grant)
   )
 }
 

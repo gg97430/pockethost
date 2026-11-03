@@ -1,0 +1,29 @@
+{
+  "targets": {
+    "app3": {
+      "address": "135.125.67.39",
+      "hostname": "app3.monappli.re",
+      "user": "ubuntu",
+      "releaseRoot": "/home/ubuntu/pockethost-releases/fleet-lot-app3-20261030T053940Z",
+      "runtimeRoots": [
+        "/home/ubuntu/pockethost-releases/fleet-lot-app3-20261030T053940Z",
+        "/home/ubuntu/pockethost-releases/fleet-lot-app3-20261029T182757Z",
+        "/home/ubuntu/pockethost"
+      ]
+    },
+    "app4": {
+      "address": "51.255.69.154",
+      "hostname": "app4.monappli.re",
+      "user": "ubuntu",
+      "releaseRoot": "/home/ubuntu/pockethost-releases/app4-20261031",
+      "runtimeRoots": ["/home/ubuntu/pockethost-releases/app4-20261031"]
+    },
+    "app5": {
+      "address": "217.182.134.72",
+      "hostname": "app5.monappli.re",
+      "user": "ubuntu",
+      "releaseRoot": "/home/ubuntu/pockethost-releases/app5-20261101",
+      "runtimeRoots": ["/home/ubuntu/pockethost-releases/app5-20261101"]
+    }
+  }
+}

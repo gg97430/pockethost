@@ -97,3 +97,47 @@ routerAdd(
   },
   $apis.requireAuth()
 )
+
+routerAdd(
+  'GET',
+  '/api/workspace/overview',
+  (e) => require(`${__hooks}/mothership`).HandleWorkspaceOverview(e),
+  $apis.requireAuth('users')
+)
+
+routerAdd(
+  'GET',
+  '/api/admin/request-limits',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorRequestLimits(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'GET',
+  '/api/admin/request-limits/web',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorWebRequestLimit(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'PUT',
+  '/api/admin/request-limits/web',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorWebRequestLimit(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'PUT',
+  '/api/admin/request-limits',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorRequestLimitsPut(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'GET',
+  '/api/admin/request-limits/databases/{id}',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorDatabaseRequestLimits(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'PUT',
+  '/api/admin/request-limits/databases/{id}',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorDatabaseRequestLimits(e),
+  $apis.requireAuth('users')
+)

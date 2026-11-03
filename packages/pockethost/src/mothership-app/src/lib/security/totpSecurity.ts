@@ -17,6 +17,12 @@ const fields = () => [
 ]
 
 export const createTotpSecurity = (config: { authCollection: string; issuer: string }) => {
+  const required = config.authCollection === 'users'
+  const directServiceRequest = (e: core.RequestEvent) =>
+    /^127\.0\.0\.1:|^\[::1\]:/.test(e.request?.remoteAddr || '') &&
+    ['X-Forwarded-For', 'X-Forwarded-Host', 'X-Forwarded-Proto', 'X-Real-Ip', 'Forwarded', 'Via'].every(
+      (name) => !e.request!.header.values(name).length
+    )
   const keyPath = () => `${$app.dataDir()}/.pockethost-totp.key`
   const readKey = () => toString($os.readFile(keyPath())).trim()
   const decrypt = (value: string) => toString($security.decrypt(value, readKey()))
@@ -137,6 +143,18 @@ export const createTotpSecurity = (config: { authCollection: string; issuer: str
       Math.max(1, Number(payload.exp) - Math.floor(Date.now() / 1000))
     )
   }
+  const limitedToken = (token: string, record: core.Record, service = false) => {
+    const payload = claims(token)
+    const lifetime = Math.max(1, Math.min(service ? 3600 : 900, Number(payload.exp) - Math.floor(Date.now() / 1000)))
+    delete payload.exp
+    delete payload.ph_totp
+    delete payload.ph_service
+    return $security.createJWT(
+      { ...payload, ...(service ? { ph_service: 'controller', refreshable: false } : { ph_totp_enrollment: true }) },
+      record.getString('tokenKey') + record.collection().authToken.secret,
+      lifetime
+    )
+  }
   const requestHeaders = (e: core.RequestEvent) =>
     JSON.parse(JSON.stringify(e.requestInfo().headers || {})) as Record<string, string>
   const tokenFromRequest = (e: core.RequestEvent) =>
@@ -157,6 +175,17 @@ export const createTotpSecurity = (config: { authCollection: string; issuer: str
   }
 
   return {
+    delegateService: (e: core.RequestEvent) => {
+      if (!required || e.auth?.collection().name !== '_superusers' || !directServiceRequest(e))
+        throw new ForbiddenError('Délégation technique locale requise.')
+      const input = data(e)
+      if (Object.keys(input).some((name) => name !== 'userId') || !/^[a-z0-9]{15}$/.test(input.userId || ''))
+        throw new BadRequestError('Identité technique invalide.')
+      const record = $app.findRecordById('users', input.userId)
+      if (!record.getBool('superAdmin') || !record.getBool('verified') || record.getString('suspension'))
+        throw new ForbiddenError('Administrateur de plateforme actif requis.')
+      return json(e, { token: limitedToken(record.newAuthToken(), record, true), record })
+    },
     // Called only after a server-side exchange of an authorized, instance-bound dashboard ticket.
     trustedToken: (record: core.Record) => {
       const state = findState(record)
@@ -207,6 +236,7 @@ export const createTotpSecurity = (config: { authCollection: string; issuer: str
       const record = requireAuth(e)
       const state = findState(record)
       return json(e, {
+        required,
         enabled: state?.getBool('enabled') || false,
         recoveryCodesRemaining: state ? recoveryHashes(state).length : 0,
       })
@@ -244,6 +274,7 @@ export const createTotpSecurity = (config: { authCollection: string; issuer: str
       return json(e, { enabled: true, token, recoveryCodes: codes })
     },
     disable: (e: core.RequestEvent) => {
+      if (required) throw new ForbiddenError('Le TOTP est obligatoire sur Kolab et ne peut pas être désactivé.')
       const record = requireAuth(e)
       assertPassword(e, record)
       let token = ''
@@ -267,7 +298,10 @@ export const createTotpSecurity = (config: { authCollection: string; issuer: str
     authenticate: (e: core.RecordAuthRequestEvent) => {
       if (!e.record) return e.next()
       const state = findState(e.record)
-      if (!state?.getBool('enabled')) return e.next()
+      if (!state?.getBool('enabled')) {
+        if (required) e.token = limitedToken(e.token, e.record)
+        return e.next()
+      }
       if (!e.authMethod && hasProof(tokenFromRequest(e), state)) {
         e.token = markToken(e.token, e.record, state)
         return e.next()
@@ -289,7 +323,33 @@ export const createTotpSecurity = (config: { authCollection: string; issuer: str
           record = $app.findAuthRecordByToken(token, 'auth')
       } catch {}
       if (!record) return e.next()
+      const payload = claims(token)
+      if (required && payload.ph_service === 'controller' && payload.refreshable === false && directServiceRequest(e)) {
+        if (path === '/api/collections/users/auth-refresh')
+          throw new UnauthorizedError('Une délégation technique ne peut pas être renouvelée.')
+        return e.next()
+      }
       const state = findState(record)
+      if (required && !state?.getBool('enabled')) {
+        const method = e.request?.method || ''
+        const enrollment =
+          (method === 'GET' && ['/api/account/totp', '/api/versions', '/api/signup'].includes(path)) ||
+          (method === 'POST' &&
+            [
+              '/api/account/totp/setup',
+              '/api/account/totp/confirm',
+              '/api/collections/users/auth-refresh',
+              '/api/collections/users/request-password-reset',
+              '/api/collections/users/confirm-password-reset',
+              '/api/collections/users/request-verification',
+              '/api/collections/users/confirm-verification',
+            ].includes(path))
+        if (!enrollment)
+          throw new ApiError(403, 'Configurez et validez le TOTP avant d’accéder à Kolab.', {
+            totpEnrollmentRequired: new ValidationError('totp_enrollment_required', 'Le TOTP est obligatoire.'),
+          })
+        return e.next()
+      }
       if (state?.getBool('enabled') && !hasProof(token, state))
         throw codeError('Une connexion avec le second facteur est requise.')
       return e.next()

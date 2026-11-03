@@ -10,7 +10,7 @@ Every GitHub HTTP call is stubbed: a `python3` shim placed first on PATH interce
 file, per GitHub App id; it logs {reader, action, githubAppId, key marker, config keys, repository} for each call. Git
 keygen and every other python invocation (backup archive reader, ...) run the real interpreter. No network access.
 """
-import argparse, base64, datetime, hashlib, hmac, importlib.util, json, os, pathlib, re, secrets, shutil, socket, sqlite3, subprocess, sys, tempfile, time, types, urllib.error, urllib.request
+import argparse, base64, datetime, hashlib, hmac, importlib.util, json, os, pathlib, re, secrets, shutil, socket, sqlite3, struct, subprocess, sys, tempfile, time, types, urllib.error, urllib.request
 from unittest import mock
 
 parser = argparse.ArgumentParser()
@@ -213,6 +213,12 @@ try:
     shutil.copy(source / 'src/lib/handlers/webApps/hooks.ts', hooks / 'web.pb.js')
     # Test-only fixture: publish a ready deployment (backup restore scope). Superusers of the platform only.
     (hooks / 'test.pb.js').write_text("""routerAdd('POST','/test/fixture',e=>{if(!e.auth?.getBool('superAdmin'))throw new ForbiddenError();const m=require(`${__hooks}/mothership`),i=e.requestInfo().body,r=$app.findRecordById('web_apps',i.id);if(i.action==='publish'){const resolved=m.resolveWebEnvironment(r),d=new Record($app.findCollectionByNameOrId('web_deployments'));d.set('appId',r.id);d.set('action','deploy');d.set('status','ready');d.set('commit','c'.repeat(40));d.set('snapshotEncrypted',m.encryptWebValue({config:JSON.parse(r.getString('config')),env:resolved.env,projectEnvironment:resolved.context}));d.set('result',{image:'ph-web/'+r.id+':'+'d'.repeat(15),available:true});$app.save(d);r.set('activeDeployment',d.id);r.set('desiredCommit','c'.repeat(40));r.set('status','running');$app.save(r)}return e.json(200,{config:JSON.parse(r.getString('config'))})},$apis.requireAuth('users'));\n""")
+    with (hooks / 'test.pb.js').open('a') as fixture:
+        fixture.write('onBootstrap(e=>{e.next();require(`${__hooks}/mothership`).InitializeDashboardTotp()});\n')
+        fixture.write('routerUse(e=>require(`${__hooks}/mothership`).GuardDashboardTotp(e));\n')
+        fixture.write('onRecordAuthRequest(e=>require(`${__hooks}/mothership`).HandleDashboardTotpAuth(e),"users");\n')
+        for suffix, handler in [('setup', 'HandleDashboardTotpSetup'), ('confirm', 'HandleDashboardTotpConfirm')]:
+            fixture.write(f'routerAdd("POST","/api/account/totp/{suffix}",e=>require(`${{__hooks}}/mothership`).{handler}(e),$apis.requireAuth("users"));\n')
     tools = root / 'tools'; tools.mkdir()
     shim = tools / 'python3'
     shim.write_text(SHIM.replace('__PYTHON__', sys.executable).replace('__REAL__', repr(sys.executable)).replace('__CONTROL__', repr(str(control_file))).replace('__LOG__', repr(str(reader_log))))
@@ -277,8 +283,20 @@ try:
         row = request('/api/collections/users/records', su, {'email': name + '@example.invalid', 'username': name, 'password': password, 'passwordConfirm': password, 'verified': True, 'superAdmin': admin, 'subscription': 'premium', 'subscription_quantity': 1}, keep=False)
         return row, login(row['email'])
 
+    recovery_by_mail = {}
     def login(mail):
-        return request('/api/collections/users/auth-with-password', body={'identity': mail, 'password': password}, keep=False)['token']
+        body = {'identity': mail, 'password': password}
+        if mail in recovery_by_mail:
+            body['totpCode'] = recovery_by_mail[mail].pop()
+            return request('/api/collections/users/auth-with-password', body=body, keep=False)['token']
+        token = request('/api/collections/users/auth-with-password', body=body, keep=False)['token']
+        setup = request('/api/account/totp/setup', token, {'password': password}, keep=False)
+        digest = hmac.new(base64.b32decode(setup['secret']), struct.pack('>Q', int(time.time() // 30)), hashlib.sha1).digest()
+        offset = digest[-1] & 15
+        code = str((struct.unpack('>I', digest[offset:offset+4])[0] & 0x7fffffff) % 1000000).zfill(6)
+        enabled = request('/api/account/totp/confirm', token, {'password': password, 'code': code}, keep=False)
+        recovery_by_mail[mail] = enabled['recoveryCodes']
+        return enabled['token']
     platform = login('platform@example.invalid')
     tok = {name: user(name)[1] for name in ['owner', 'admin', 'dev', 'viewer', 'outsider']}
     CONN = '/api/web-apps/github/connections'
@@ -410,6 +428,43 @@ try:
     assert a_delivery in x_seen and 'legacy-gh-1' in x_seen and b_delivery not in x_seen
     assert b_delivery in y_seen and not (y_seen & {a_delivery, 'legacy-gh-1'}), (x_seen, y_seen)
     checks.append('webhook_routed_by_path_uniform_401_installation_checked_per_row_same_repository_split_by_connection')
+
+    # Repository hooks omit installation: only an explicitly bound connection accepts them.
+    def repository_push(body=None, hook='55', signature=None, status=202):
+        value = body or {'ref': 'refs/heads/main', 'after': sha(), 'repository': {'id': REPOS['acme/web'], 'full_name': 'acme/web'}}
+        raw_repo = json.dumps(value).encode()
+        headers = {'X-GitHub-Event': 'push', 'X-GitHub-Delivery': 'repository-' + secrets.token_hex(6), 'X-Hub-Signature-256': 'sha256=' + sign(signature or B_INPUT['webhookSecret'], raw_repo)}
+        if hook is not None: headers['X-GitHub-Hook-ID'] = hook
+        return request(b_path, raw=raw_repo, headers=headers, status=status)
+    repository_push(status=403)
+    binding = {'repository': 'acme/web', 'repositoryId': REPOS['acme/web'], 'hookId': '55'}
+    request(f'/api/web-apps/github/connections/{B}', tok['viewer'], {'repositoryWebhook': binding}, 'PATCH', status=403)
+    request('/api/web-apps/github/connections/default', platform, {'repositoryWebhook': binding}, 'PATCH', status=400)
+    for invalid in [{**binding, 'hookId': ''}, {**binding, 'repository': '../wrong'}, {**binding, 'extra': True}]:
+        request(f'/api/web-apps/github/connections/{B}', platform, {'repositoryWebhook': invalid}, 'PATCH', status=400)
+    bound = request(f'/api/web-apps/github/connections/{B}', platform, {'repositoryWebhook': binding}, 'PATCH')['connection']['repositoryWebhook']
+    assert bound == {**binding, 'repositoryId': str(REPOS['acme/web'])}
+    repository_head = commit_for('1002')
+    payload = {'ref': 'refs/heads/main', 'after': sha(), 'repository': {'id': REPOS['acme/web'], 'full_name': 'acme/web'}}
+    assert repository_push(payload)['queued'] == 1
+    assert [(j['appId'], j['commit']) for j in drain()] == [(Y, repository_head)]
+    assert repository_push(payload, status=200)['duplicate'] is True
+    repository_push(hook='56', status=403)
+    repository_push(hook=None, status=403)
+    repository_push({**payload, 'after': sha(), 'repository': {'id': REPOS['acme/site'], 'full_name': 'acme/web'}}, status=403)
+    repository_push({**payload, 'after': sha(), 'repository': {'id': REPOS['acme/web'], 'full_name': 'acme/site'}}, status=403)
+    repository_push({**payload, 'after': sha(), 'installation': {'id': 2001}}, status=403)
+    repository_push(signature=A['webhookSecret'], status=401)
+    assert not drain()
+    request(f'/api/web-apps/github/connections/{B}', platform, {'label': 'Org B renamed'}, 'PATCH')
+    assert connections()[B]['repositoryWebhook'] == bound
+    request(f'/api/web-apps/github/connections/{B}', platform, {'repositoryWebhook': None, 'label': 'Org B'}, 'PATCH')
+    assert connections()[B]['repositoryWebhook'] is None
+    repository_push(status=403)
+    commit_for('1002', b_sha)
+    push(b_path, B_INPUT['webhookSecret'], 2002)
+    drain()
+    checks.append('repository_hook_opt_in_hmac_repository_hook_id_installation_isolation_and_replay')
 
     # ---------------------------------------------------------------- 4. Credential isolation in the claim.
     y_sha = commit_for('1002')

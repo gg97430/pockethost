@@ -139,6 +139,23 @@ test('a missing immutable asset retains 404 and no-store including without a fal
   }
 })
 
+test('direct fleet links and reloads serve the application with no-store for GET and HEAD', async () => {
+  for (const file of ['/fleet', '/fleet/', '/fleet?server=app4']) {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await request(file, method)
+      assert.equal(response.status, 200, `${method} ${file}`)
+      assert.equal(response.headers['cache-control'], noStore)
+      assert.match(response.headers['content-type'], /^text\/html/)
+      assert.equal(response.body, method === 'HEAD' ? '' : '<html>application fallback</html>')
+    }
+  }
+  for (const file of ['/fleet-not-a-route', '/fleets', '/fleet/missing', '/fleet.js']) {
+    const response = await request(file)
+    assert.equal(response.status, 404, file)
+    assert.equal(response.headers['cache-control'], noStore)
+  }
+})
+
 test('encoded traversal and a prefix lookalike cannot cache a file outside immutable', async () => {
   for (const file of [
     '/_app/immutable/chunks/%2e%2e%2f%2e%2e%2f%2e%2e%2fprivate.txt',

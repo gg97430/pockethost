@@ -33,7 +33,7 @@ def public_addresses(host,port=443):
  for family,kind,proto,_,address in values:
   try:ip=ipaddress.ip_address(address[0])
   except ValueError:raise NotificationError('ssrf','address_refused')from None
-  if not ip.is_global or getattr(ip,'ipv4_mapped',None)and not ip.ipv4_mapped.is_global or getattr(ip,'sixtofour',None)or getattr(ip,'teredo',None)or ip in ipaddress.ip_network('64:ff9b::/96'):raise NotificationError('ssrf','address_refused')
+  if not ip.is_global or ip.is_multicast or ip.is_reserved or ip.is_unspecified or ip.is_loopback or getattr(ip,'ipv4_mapped',None)and not ip.ipv4_mapped.is_global or getattr(ip,'sixtofour',None)or getattr(ip,'teredo',None)or ip in ipaddress.ip_network('64:ff9b::/96'):raise NotificationError('ssrf','address_refused')
   if family not in [socket.AF_INET,socket.AF_INET6]:raise NotificationError('ssrf','address_refused')
   if (family,address)not in [(f,a)for f,_,_,a in checked]:checked.append((family,kind,proto,address))
  return checked[:4]
@@ -151,6 +151,9 @@ class Notifications:
   if result['success']or result['final']:self.unreachable_attempts=UNREACHABLE_ATTEMPTS
   return result
  def api(self,path,body):
+  from platform_maintenance import claim_response
+  paused=claim_response(path,'notifications')
+  if paused is not None:return paused
   class NoRedirect(urllib.request.HTTPRedirectHandler):
    def redirect_request(self,*args,**kwargs):return None
   request=urllib.request.Request(self.control+'/api/web-apps/_notifications/'+path,headers={'Content-Type':'application/json','X-Web-Worker':self.secret},data=json.dumps(body).encode())
@@ -167,7 +170,10 @@ class Notifications:
   self.api('report',{'id':job['id'],'proof':job['proof'],**result})
  def loop(self):
   while not self.stop.is_set():
-   try:value=self.api('claim',{'diskFreeBytes':shutil.disk_usage(self.root).free});self.reachable(value)
+   try:
+    value=self.api('claim',{'diskFreeBytes':shutil.disk_usage(self.root).free})
+    if value.get('maintenance',{}).get('paused'):self.stop.wait(1);continue
+    self.reachable(value)
    except Exception:
     value=None
     try:self.unreachable()

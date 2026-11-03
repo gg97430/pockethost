@@ -8,6 +8,7 @@
 - Toute évolution commune de Kolab Hosting (interface, contrôleur, droits, moteur, corrections, migrations) doit être livrée et vérifiée sur **app3, app4 et app5 dans la même intervention**.
 - Un déploiement de plateforme n'est terminé qu'après vérification des trois serveurs. Si un serveur échoue, corriger ou revenir à la dernière version commune ; signaler explicitement tout écart restant.
 - Utiliser la publication sur toute la flotte et terminer par `python3 packages/pockethost/scripts/platform-fleet.py check`. Procédure : `docs/hosting/fleet-releases.md`.
+- Intervention « productivité » du 3 novembre 2026 : instruction explicite de valider chaque lot sur **app4 et app5 avant toute activation sur app3**. Utiliser les vagues de publication et conserver les sites, bases, workers métier et crons en service ; aucun redémarrage de serveur ni arrêt de conteneur client pour livrer la plateforme.
 - Conserver les domaines, adresses, secrets, utilisateurs, bases, applications, volumes et limites propres à chaque serveur. Ne jamais synchroniser les données métier ou copier les secrets d'un serveur à l'autre pour aligner le code.
 - Les applications hébergées (CRM, sites, workers métier) gardent leurs déploiements propres ; elles ne sont pas des versions du logiciel de plateforme.
 

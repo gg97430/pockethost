@@ -1,0 +1,36 @@
+[Unit]
+Description=Kolab isolated project recovery rehearsals
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /opt/pockethost-web/web_project_recovery_service.py
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=7500
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_SETUID CAP_SETGID
+# Keep the explicitly bounded identity-drop capabilities through the hardened
+# ExecStart. The SQLite child clears groups and drops to the source owner.
+AmbientCapabilities=CAP_SETUID CAP_SETGID
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RuntimeDirectory=kolab-project-recovery
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/kolab-project-recovery /var/lib/kolab-project-recovery /run/user/1001/docker.sock /run/user/1002/docker.sock
+MemoryMax=1G
+CPUQuota=50%
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

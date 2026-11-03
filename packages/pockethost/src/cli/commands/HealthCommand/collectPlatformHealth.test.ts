@@ -3,9 +3,36 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { httpProbe, memoryAllocationStatus, monitoredFileServices, readRows, readStatus } from './collectPlatformHealth'
+import {
+  httpProbe,
+  memoryAllocationStatus,
+  monitoredFileServices,
+  projectRecoveryStatus,
+  readRows,
+  readStatus,
+} from './collectPlatformHealth'
 
 describe('monitoring collector boundaries', () => {
+  it('requires fresh authenticated service readiness and separate sandbox isolation', () => {
+    const now = Date.now(),
+      good = {
+        checkedAt: new Date(now).toISOString(),
+        ready: true,
+        blocked: false,
+        sandboxReady: true,
+        hostingUid1001Denied: true,
+      }
+    expect(projectRecoveryStatus(good, now).state).toBe('ok')
+    for (const value of [
+      { ...good, checkedAt: new Date(now - 46000).toISOString() },
+      { ...good, sandboxReady: false },
+      { ...good, hostingUid1001Denied: false },
+      { ...good, ready: false },
+      { ...good, ready: 'true' },
+    ])
+      expect(projectRecoveryStatus(value, now).state).toBe('error')
+    expect(projectRecoveryStatus({ ...good, blocked: true }, now).state).toBe('warning')
+  })
   it('alerts when automatic memory allocation stops or cannot measure a service', () => {
     const now = Date.now()
     expect(memoryAllocationStatus({ checkedAt: new Date(now - 46000).toISOString(), resources: [] }, now).state).toBe(

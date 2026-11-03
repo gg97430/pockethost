@@ -8,6 +8,7 @@
   import WebAppEnvironment from '$components/webApps/WebAppEnvironment.svelte'
   import WebAppTerminal from '$components/webApps/WebAppTerminal.svelte'
   import WebAppHealth from '$components/webApps/WebAppHealth.svelte'
+  import WebAppChecks from '$components/webApps/WebAppChecks.svelte'
   import WebAppScheduledTasks from '$components/webApps/WebAppScheduledTasks.svelte'
   import WebAppBackups from '$components/webApps/WebAppBackups.svelte'
   import WebAppRuntimeLogs from '$components/webApps/WebAppRuntimeLogs.svelte'
@@ -1097,6 +1098,7 @@
           {#key app.id}<WebAppNotifications appId={app.id} capabilities={can} onopentab={setTab} />{/key}
         {:else if tab === 'health'}
           {#key app.id}<WebAppHealth appId={app.id} capabilities={can} />{/key}
+          {#key app.id}<WebAppChecks appId={app.id} environment={app.env} capabilities={can} />{/key}
         {:else if tab === 'tasks'}
           {#key app.id}<WebAppScheduledTasks
               appId={app.id}

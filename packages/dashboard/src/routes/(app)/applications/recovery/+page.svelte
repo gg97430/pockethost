@@ -3,6 +3,7 @@
   import { client } from '$src/pocketbase-client'
   import { webDate, webError } from '$lib/webApps'
   import WebAppNotifications from '$components/webApps/WebAppNotifications.svelte'
+  import RecoveryNavigation from '$components/webApps/RecoveryNavigation.svelte'
 
   type Coverage = {
     complete?: boolean
@@ -268,6 +269,7 @@
       >{busy === 'capture' ? 'Mise en attente…' : 'Capturer maintenant'}</button
     >
   </div>
+  <RecoveryNavigation active="server" />
   {#if error}<div class="web-alert web-alert--error" role="alert">{error}</div>{/if}
   {#if message}<div class="web-alert web-alert--success" role="status">{message}</div>{/if}
   {#if loading}<div class="web-panel"><p>Chargement de la protection…</p></div>

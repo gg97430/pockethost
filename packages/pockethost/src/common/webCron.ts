@@ -1,4 +1,10 @@
-/** Strict five-field UTC cron. DOM/DOW use the traditional OR when both are restricted. */
+/** Strict five-field cron. Only the supported fixed-offset zones are accepted. */
+export type WebCronTimezone = 'UTC' | 'Indian/Reunion'
+export const webCronOffset = (timezone: unknown = 'UTC') => {
+  if (timezone === 'UTC') return 0
+  if (timezone === 'Indian/Reunion') return 4 * 3600000
+  throw new Error('Choisissez UTC ou La Réunion (UTC+4).')
+}
 export type WebCron = { expression: string; fields: Set<number>[]; anyDay: boolean; anyWeekday: boolean }
 export const parseWebCron = (expression: unknown): WebCron => {
   if (typeof expression !== 'string' || expression.length > 100) throw new Error('Expression cron invalide.')
@@ -35,8 +41,9 @@ const dayMatches = (cron: WebCron, date: Date) => {
     weekday = cron.fields[4]!.has(date.getUTCDay())
   return cron.anyDay ? weekday : cron.anyWeekday ? day : day || weekday
 }
-export const nextWebCron = (cron: WebCron, after: number): string | null => {
-  const date = new Date(Math.floor(after / 60000) * 60000 + 60000)
+export const nextWebCron = (cron: WebCron, after: number, timezone: WebCronTimezone = 'UTC'): string | null => {
+  const offset = webCronOffset(timezone)
+  const date = new Date(Math.floor((after + offset) / 60000) * 60000 + 60000)
   const limit = date.getUTCFullYear() + 5
   while (date.getUTCFullYear() <= limit) {
     if (!cron.fields[3]!.has(date.getUTCMonth() + 1)) {
@@ -57,7 +64,7 @@ export const nextWebCron = (cron: WebCron, after: number): string | null => {
       date.setUTCMinutes(date.getUTCMinutes() + 1, 0, 0)
       continue
     }
-    return date.toISOString()
+    return new Date(date.getTime() - offset).toISOString()
   }
   return null
 }

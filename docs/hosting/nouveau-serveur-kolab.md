@@ -12,6 +12,10 @@ sudo cat /var/lib/kolab-memory-allocation/status.json
 
 Vérifier le contrôle « Allocation automatique de RAM » dans la supervision. L'installateur conserve la configuration locale existante ; la politique, les exceptions aux quotas explicites et le retour arrière sans arrêt des sites sont décrits dans [WEB_RESOURCE_ALLOCATION.md](../../WEB_RESOURCE_ALLOCATION.md). Ne pas copier l'état mémoire d'un autre serveur.
 
+L’installateur active aussi `pockethost-platform-operator.socket` pour les réglages manuels de RAM et la pause/reprise des nouvelles opérations. Le contrôleur utilise ce socket local sous `NoNewPrivileges`, sans lancer `sudo`. Vérifier ces actions avec le vrai TOTP et un contrôleur jetable protégé, en suivant [la réception des contrôles d’administration](operator-controls.md). Les essais d’écriture utilisent exclusivement un conteneur et des politiques jetables.
+
+Vérifier également la présence du module installé `database_memory_reservations.py`, la fraîcheur du bilan `/run/kolab-memory-allocation/reservations.json` et la lecture de la politique publique par le daemon et le worker. Les bases natives partent d'un plafond de 4 Gio, conservent leurs limites apprises après recréation et ne réduisent plus leur plafond pendant l'inactivité. Une base nécessitant un montant dédié utilise la politique locale root `/etc/kolab/database-memory-reservations.json` ; conserver sa capacité dans les budgets et la reprise de cet hôte. Sauvegarder aussi `database-history.json`. Tester ces chemins et permissions avant de déclarer le nouveau serveur prêt.
+
 Référence : installations d’app4 et d’app5 et correctifs vérifiés jusqu’au **1er novembre 2026**, dont l’installation de `cpulimit`, la validation Cloudflare avant activation du proxy et le respect du dossier de construction des workers et Dockerfiles. Le code de référence comprend le commit `5f9044ec35c8e5e98d9b999d7bf97d620e266588` ; choisir ensuite une release validée plus récente si nécessaire.
 
 Ce document sert à préparer et à réceptionner une installation. **Ce n’est pas un script à exécuter intégralement.** Les commandes sont repérées par contexte ; les valeurs entre `<...>` sont à remplacer. Conserver une copie remplie de la fiche serveur dans le dossier opérateur privé, avec les preuves de recette, sans y recopier les secrets.
@@ -24,6 +28,7 @@ Ce document sert à préparer et à réceptionner une installation. **Ce n’est
 - [DNS, Cloudflare et certificats](#7-dns-cloudflare-et-certificats), [démarrage de la plateforme](#8-démarrage-et-persistance-de-la-plateforme).
 - [Hébergement](#9-hébergement-builder-et-stockage), [accès privé BDD](#10-accès-privé-aux-bases), [GitHub](#11-git-github-et-déploiements-automatiques).
 - [Sauvegardes et reprise](#12-sauvegardes-restaurations-et-reprise-globale), [supervision et alertes](#13-supervision-complète-et-alertes).
+- [Moteur de recette isolé](#44-moteur-rootless-distinct-pour-les-copies-de-reprise) et [coordinateur de reprise de projet](#125-reprise-isolée-dun-projet).
 - [Recette fonctionnelle](#14-recette-fonctionnelle-avant-ouverture), [commandes de contrôle](#15-commandes-de-vérification-utiles), [reboot](#16-reboot-obligatoire-avant-réception).
 - [Migration et retour arrière](#17-migration-publication-et-retour-arrière), [erreurs connues](#18-erreurs-connues-à-diagnostiquer-rapidement).
 - [Checklist finale](#19-checklist-de-réception-finale), [compte rendu](#20-compte-rendu-à-conserver) et [références](#21-références-du-dépôt).
@@ -33,12 +38,13 @@ Ce document sert à préparer et à réceptionner une installation. **Ce n’est
 Remplir cette fiche avant toute installation. `appN` désigne le nouvel identifiant ; ne pas recopier `app3`, `app4`, leurs IP, leurs identifiants internes ou leurs chemins datés.
 
 | Élément                                            | Valeur à renseigner                                                 |
-| -------------------------------------------------- | ------------------------------------------------------------------- |
+| -------------------------------------------------- | ------------------------------------------------------------------------------ |
 | Identifiant unique                                 | `<appN>`                                                            |
 | IPv4 publique, IPv6 éventuelle                     | `<IPV4>` / `<IPV6 ou aucune>`                                       |
 | Nom du dashboard et suffixe des nouveaux sites     | `<appN>.monappli.re`                                                |
 | Compte opérateur                                   | `ubuntu`, UID/GID `1000:1000` pour les outils actuels               |
 | Compte hébergement                                 | `pockethost-web`, UID/GID `1001:1001` pour les outils actuels       |
+| Compte de recette isolée                           | `kolab-recovery`, UID/GID `1002:1002`, home privée, sans connexion interactive |
 | OS, architecture, noyau                            | `<versions vérifiées>` ; profil de référence Linux amd64, cgroup v2 |
 | CPU, RAM, disques, montage des données             | `<inventaire réel>`                                                 |
 | Release et commit                                  | `/home/ubuntu/pockethost-releases/<appN>-<date>` / `<SHA Git>`      |
@@ -80,6 +86,8 @@ flowchart TB
   bridge --> db
   metrics[Collecteur CPU / RAM / disque] --> supervision[Supervision et alertes]
   recovery[Sauvegardes et reprise globale] --> s3[Stockage S3 chiffré]
+  control --> projectRecovery[Coordinateur root de reprise de projet]
+  projectRecovery --> sandbox[Copies uniquement / Docker rootless UID 1002]
 ```
 
 | Composant                                         | Identité / accès attendu                                                                                |
@@ -91,6 +99,8 @@ flowchart TB
 | Builder BuildKit                                  | réseau distinct des sites, quotas explicites, image vérifiée                                            |
 | Accès privé BDD                                   | autorisation par application, auxiliaires et sockets dédiés ; aucun bridge commun à tous les locataires |
 | Collecteur de ressources                          | service root restreint, lectures locales, caches filtrés pour le contrôleur                             |
+| Coordinateur de reprise de projet                 | nouveau service root restreint, sources sélectionnées, clés propres à l’hôte                            |
+| Docker des copies de recette                      | `kolab-recovery`, socket privé `/run/user/1002/docker.sock`, inaccessible à UID 1001                     |
 
 L’accès au groupe `docker` du moteur rootful confère des pouvoirs très élevés sur l’hôte. Il est réservé aux composants de confiance. Le worker web et les locataires ne doivent pas obtenir cet accès.
 
@@ -322,6 +332,29 @@ Attendus : rootless, cgroup v2, pilote systemd, plages subuid/subgid non chevauc
 
 Fixer aussi `MemorySwapMax` et `TasksMax` selon le profil retenu ; le profil app4 emploie respectivement `0` et `2048`. Sur Ubuntu, un refus de namespace utilisateur demande de vérifier les prérequis et profils AppArmor de Docker rootless, sans désactiver globalement AppArmor pour contourner le problème.
 
+### 4.4 Moteur rootless distinct pour les copies de reprise
+
+Cette préparation concerne le lot reprise/migration décrit dans [le suivi de livraison](productivity-rollout.md). Vérifier sa réception avant de le proposer aux utilisateurs ; la présence de ces instructions ne signifie pas qu’il est déjà publié sur les trois serveurs.
+
+Les copies de bases doivent être séparées du moteur d’hébergement UID 1001. Le compte `kolab-recovery` est UID/GID 1002, avec `/home/kolab-recovery` et `/run/user/1002` en mode 0700. Son socket `/run/user/1002/docker.sock` appartient à UID 1002 ; le worker UID 1001 ne doit pouvoir ni l’ouvrir ni lire les copies. Ne pas réutiliser le socket 1001 pour une recette, changer les propriétaires des données sources ou renuméroter un compte existant.
+
+Depuis la release cohérente, avec l’image auxiliaire approuvée **par ID SHA256 exact**, préparer puis exécuter :
+
+```bash
+sudo python3 packages/pockethost/scripts/install-project-recovery-engine.py \
+  --helper-image 'sha256:<ID_APPROUVE>'
+sudo python3 packages/pockethost/scripts/install-project-recovery-engine.py \
+  --helper-image 'sha256:<ID_APPROUVE>' --execute
+sudo python3 packages/pockethost/scripts/install-project-recovery-engine.py \
+  --helper-image 'sha256:<ID_APPROUVE>' --verify-only
+```
+
+L’installateur refuse les collisions d’identité/home et les plages subuid/subgid chevauchantes ; il conserve les plages déjà attribuées. Il crée seulement ce nouveau moteur, exporte l’outillage approuvé depuis UID 1001 et en vérifie l’identité dans le moteur 1002. Il ne redémarre ni le Docker des BDD, ni le moteur 1001, ni PM2. Les prérequis rootless et cgroupv2 doivent déjà fonctionner.
+
+Contrôler la **slice entière** `user-1002.slice` : `MemoryHigh=3G`, `MemoryMax=4G`, `MemorySwapMax=0`, `CPUQuota=100%`, `TasksMax=512`. Les 100 % correspondent à un cœur. Ces limites sont indépendantes du budget web 1001 ; elles couvrent aussi les scopes des conteneurs de recette. L’admission doit conserver la réserve hôte de 15 % / 2 Gio minimum, les engagements BDD, une pointe de 4 Gio pour le moteur 1002 et 1 Gio pour le coordinateur. Prévoir aussi 15 Gio libres au-delà des artefacts, vérifiés pendant les copies. Un manque de capacité suspend la recette ; il ne justifie pas de retirer la réserve d’une base cliente.
+
+Voir [la séparation des moteurs et ses contrôles](project-recovery.md#séparation-des-moteurs), puis installer le coordinateur au §12.5.
+
 ## 5. Runtime Node et release applicative
 
 ### 5.1 Versions et fichiers livrés
@@ -374,7 +407,7 @@ Vérifier les redirections d’authentification, cookies, CORS, liens de console
 ### 6.1 Inventaire des secrets
 
 | Secret                                                                | Portée                                                                         | Conservation                                                                                    |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | Identité et mot de passe superutilisateur du contrôleur               | services de confiance uniquement                                               | fichier privé + coffre                                                                          |
 | `PH_SECRET`                                                           | échanges internes de la plateforme                                             | valeur propre au serveur                                                                        |
 | `WEB_APPS_MASTER_KEY`                                                 | contrôleur, 32 caractères ASCII aléatoires exactement                          | sauvegarde externe indispensable pour relire les valeurs chiffrées                              |
@@ -383,6 +416,8 @@ Vérifier les redirections d’authentification, cookies, CORS, liens de console
 | `PLATFORM_MONITORING_KEY`                                             | chiffrement des réglages de supervision ; repli possible sur la clé maître web | conserver la clé réellement utilisée                                                            |
 | `WEB_BACKUPS_S3_IMAGE_KEY`                                            | sauvegardes des images web, 64 caractères hexadécimaux                         | distincte de la clé de reprise globale                                                          |
 | Clé de reprise globale                                                | fichier privé, 64 caractères hexadécimaux                                      | copie hors serveur et hors bucket, distincte des deux clés précédentes                          |
+| `project-recovery.key` et `project-recovery-controller.key`           | chiffrement des capsules de recette et capacité locale du coordinateur, deux clés distinctes | root 0600 et root:ubuntu 0640 ; propres à l’hôte, jamais dans le worker 1001 ni transférées à un autre serveur |
+| `project-migration-control.key`                                       | capacité opérateur du contrôleur local de migration                                          | root:ubuntu 0440 ; distincte des clés de reprise et du worker                                                |
 | SMTP, S3, Cloudflare, GitHub, Litestream                              | composants qui en ont besoin                                                   | coffre, fichiers `0600`, aucune variable publique                                               |
 | Clés d’hôte SFTP/SSH et clés TLS                                      | service concerné                                                               | sauvegarde sécurisée ; préserver l’identité en migration                                        |
 | Clés de chiffrement TOTP/2FA et des réglages PocketBase, si utilisées | contrôleur et instances concernées                                             | inclure les fichiers nécessaires à la reprise et tester une authentification après restauration |
@@ -443,6 +478,22 @@ WEB_APPS_STORAGE_HELPER_IMAGE=sha256:<IMAGE_AUXILIAIRE_VALIDEE>
 Ajouter le secret worker et les identifiants S3 web nécessaires dans ce fichier privé. **Ne pas y placer la clé maître web, le mot de passe superutilisateur du contrôleur ou le secret du broker.** Le firewall reçoit les chemins/indicateurs de routage nécessaires et les permissions de lecture des routes/certificats ; il n’a pas besoin des secrets du worker ou de S3.
 
 Installer le worker et **tous ses modules importés**, pas uniquement `web-app-worker.py`, dans `/opt/pockethost-web`. Les scripts de confiance appartiennent à root et ne sont pas modifiables par le groupe ou les autres utilisateurs. Compiler et livrer aussi `terminal-broker.cjs` et les outils auxiliaires requis. Ne pas installer les scripts `test-*` comme services.
+
+Les contrôles de fiabilité utilisent aussi `web_app_preflight.py`, `web_app_checks.py` et `web_app_checks_runner.py`, avec les modules existants `web_app_health.py` et `web_app_notifications.py`. Le runner doit être un fichier régulier root:root, non inscriptible par les services : sinon les parcours sont refusés. Installer les migrations additives `web_app_checks` et `web_app_check_runs` avant d'activer le worker correspondant. La garde de publication doit contrôler les exécutions `running` et le marqueur `checks-status.json.runId` ; la pause d'admission autorise uniquement la réconciliation des anciennes exécutions, sans en lancer de nouvelles.
+
+Recette des contrôles : les anciennes applications sans configuration ne changent pas. Sur un projet jetable, déclarer une variable obligatoire absente et constater le refus avant construction ; ajouter sa valeur sans l'afficher dans les journaux. Vérifier une liaison privée et des identifiants de test ; un échec doit conserver la version publiée. Dans l'onglet Santé, créer un parcours GET sur le domaine du projet, avec un compte dédié à la lecture si nécessaire ; constater le résultat fonctionnel distinct du contrôle de santé technique. Les mots de passe sont chiffrés et ne sont plus renvoyés après enregistrement. Les origines privées, redirections, mutations métier, réponses trop grandes et dépassements de délai sont refusés. Aucun mail de test n'est envoyé par ce mécanisme.
+
+Un dépôt peut déclarer ses variables nécessaires dans `.kolab/checks.json`, sans commande exécutable ni valeur secrète :
+
+```json
+{ "version": 1, "requiredEnvironment": [{ "name": "DATABASE_URL", "scope": "runtime" }] }
+```
+
+Les portées acceptées sont `build`, `runtime` et `both`. Ce contrat explicite est vérifié après la récupération du dépôt, même si les contrôles du formulaire sont désactivés.
+
+Inclure `platform_maintenance.py` et `platform_release_guard.py`. La suspension d’admission utilise un bail root borné dans `/run/kolab-platform-maintenance/admission.json` : les push restent reçus, les opérations actives terminent et les relais BDD continuent. Ne jamais utiliser l’arrêt d’un conteneur client pour libérer la publication de Kolab. Les versions communes se valident sur app4/app5 avant app3 selon les vagues décrites dans [la procédure de flotte](fleet-releases.md).
+
+Le collecteur RAM importe également `database_memory_management.py`. Installer `platform_operator.py` root:root non inscriptible avec ces modules ; le contrôleur l’appelle avec Python isolé pour les réglages superadmin. Les politiques restent propres à l’hôte dans `/etc/kolab/database-memory-reservations.json` et `/etc/kolab/database-memory-management.json`. Une réservation fixe ne doit jamais être perdue pendant une mise à jour de code.
 
 ### 6.4 Dashboard : configuration au moment du build
 
@@ -678,7 +729,7 @@ Le limiteur de requêtes natif PocketBase est un réglage propre à chaque base,
 **Administration → Limites de requêtes**, réservé aux superadmins ayant validé le TOTP, regroupe trois réglages indépendants :
 
 | Réglage | Portée et application |
-| --- | --- |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Trafic des hébergements | Nombre de requêtes par minute et par IP, partagé entre les sites du serveur ; **0 désactive ce limiteur**. Valeur initiale issue de `WEB_APPS_IP_RATE_LIMIT`, sinon 1 200. Application automatique via le registre du worker, sans redémarrer les sites. |
 | Relais BDD privé | Plafonds de connexions simultanées : total, application, liaison et base. Valeurs initiales 512 / 128 / 128 / 128. Réglage rechargé par le broker, les proxys et les cibles ; une baisse ne coupe pas les connexions existantes. |
 | Limiteur PocketBase | Choisir une base démarrée, lire son réglage réel, activer/désactiver et modifier ses règles. Enregistrement par l’API native, exceptions IP et autres paramètres conservés. Une base arrêtée n’est pas démarrée automatiquement. |
@@ -780,6 +831,28 @@ Enregistrer le nombre réel de BDD vérifiées, les fichiers contrôlés, l’id
 
 **Toute exception de fichier absent est explicite et limitée.** L’exception historique des anciennes images de Zavis n’autorise pas à ignorer de nouveaux manques sur un autre projet ou serveur.
 
+### 12.5 Reprise isolée d’un projet
+
+Installer d’abord le moteur 1002 (§4.4), puis les migrations additives et les routes natives compilées de la même release. Le coordinateur utilise uniquement le contrôleur local loopback 8091. Après disponibilité de ses routes, installer son **nouveau** service :
+
+```bash
+sudo python3 packages/pockethost/scripts/install-project-recovery.py \
+  --data-root '/home/ubuntu/.local/share/pockethost/data' \
+  --binary-root '/home/ubuntu/.local/share/pockethost/pocketbase' \
+  --instance-app-root '<RUNTIME_ROOT>/packages/pockethost/src/instance-app' \
+  --helper-image 'sha256:<ID_APPROUVE>' --activate
+```
+
+Les chemins doivent exister et être canoniques. Vérifier `pockethost-project-recovery.service`, sa limite séparée de 1 Gio, la configuration `/etc/kolab/project-recovery.json` root 0600 et l’état `/var/lib/kolab-project-recovery` root 0700. L’installateur crée les deux clés distinctes du tableau §6.1 ; aucune clé du worker web n’est utilisée. Ne pas remplacer le contrôleur ou le coordinateur lorsqu’un essai est actif ou en finalisation : attendre son nettoyage, en suspendant seulement les nouvelles admissions. Les sites, bases, workers métier et crons sources continuent à fonctionner.
+
+La capsule contient le seul projet sélectionné : BDD/fichiers, images immuables, environnements, liaisons, volumes et commandes de tâches. Aucun compte ou secret global de plateforme n’est inclus. Les snapshots SQLite sont lus sous le propriétaire de la source pour ne pas créer de WAL/SHM root. Les artefacts sont contrôlés avant et après copie ; dépendances externes non couvertes, stockage manquant ou données instables interdisent un résultat complet.
+
+L’essai exécute les copies dans le moteur 1002, sans privilèges, sans socket Docker monté, sans port public et sans réseau extérieur. Les mails et crons des copies restent désactivés, les workers restent arrêtés, et les hooks/migrations natifs sauvegardés ne s’exécutent pas. Le démarrage HTTP vérifie un frontal et ses BDD liées ; il ne prouve pas tous les parcours métier. Une couverture complète des artefacts et une validation fonctionnelle sont deux résultats distincts.
+
+Ajouter à la reprise de plateforme les installateurs, l’unité, les configurations et clés root **propres à cet hôte**, les plages `/etc/subuid`/`subgid` et l’identité 1002. Utiliser une sauvegarde root ou un export chiffré vérifié : ajouter un chemin root 0600 à une capture exécutée sous UID 1000 ne le rend pas lisible. Ne pas relâcher les droits pour faire passer la sauvegarde. Les images/copies temporaires et la home Docker 1002 sont recréables et ne doivent pas être sauvegardées comme des données clientes ni synchronisées vers un autre hôte.
+
+Suivre [la recette, le nettoyage et les limites de preuve](project-recovery.md). En cas de nettoyage incomplet, conserver le journal privé et bloquer les nouveaux essais jusqu’à réconciliation ; ne pas effacer les marqueurs ni supprimer des ressources hors du journal.
+
 ## 13. Supervision complète et alertes
 
 ### 13.1 Ressources CPU / RAM / disque
@@ -788,7 +861,9 @@ Installer `platform_resource_collector.py`, sa configuration et [son unité syst
 
 Recouper les cgroups réels avec `systemctl show <unité> -p ControlGroup`. Le broker privé utilise actuellement `kolab-db-bridge.service` : ne pas recopier un nom d’unité inexistant depuis un exemple.
 
-Configurer les deux sockets Docker, les filesystems et **les `diskRoots`** : BDD, hébergement, BuildKit/caches, plateforme et sauvegardes. Une liste vide ne fournit pas une attribution disque complète. Éviter de compter le parent `user@1001.service` comme daemon Docker : il contient aussi des conteneurs.
+Configurer les deux sockets Docker de production, les filesystems et **les `diskRoots`** : BDD, hébergement, BuildKit/caches, plateforme et sauvegardes. Une liste vide ne fournit pas une attribution disque complète. Éviter de compter le parent `user@1001.service` comme daemon Docker : il contient aussi des conteneurs.
+
+Pour la reprise de projet, ajouter à la catégorie sauvegardes la slice entière `user.slice/user-1002.slice` et `system.slice/pockethost-project-recovery.service`, avec les racines disque `/home/kolab-recovery/.local/share/docker` et `/var/lib/kolab-project-recovery`. Faire valider explicitement cette slice par le collecteur. Ne pas ajouter le socket 1002 à l’inventaire Docker des locataires ni compter ses conteneurs une deuxième fois. Vérifier aussi la fraîcheur de `/run/kolab-project-recovery/health.json`, sa disponibilité et le refus d’accès au socket depuis UID 1001 ; un ancien état `ready` ne vaut pas un contrôle actuel. Le [guide de reprise](project-recovery.md#surveillance-et-comptabilité) donne les entrées de configuration.
 
 ```bash
 sudo python3 -I -B /opt/pockethost-web/platform_resource_collector.py \
@@ -828,7 +903,7 @@ Commencer par les contrôles sans notifications pendant l’installation. Après
 ## 14. Recette fonctionnelle avant ouverture
 
 | Domaine                      | Preuve attendue                                                                                                              |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Accès opérateur              | seconde session SSH par clé, accès de secours, fail2ban et configuration effective corrects                                  |
 | Contrôleur/dashboard         | HTTPS valide, authentification, bon serveur/IP affichés, menu Hébergement visible                                            |
 | BDD                          | création, démarrage, veille/arrêt volontaire, auth, fichier, console d’administration, suppression de la seule cible de test |
@@ -841,6 +916,8 @@ Commencer par les contrôles sans notifications pendant l’installation. Après
 | GitHub                       | un vrai push de test aboutit au bon commit publié ; autres connexions non affectées                                          |
 | Domaine personnalisé         | TXT/A corrects, validation directe, certificat, activation automatique du proxy et challenge encore accessible               |
 | Sauvegardes                  | BDD + images + volumes + S3 + clé externe ; exercice de reprise globale réussi                                               |
+| Reprise de projet            | copies uniquement dans le moteur 1002, socket privé refusé à UID 1001, quotas et couverture vérifiés, mails/crons off, nettoyage complet         |
+| Migration de projet          | projet jetable, nouveau plan révisé, import suspendu et rollback des seules copies ; DNS sans changement réel avant consentement |
 | Supervision                  | ressources globales et catégories, graphes alimentés, fraîcheur, santé des BDD et sites                                      |
 | Alertes                      | réception e-mail/Discord, incident et rétablissement ; logs d’échec masqués en pièce jointe                                  |
 | Réseau public                | seuls les ports choisis répondent, y compris en IPv6 ; pas d’accès direct aux ports BDD                                      |
@@ -904,7 +981,7 @@ Lire les scripts de préparation exécutés avant l’ouverture du port HTTP : c
 
 ## 16. Reboot obligatoire avant réception
 
-Faire ce test avant les clients, ou dans un créneau prévu si le serveur est déjà utilisé.
+Cette étape concerne uniquement la réception d’un **serveur neuf avant ses premiers clients**. Une mise à jour de plateforme sur app3/app4/app5 ne doit pas redémarrer l’hôte ni arrêter un service client ; conserver la preuve de persistance initiale et suivre la publication par vagues.
 
 1. Vérifier l’absence d’opération active et la disponibilité de la console de secours.
 2. Redémarrer l’hôte.
@@ -919,7 +996,26 @@ Un service « enabled » sans test de reboot ne constitue pas une preuve de pers
 
 ## 17. Migration, publication et retour arrière
 
-Pour un serveur neuf indépendant, ne pas modifier les DNS d’app3/app4 ni leurs sources de données. Pour une migration, préparer un plan distinct comprenant :
+### 17.1 Préparer l’assistant de migration
+
+Le lot reste soumis à la réception indiquée dans [le suivi](productivity-rollout.md). Après le moteur 1002 et les outils de reprise, installer la CLI et les routes natives cohérentes :
+
+```bash
+sudo python3 packages/pockethost/scripts/install-project-migration.py \
+  --data-root '/home/ubuntu/.local/share/pockethost/data' \
+  --binary-root '/home/ubuntu/.local/share/pockethost/pocketbase' \
+  --web-root '/home/pockethost-web/data' \
+  --instance-app-root '<RUNTIME_ROOT>/packages/pockethost/src/instance-app' \
+  --helper-image 'sha256:<ID_APPROUVE>'
+```
+
+L’installateur n’ajoute aucun service et ne redémarre rien. Vérifier `/opt/pockethost-web/web_project_migration.py` root non inscriptible par les services, `/etc/kolab/project-migration.json` root 0600, sa clé de contrôle séparée (§6.1) et `/var/lib/kolab-project-migration` root 0700. La configuration distingue le moteur cible 1001 du moteur de recette dans le moteur 1002. Conserver configuration et journaux dans la sauvegarde privée de l’hôte. Le transfert se fait par l’opérateur authentifié, sans installer d’accès SSH serveur à serveur et sans transporter de clé globale : seulement la capsule du projet et sa clé éphémère.
+
+### 17.2 Plan, recette et consentements de bascule
+
+Pour un serveur neuf indépendant, ne pas modifier les DNS d’app3/app4/app5 ni leurs sources de données. Aucune migration de client réel ne découle de l’installation de l’assistant. Sélectionner explicitement le projet, la source et la cible, puis faire valider le plan concret. Tous les comptes, superadmins compris, passent le TOTP avant toute API de reprise/migration ; une session mot de passe seule ne suffit pas.
+
+Le plan révisé comprend :
 
 - inventaire des BDD, sites, volumes, fichiers locaux/S3, versions, domaines et secrets nécessaires ;
 - correspondance des anciens et nouveaux identifiants, des membres et des permissions ;
@@ -930,7 +1026,19 @@ Pour un serveur neuf indépendant, ne pas modifier les DNS d’app3/app4 ni leur
 - bascule DNS, validation TLS et observation des journaux/alertes ;
 - ancien hôte conservé comme retour arrière jusqu’à réception validée.
 
+L’assistant crée de nouveaux identifiants et affecte les copies à un propriétaire existant autorisé sur la cible ; il ne copie pas les comptes ni les secrets globaux. Vérifier les capacités disque/RAM, engagements dédiés compris, les binaires natifs exacts, les images et la réécriture des URL/liaisons. Une BDD partagée avec des applications hors périmètre, des hooks nécessitant une revue, une dépendance externe ou une URL compilée exigeant un rebuild bloque le plan tant que le périmètre n’est pas résolu.
+
+Chaque approbation est liée à la révision courante (CAS) et à la saisie du nom exact du projet. Le plan initial expire après 30 minutes avant import. L’import exige d’abord une recette complète dans le moteur 1002 et son nettoyage, puis matérialise les artefacts cibles **suspendus** : applications arrêtées, BDD éteintes, déploiement automatique désactivé, tâches et workers désactivés, domaines en attente. Le déverrouillage est distinct du démarrage ; les mails et crons des copies restent coupés pendant la recette. Le rollback automatique ne retire que les copies identifiées au journal et encore intactes ; une copie modifiée impose une revue, jamais un écrasement de la source ou de données nouvelles.
+
+Une bascule finale exige le gel des écritures métier, crons et workers sources **avant la capture finale**. L’opérateur atteste cette barrière à l’export avec `--source-writes-paused-confirmation <ID_PROJET_SOURCE>` ; ce n’est pas une détection automatique des écritures. Sans cette attestation encapsulée, la copie peut servir à la recette mais le DNS reste bloqué. Cette interruption décidée pour une migration réelle est distincte de la livraison de plateforme, qui conserve les clients en service.
+
+Après déverrouillage et vérification des frontaux cibles, générer et soumettre un nouvel aperçu DNS avant/après : domaines, entrées A/AAAA/CNAME existantes, destination et proxy Cloudflare activé. L’aperçu dispose de sa propre validité de 15 minutes et est lié au plan ; la validation de l’import ne l’autorise pas. L’interface exige des confirmations distinctes sur le gel source, les tâches, la cible vérifiée et la bascule non atomique. Seule la CLI opérateur applique ensuite la révision autorisée et journalise ses mutations. Le retour DNS vérifie les valeurs courantes (CAS) avant de revenir en arrière ; il ne remplace pas des modifications DNS concurrentes. Voir [la procédure de migration](project-migration.md) pour les commandes et la reprise après interruption.
+
 Un retour DNS vers l’ancien serveur après de nouvelles écritures sur le nouveau nécessite une stratégie de réconciliation. Ne pas remettre simplement une ancienne base de contrôle par-dessus les écritures récentes.
+
+### 17.3 Publication du code de plateforme
+
+Utiliser [la procédure de publication de flotte](fleet-releases.md). Pour l’intervention productivité, activer et vérifier app4/app5 avant app3, sans redémarrage d’hôte ni arrêt de site, BDD, worker métier ou cron actif. Conserver les sondes continues et comparer les identités/démarrages clients avant et après ; terminer par `python3 packages/pockethost/scripts/platform-fleet.py check`.
 
 Lors d’une mise à jour ultérieure du code : sauvegarder les fichiers visés et leur manifeste, comparer les empreintes avant écriture, livrer les helpers/bibliothèques avant les routes qui les utilisent, attendre la disponibilité du contrôleur après rechargement, puis vérifier les API. Un bref rechargement peut produire une réponse transitoire : prévoir une attente bornée avant de conclure à un échec.
 
@@ -939,7 +1047,7 @@ Pour le dashboard, conserver les anciens assets immuables pendant la transition 
 ## 18. Erreurs connues à diagnostiquer rapidement
 
 | Symptôme                                                                | Premier contrôle / correction                                                                                                                                  |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `INSTANCE_BACKUP_CPU_LIMIT_PERCENT requiert ... cpulimit`               | installer `cpulimit`, vérifier le PATH du contrôleur, lancer §15.2 ; contrôler l’état de la BDD après l’échec                                                  |
 | `exec: "sqlite3": executable file not found in $PATH`                   | installer le paquet `sqlite3`, vérifier son exécutable sous l’identité du contrôleur ; la bibliothèque Python seule ne suffit pas                              |
 | Hébergement absent du menu                                              | `WEB_APPS_ENABLED` au runtime **et** `PUBLIC_WEB_APPS_ENABLED` au build ; droits du compte, release réellement servie                                          |
@@ -961,6 +1069,8 @@ Pour le dashboard, conserver les anciens assets immuables pendant la transition 
 
 Pour un binaire SWC tronqué, relever la première erreur native avant l’erreur finale de configuration : le repli de Next.js peut ensuite produire un message sur les imports JSON. Conserver le commit, les journaux et les tailles/empreintes avant récupération. Contrôler l’espace disque et les événements mémoire pour distinguer cet incident d’un manque de ressources. La reconstruction complète d’une application doit ignorer ses couches et utiliser un namespace de cache neuf ; ne pas purger le builder partagé ou les caches des autres projets.
 
+Tester aussi deux déploiements rapprochés. Avant le début de publication, une nouvelle demande de déploiement de la même application doit annuler la construction précédente au prochain heartbeat, même si le commit est identique. Une autre application ou un simple arrêt/retour arrière en attente ne déclenche pas ce remplacement. Le worker conserve le bail jusqu'à l'arrêt de la commande et au nettoyage du candidat ; il ne lance jamais deux constructions simultanées. Une publication déjà engagée reste protégée. Un candidat Docker arrêté, déclaré `unhealthy` ou ayant déjà redémarré trois fois échoue avec ses logs masqués, sans attendre les 120 secondes réservées à un processus encore en initialisation. Un job refusé avant démarrage (source indisponible ou accès CI expiré) indique au worker de prendre immédiatement le suivant. La maintenance du cache BuildKit se fait uniquement quand la file est vide, avec une commande bornée à trois secondes ; les contrôles de capacité et la garde disque restent actifs.
+
 Le message de production [React nº 441](https://react.dev/errors/441) masque la cause précise de l’échec du rendu serveur. Le digest permet de retrouver l’erreur dans les journaux de l’application ; conserver cette corrélation avant toute intervention. Une rupture TCP du relais peut provoquer une erreur de connexion sans réponse HTTP 429.
 
 Le Dockerfile personnalisé reste responsable de ses montages de cache. Deux étapes qui installent des dépendances dans le même store pnpm doivent coordonner leur accès : utiliser `sharing=locked` sur le montage et fixer explicitement le même `--store-dir`. Un contrôle de chargement de SWC juste après l’installation permet d’identifier une dépendance invalide avant de lancer la compilation. Une corruption constatée ne prouve pas à elle seule que la concurrence en est la cause. Référence : [montages et coordination des caches Docker](https://docs.docker.com/build/cache/optimize/#use-cache-mounts).
@@ -975,6 +1085,7 @@ Ne déclarer le serveur prêt qu’après ces validations. Chaque case doit corr
 - [ ] Mises à jour traitées, heure synchronisée, fuseaux des tâches connus.
 - [ ] Tous les prérequis installés, notamment `cpulimit`, Certbot/plugin Cloudflare et bibliothèques Python.
 - [ ] Docker rootful et rootless distincts, sockets et comptes corrects.
+- [ ] Moteur de recette 1002 distinct, socket privé inaccessible au worker 1001, slice 4 Gio / CPU 100 % et marge d’admission vérifiées.
 - [ ] Publications BDD loopback, garde Docker persistante, ports testés depuis l’extérieur en IPv4/IPv6.
 - [ ] Quotas effectifs du parent, du builder, des sites et auxiliaires cohérents.
 - [ ] Release, bundles, migrations, binaires et images vérifiés ; pas de tags/chemins hérités non revus.
@@ -990,6 +1101,8 @@ Ne déclarer le serveur prêt qu’après ces validations. Chaque case doit corr
 - [ ] Sauvegarde/restauration BDD et restauration d’un volume web validées sur cibles jetables.
 - [ ] Sauvegardes S3 lisibles, rétention et première exécution planifiée contrôlées.
 - [ ] Capture de plateforme complète et exercice de reprise isolé réussis.
+- [ ] Coordinateur de reprise, clés séparées et leur sauvegarde privée vérifiés ; essai d’un projet jetable complet, sans mail/cron et nettoyé.
+- [ ] Assistant de migration réceptionné avec un projet jetable ; CAS, capacités, import suspendu et rollback contrôlés, aucun client déplacé implicitement.
 - [ ] Supervision globale, catégories et graphes alimentés, fraîcheur/disque vérifiés.
 - [ ] Notifications e-mail/Discord configurées et reçues ; pièce jointe d’erreur masquée vérifiée.
 - [ ] Journaux bornés, disque et inodes avec marge, nettoyage limité aux ressources gérées.
@@ -1020,6 +1133,9 @@ Les secrets eux-mêmes restent dans le coffre et les fichiers privés prévus, p
 - [Hébergement : fonctionnement et procédures détaillées](../../WEB_HOSTING.md).
 - [Recette des alertes et des pièces jointes](../../WEB_ALERTS_RUNBOOK.md).
 - [Reprise globale, isolation des exercices et bascule après sinistre](../../WEB_RECOVERY_RUNBOOK.md).
+- [Reprise isolée d’un projet et moteur 1002](project-recovery.md).
+- [Assistant de migration de projet et consentements DNS](project-migration.md).
+- [Suivi de réception des lots productivité](productivity-rollout.md).
 - [Préparation Docker rootless et unités web](../../packages/pockethost/scripts/setup-web-hosting.sh).
 - [Protection des entrées Docker](../../packages/pockethost/scripts/docker-ingress-guard.py).
 - [Installateur du relais BDD privé](../../packages/pockethost/scripts/install-private-db-bridge.py).
@@ -1028,7 +1144,6 @@ Les secrets eux-mêmes restent dans le coffre et les fichiers privés prévus, p
 - [Paramètres du runtime et chemins de données](../../packages/pockethost/src/constants.ts).
 
 Les anciens documents du dépôt contiennent parfois des noms de serveurs, statuts de pilote ou commandes historiques. Pour une nouvelle installation, recouper leurs détails avec le code de la release choisie et les validations de ce guide.
-
 
 ## 18. Contrôle automatique bloquant d’un nouvel hôte
 
@@ -1064,7 +1179,6 @@ L’installateur utilise directement les empreintes du worker, valide les deux b
 ### Régressions exécutées en CI
 
 Le job `server-provisioning` vérifie la syntaxe des installateurs, les contrôles de réception, les runtimes, Railpack et le worker. Il couvre notamment le refus d’un budget d’admission insuffisant, les demandes adaptatives, la pression mémoire et les priorités, les prérequis oubliés, les scripts installés obsolètes, les binaires non conformes et les chemins de construction. Le job existant de fraîcheur des hooks empêche de publier un bundle PocketBase divergent de ses sources TypeScript. Ces tests automatiques complètent la recette sur un hôte Linux vierge ; ils ne la remplacent pas.
-
 
 ## 22. Points confirmés pendant l’installation d’app5
 

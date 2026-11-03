@@ -6,6 +6,8 @@ const state = vi.hoisted(() => ({
   removes: [] as string[],
   wrongStore: false,
   existing: null as any,
+  memoryMiB: 4096,
+  fixedMemory: false,
 }))
 const a = 'a'.repeat(15),
   b = 'b'.repeat(15),
@@ -20,6 +22,13 @@ vi.mock('bottleneck', () => ({
   },
 }))
 vi.mock('fs', () => ({ existsSync: () => true }))
+vi.mock('./databaseMemoryReservation', () => ({
+  databaseMemoryReservation: () => ({
+    Memory: state.memoryMiB * 1024 ** 2,
+    MemoryReservation: state.fixedMemory ? state.memoryMiB * 1024 ** 2 : 0,
+    MemorySwap: -1,
+  }),
+}))
 vi.mock('@', () => {
   const log: any = { dbg: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   log.create = () => log
@@ -99,10 +108,24 @@ beforeEach(() => {
   state.removes = []
   state.wrongStore = false
   state.existing = null
+  state.memoryMiB = 4096
+  state.fixedMemory = false
   vi.stubEnv('PH_INSTANCE_IMAGE_OVERRIDES', '')
 })
 afterEach(() => vi.unstubAllEnvs())
 describe('customer Docker provider image selection', () => {
+  it('applies the operator fixed reservation at container creation, before startup', async () => {
+    state.memoryMiB = 32768
+    state.fixedMemory = true
+    const service = await createPocketbaseService({ logger: log })
+    await service.spawn({ instanceId: b, subdomain: 'b', logger: log, env: {} })
+    expect(state.runs[0].options.HostConfig).toMatchObject({
+      Memory: 32 * 1024 ** 3,
+      MemoryReservation: 32 * 1024 ** 3,
+      MemorySwap: -1,
+    })
+    expect(state.runs[0].options.Labels['pockethost.database.memory']).toBe('fixed')
+  })
   it('uses the pinned host B image in both Docker run and create options, ignoring customer env', async () => {
     vi.stubEnv('PH_INSTANCE_IMAGE_OVERRIDES', JSON.stringify({ [b]: imageB }))
     const service = await createPocketbaseService({ logger: log })

@@ -350,6 +350,10 @@ onRecordUpdate((e) => {
 
 //#endregion
 //#region src/lib/handlers/operatorAdmin/hooks.ts
+routerAdd("GET", "/api/admin/fleet", (e) => require(`${__hooks}/mothership`).HandleOperatorFleet(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/admin/controls", (e) => require(`${__hooks}/mothership`).HandleOperatorControls(e), $apis.requireAuth("users"));
+routerAdd("PUT", "/api/admin/controls/memory", (e) => require(`${__hooks}/mothership`).HandleOperatorMemory(e), $apis.requireAuth("users"));
+routerAdd("PUT", "/api/admin/controls/maintenance", (e) => require(`${__hooks}/mothership`).HandleOperatorDeploymentMaintenance(e), $apis.requireAuth("users"));
 routerAdd("GET", "/api/admin/monitoring/resources", (e) => require(`${__hooks}/mothership`).HandleOperatorResourceMetrics(e), $apis.requireAuth("users"));
 routerAdd("GET", "/api/admin/_monitoring/config", (e) => require(`${__hooks}/mothership`).HandleOperatorMonitoringDeliveryConfig(e), $apis.requireAuth("_superusers"));
 routerAdd("PATCH", "/api/admin/monitoring", (e) => require(`${__hooks}/mothership`).HandleOperatorMonitoringUpdate(e), $apis.requireAuth("users"));
@@ -530,6 +534,11 @@ routerAdd("PATCH", "/api/web-apps/{id}/tasks/{taskId}", (e) => require(`${__hook
 routerAdd("DELETE", "/api/web-apps/{id}/tasks/{taskId}", (e) => require(`${__hooks}/mothership`).HandleWebTaskDelete(e), $apis.requireAuth("users"));
 routerAdd("POST", "/api/web-apps/{id}/tasks/{taskId}/run", (e) => require(`${__hooks}/mothership`).HandleWebTaskRun(e), $apis.requireAuth("users"));
 routerAdd("GET", "/api/web-apps/{id}/task-runs", (e) => require(`${__hooks}/mothership`).HandleWebTaskRuns(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/web-apps/{id}/checks", (e) => require(`${__hooks}/mothership`).HandleWebChecksGet(e), $apis.requireAuth("users"));
+routerAdd("PUT", "/api/web-apps/{id}/checks", (e) => require(`${__hooks}/mothership`).HandleWebChecksPut(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-apps/{id}/checks/run", (e) => require(`${__hooks}/mothership`).HandleWebChecksRun(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-apps/_checks/claim", (e) => require(`${__hooks}/mothership`).HandleWebChecksClaim(e));
+routerAdd("POST", "/api/web-apps/_checks/report", (e) => require(`${__hooks}/mothership`).HandleWebChecksReport(e));
 routerAdd("POST", "/api/web-apps/_tasks/claim", (e) => require(`${__hooks}/mothership`).HandleWebTaskClaim(e));
 routerAdd("POST", "/api/web-apps/_tasks/validate", (e) => require(`${__hooks}/mothership`).HandleWebTaskValidate(e));
 routerAdd("POST", "/api/web-apps/_tasks/report", (e) => require(`${__hooks}/mothership`).HandleWebTaskReport(e));
@@ -631,5 +640,22 @@ routerAdd("GET", "/api/web-apps/cloudflare/settings", (e) => require(`${__hooks}
 routerAdd("PUT", "/api/web-apps/cloudflare/settings", (e) => require(`${__hooks}/mothership`).HandleWebCloudflarePut(e), $apis.requireAuth("users"));
 routerAdd("POST", "/api/web-apps/{id}/domains/{domainId}/cloudflare/preview", (e) => require(`${__hooks}/mothership`).HandleWebCloudflarePreview(e), $apis.requireAuth("users"));
 routerAdd("POST", "/api/web-apps/{id}/domains/{domainId}/cloudflare/apply", (e) => require(`${__hooks}/mothership`).HandleWebCloudflareApply(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/web-project-recovery", (e) => require(`${__hooks}/mothership`).HandleProjectRecoveryGet(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/web-project-recovery/projects/{projectId}/preview", (e) => require(`${__hooks}/mothership`).HandleProjectRecoveryPreview(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-project-recovery/projects/{projectId}/runs", (e) => require(`${__hooks}/mothership`).HandleProjectRecoveryQueue(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-project-recovery/_worker/claim", (e) => require(`${__hooks}/mothership`).HandleProjectRecoveryClaim(e));
+routerAdd("POST", "/api/web-project-recovery/_worker/report", (e) => require(`${__hooks}/mothership`).HandleProjectRecoveryReport(e));
+routerAdd("GET", "/api/web-project-migrations", (e) => require(`${__hooks}/mothership`).HandleProjectMigrationsGet(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/web-project-migration/sources", (e) => require(`${__hooks}/mothership`).HandleProjectMigrationSources(e), $apis.requireAuth("users"));
+routerAdd("GET", "/api/web-project-migration/sources/{projectId}/preview", (e) => require(`${__hooks}/mothership`).HandleProjectMigrationSourcePreview(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-project-migrations/{id}/approve", (e) => require(`${__hooks}/mothership`).HandleProjectMigrationApprove(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-project-migrations/{id}/release", (e) => require(`${__hooks}/mothership`).HandleProjectMigrationRelease(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-project-migrations/{id}/dns-approve", (e) => require(`${__hooks}/mothership`).HandleProjectMigrationDnsApprove(e), $apis.requireAuth("users"));
+routerAdd("POST", "/api/web-project-migration/_operator/{action}", (e) => require(`${__hooks}/mothership`).HandleProjectMigrationOperator(e));
+onRecordCreate((e) => require(`${__hooks}/mothership`).GuardProjectMigrationRecord(e));
+onRecordUpdate((e) => require(`${__hooks}/mothership`).GuardProjectMigrationRecord(e));
+onRecordDelete((e) => require(`${__hooks}/mothership`).GuardProjectMigrationDelete(e));
+onRecordUpdateRequest((e) => require(`${__hooks}/mothership`).GuardProjectMigrationRequest(e));
+onRecordDeleteRequest((e) => require(`${__hooks}/mothership`).GuardProjectMigrationRequest(e));
 
 //#endregion

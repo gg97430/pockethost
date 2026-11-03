@@ -24,15 +24,17 @@
       ? 'Tableau de bord'
       : pathname.startsWith('/applications')
         ? 'Applications web'
-        : pathname.startsWith('/monitoring')
-          ? 'Supervision'
-          : pathname.startsWith('/admin')
-            ? 'Administration'
-            : pathname.startsWith('/activity')
-              ? 'Journal d’administration'
-              : pathname.startsWith('/account')
-                ? 'Mon compte'
-                : 'Bases de données'
+        : pathname.startsWith('/fleet')
+          ? 'Les trois serveurs'
+          : pathname.startsWith('/monitoring')
+            ? 'Supervision'
+            : pathname.startsWith('/admin')
+              ? 'Administration'
+              : pathname.startsWith('/activity')
+                ? 'Journal d’administration'
+                : pathname.startsWith('/account')
+                  ? 'Mon compte'
+                  : 'Bases de données'
   $: detail =
     pathname === '/instances/new'
       ? 'Nouvelle base'
@@ -40,11 +42,15 @@
         ? 'Instance'
         : pathname === '/applications/settings'
           ? 'Configuration'
-          : pathname === '/applications/recovery'
-            ? 'Reprise du serveur'
-            : pathname.match(/^\/applications\/[^/]+/)
-              ? 'Application'
-              : ''
+          : pathname.startsWith('/applications/recovery/projects')
+            ? 'Reprise des projets'
+            : pathname.startsWith('/applications/recovery/migrations')
+              ? 'Migration de projet'
+              : pathname === '/applications/recovery'
+                ? 'Reprise du serveur'
+                : pathname.match(/^\/applications\/[^/]+/)
+                  ? 'Application'
+                  : ''
 
   afterNavigate(() => {
     drawerOpen = false
@@ -150,6 +156,15 @@
       >
     {/if}
     {#if $userStore?.superAdmin}
+      {#if $userStore?.verified}
+        <a
+          href="/fleet"
+          data-sveltekit-preload-code="hover"
+          class:active={pathname.startsWith('/fleet')}
+          aria-current={pathname === '/fleet' ? 'page' : undefined}
+          ><wa-icon name="server"></wa-icon>Les trois serveurs</a
+        >
+      {/if}
       <a
         href="/monitoring"
         data-sveltekit-preload-code="hover"

@@ -38,6 +38,7 @@ import {
   hostInstanceImageOverrides,
   inspectHostInstanceImage,
 } from '../../core/instanceImages'
+import { databaseMemoryReservation } from './databaseMemoryReservation'
 
 export type Env = { [_: string]: string }
 export type SpawnConfig = {
@@ -266,8 +267,10 @@ export const createPocketbaseService = async (config: PocketbaseServiceConfig) =
       }
 
       const containerName = instanceContainerName(instanceId)
+      const memoryLimits = databaseMemoryReservation(instanceId)
       const createOptions: ContainerCreateOptions = {
         Image: expectedImage.reference,
+        Labels: { 'pockethost.database.memory': memoryLimits.MemoryReservation ? 'fixed' : 'adaptive' },
         Env: Object.entries({
           ...env,
           DEV: dev && gte(realVersion, `0.20.1`),
@@ -277,6 +280,7 @@ export const createPocketbaseService = async (config: PocketbaseServiceConfig) =
         }).map(([k, v]) => `${k}=${v}`),
         name: containerName,
         HostConfig: {
+          ...memoryLimits,
           Init: true,
           AutoRemove: true,
           PortBindings: {

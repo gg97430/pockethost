@@ -1,6 +1,7 @@
 import { monitoringStale, parseMonitoringReport } from '$common/platformMonitoring'
 import { webDirectLoopback } from '../webApps/api'
 import { requireOperatorAdmin } from './auth'
+import { readOperatorDiagnostics } from './diagnostics'
 import { readOperatorSettings } from './operatorSettings'
 
 const webhookKey = () => {
@@ -42,10 +43,17 @@ export const HandleOperatorMonitoring = (e: core.RequestEvent) => {
       available: true,
       stale: monitoringStale(report),
       report,
+      diagnostics: readOperatorDiagnostics(report),
       settings: publicSettings(monitoringSettings()),
     })
   } catch {
-    return e.json(200, { available: false, stale: true, report: null, settings: publicSettings(monitoringSettings()) })
+    return e.json(200, {
+      available: false,
+      stale: true,
+      report: null,
+      diagnostics: null,
+      settings: publicSettings(monitoringSettings()),
+    })
   }
 }
 

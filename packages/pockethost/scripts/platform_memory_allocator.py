@@ -19,6 +19,12 @@ import socket
 import sqlite3
 import stat
 import time
+import sys
+
+# -I omits the script directory. Load only helpers beside this root-owned script.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from database_memory_reservations import load_policy, policy_hash, unconsumed, SUMMARY
+from database_memory_management import load as load_database_management,policy_lock
 
 MIB = 1024 ** 2
 ID = re.compile(r'[a-z0-9]{15}\Z')
@@ -227,15 +233,16 @@ def round_up(value):
     return math.ceil(value / (64 * MIB)) * 64 * MIB
 
 
-def propose(current, working, limit, floor, ceiling, previous, now):
+def propose(current, working, limit, floor, ceiling, previous, now, surge=False, peak=0):
     """Pure policy: grow early, shrink slowly, never reclaim live application memory."""
     low_since = previous.get('lowSince', now) if limit > 0 and working < limit * 0.35 else now
     target, reason = limit, 'stable'
     if limit == 0:
         target = round_up(max(floor, current + 256 * MIB, working * 2 + 256 * MIB))
         reason = 'initial'
-    elif working >= limit * 0.70:
-        target = round_up(max(limit * 1.5, current + 256 * MIB, working * 1.5 + 256 * MIB))
+    elif limit < floor or working >= limit * 0.70 or surge:
+        target = round_up(max(floor, limit * 1.5, current + 256 * MIB,
+                              working * 1.5 + 256 * MIB, peak * 2 + 256 * MIB if surge else 0))
         reason = 'grow'
     elif now - low_since >= 1800 and now - previous.get('changedAt', 0) >= 1800:
         target = round_up(max(floor, limit * 0.75, current + 256 * MIB, working * 2 + 256 * MIB))
@@ -292,10 +299,26 @@ def cycle(config, engines, state, dry_run=False, now=None, before_update=None):
                 item.update(engine=engine, kind=engine.kind, owner=owner)
                 inventory.append(item)
     limits = [(i['owner'], i['host']['Memory']) for i in inventory if i['kind'] == 'hosting']
-    next_state, report = {}, []
+    commitments = load_policy()
+    management = load_database_management()
+    if sum(commitments.values()) > total - reserve:
+        raise ValueError('Database memory reservations exceed host capacity')
+    native_usage = {}
+    for item in inventory:
+        if item['kind'] == 'databases' and item['owner'] in commitments:
+            _, used = counters(scope(item['pid'], item['cid']))
+            native_usage[item['owner']] = used
+    held_for_databases = unconsumed(commitments, native_usage)
+    free = max(0, free - held_for_databases)
+    next_state = {k: v for k, v in state.items() if k.startswith('database:') and k[9:] in ids}
+    report = []
     for item in sorted(inventory, key=lambda i: (i['kind'] != 'databases', i['owner'], i['cid'])):
         cid, host, kind, owner = item['cid'], item['host'], item['kind'], item['owner']
         old = state.get(cid, {})
+        approved = management.get(owner, {}) if kind == 'databases' else {}
+        if approved and old.get('managementRevision') != approved['revision']:
+            old = {k:v for k,v in old.items() if k not in ('externalOverride','baseline','lastApplied','pendingTarget','lowSince')}
+            old['managementRevision'] = approved['revision']
         if old.get('pendingTarget') == host['Memory']:
             old = {**old, 'lastApplied': host['Memory']}
         baseline = old.get('baseline', host)
@@ -304,7 +327,8 @@ def cycle(config, engines, state, dry_run=False, now=None, before_update=None):
         if old.get('lastApplied', host['Memory']) != host['Memory'] or old.get('externalOverride'):
             reason = 'external-override'
             entry['externalOverride'] = True
-        elif kind == 'databases' and baseline['Memory'] > 0:
+        elif kind == 'databases' and (owner in commitments or approved.get('mode') == 'fixed' or
+                baseline['Memory'] > 0 and item['labels'].get('pockethost.database.memory') != 'adaptive' and approved.get('mode') != 'adaptive'):
             reason = 'fixed-database-limit'
         elif kind == 'databases' and owner in busy:
             reason = 'backup-or-restore'
@@ -313,15 +337,32 @@ def cycle(config, engines, state, dry_run=False, now=None, before_update=None):
             current, working = counters(p)
             floor = max(256 * MIB if kind == 'hosting' else 512 * MIB, host['MemoryReservation'])
             default_max = config['webMaximumMiB'] * MIB if kind == 'hosting' else config['databaseMaximumMiB'] * MIB
-            ceiling = max(baseline['Memory'], min(default_max, total // (4 if kind == 'hosting' else 2)))
+            if approved.get('mode') == 'adaptive':default_max = approved['maximumMiB'] * MIB
+            capacity = total - reserve if approved.get('mode') == 'adaptive' else total // (4 if kind == 'hosting' else 2)
+            ceiling = max(baseline['Memory'], host['MemoryReservation'], min(default_max, capacity))
+            if kind == 'databases' and reason not in ('fixed-database-limit', 'external-override'):
+                learned = state.get('database:' + owner, {}).get('memoryBytes', 0)
+                # A low idle working set is not evidence that the next SQLite request
+                # can run with a small cap. Keep a learned database cap across restarts.
+                floor = max(floor, min(ceiling, 4096 * MIB), min(ceiling, learned), host['Memory'])
             if kind == 'hosting':
                 count = sum(i['kind'] == kind and i['owner'] == owner for i in inventory)
                 ceiling = max(baseline['Memory'], ceiling // count // (64 * MIB) * (64 * MIB))
-            target, decision, low_since = propose(current, working, host['Memory'], floor, ceiling, old, now)
+            max_events, peak = 0, current
+            try:
+                max_events = int(dict(line.split() for line in (p / 'memory.events').read_text().splitlines()).get('max', 0))
+                peak = int((p / 'memory.peak').read_text())
+                if max_events < 0 or peak < 0:raise ValueError('Invalid memory pressure counters')
+            except FileNotFoundError:pass
+            surge = max_events > old.get('maxEvents', 0)
+            entry['maxEvents'] = max_events
+            target, decision, low_since = propose(current, working, host['Memory'], floor, ceiling, old, now, surge=surge, peak=peak)
             entry['lowSince'] = low_since
             reason = reason or decision
             delta = target - host['Memory'] if host['Memory'] else target
-            if reason in ('grow', 'initial') and (host_pressure or pressure(p) or delta > min(free, ancestor_headroom(p))):
+            # Pressure at this container's own limit is a reason to grow, not
+            # a reason to refuse growth while the host and ancestors have room.
+            if reason in ('grow', 'initial') and ((host_pressure and free < max(512 * MIB, total // 50)) or delta > min(free, ancestor_headroom(p))):
                 reason = 'server-reserve'
             if reason in ('grow', 'initial') and kind == 'hosting' and delta > project_allowance(registry, owner, limits):
                 reason = 'project-budget'
@@ -344,8 +385,14 @@ def cycle(config, engines, state, dry_run=False, now=None, before_update=None):
         except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
             entry['decision'] = 'unavailable'
         next_state[cid] = entry
+        if kind == 'databases' and entry.get('decision') not in ('fixed-database-limit', 'external-override', 'unavailable'):
+            learned = max(host['Memory'], entry.get('lastApplied', 0), state.get('database:' + owner, {}).get('memoryBytes', 0))
+            if learned:next_state['database:' + owner] = {'memoryBytes': min(default_max, learned)}
         report.append({k: entry[k] for k in ('owner', 'kind', 'decision', 'memoryBytes', 'allocatedBytes', 'ceilingBytes') if k in entry})
     return next_state, {'checkedAt': stamp(), 'reserveBytes': reserve, 'availableBytes': available,
+                        'databaseReservedBytes': sum(commitments.values()),
+                        'databaseUnconsumedBytes': held_for_databases,
+                        'databaseReservationPolicyHash': policy_hash(commitments),
                         'dryRun': dry_run, 'resources': report}
 
 
@@ -382,11 +429,17 @@ def main():
                 def before_update(cid, entry):
                     journal[cid] = entry
                     atomic(STATE / 'state.json', journal)
-                next_state, report = cycle(config, engines, state, args.dry_run, before_update=before_update)
-                if not args.dry_run:
-                    atomic(STATE / 'state.json', next_state)
-                    atomic(STATE / 'status.json', report, 0o640)
-                    state = next_state
+                with policy_lock():
+                    next_state, report = cycle(config, engines, state, args.dry_run, before_update=before_update)
+                    if not args.dry_run:
+                        atomic(STATE / 'state.json', next_state)
+                        atomic(STATE / 'status.json', report, 0o640)
+                        atomic(STATE / 'database-history.json', {'version': 1, 'databases': {
+                            k[9:]: v['memoryBytes'] // MIB for k, v in next_state.items() if k.startswith('database:')}}, 0o640)
+                        atomic(SUMMARY, {'version': 1, 'checkedAt': report['checkedAt'],
+                                        'policyHash': report['databaseReservationPolicyHash'],
+                                        'unconsumedBytes': report['databaseUnconsumedBytes']}, 0o644)
+                        state = next_state
                 if args.once:
                     print(json.dumps(report))
             except Exception as exc:

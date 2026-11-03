@@ -28,6 +28,8 @@ python3 packages/pockethost/scripts/platform-fleet.py publish /chemin/du/lot
 
 Le lot contient `release.json`, un installateur et une archive par serveur. Le manifeste contient un identifiant commun, `sourceHash`, `installer: {file, sha256}` et `targets: {app3: {file, sha256}, app4: {file, sha256}, app5: {file, sha256}}`. Les trois cibles et les empreintes sont obligatoires ; une publication isolée ou vers une ancienne cible est refusée.
 
+Une publication progressive précise `"waves": [["app4", "app5"], ["app3"]]`. Les deux pilotes doivent terminer leurs vérifications avant le transfert, la préparation et l'activation d'app3. Un échec ultérieur revient aussi en arrière sur les pilotes déjà validés. Chaque hôte figure exactement une fois ; les serveurs retirés sont refusés. Le contrôle commun final reste obligatoire.
+
 L’installateur reçoit l’archive locale et une phase : `prepare`, `activate`, `verify`, `commit` ou `rollback`. Il contrôle les fichiers actuels avant toute écriture, conserve la configuration locale, prépare le retour arrière du code et n’émet que des résultats agrégés sans secret. Les phases sont idempotentes. Il n’applique aucun retour arrière automatique des données métier.
 
 Les archives sont transférées et les trois précontrôles terminent avant la première activation. Les trois serveurs doivent être vérifiés avant de valider la publication. Un échec pendant l’activation ou la vérification déclenche le retour arrière de tous les serveurs touchés, y compris celui dont l’activation n’a été que partielle. Une divergence restante est signalée explicitement.

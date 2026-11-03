@@ -1,5 +1,5 @@
 import { type WebPermission, webRoleAllows } from '../../../../../common/webAccess'
-import { nextWebCron, parseWebCron } from '../../../../../common/webCron'
+import { nextWebCron, parseWebCron, webCronOffset, type WebCronTimezone } from '../../../../../common/webCron'
 import {
   decryptWebValue,
   encryptWebValue,
@@ -48,12 +48,20 @@ const runMetadata = (row: core.Record, includeLog = true) => ({
 /** La commande déchiffrée peut contenir des identifiants écrits en clair : réservée à tasks.manage. */
 const taskMetadata = (row: core.Record, canManage = true) => {
   const last = $app.findRecordsByFilter(RUNS, 'taskId={:id}', '-created', 1, 0, { id: row.id })[0]
+  const success = $app.findRecordsByFilter(RUNS, 'taskId={:id} && status="succeeded"', '-finishedAt', 1, 0, {
+    id: row.id,
+  })[0]
   return {
     id: row.id,
     name: row.getString('name'),
     ...(canManage ? { command: command(row) } : {}),
     schedule: row.getString('schedule'),
-    timezone: 'UTC',
+    timezone: row.getString('timezone') || 'UTC',
+    catchUp: row.getString('catchUp') || 'once',
+    maxCatchUpDelayMinutes: row.getInt('maxCatchUpDelayMinutes') || 15,
+    lastMissedAt: row.getString('lastMissedAt'),
+    lastSuccessAt: success?.getString('finishedAt') || '',
+    late: row.getBool('enabled') && Date.parse(row.getString('nextRunAt')) < Date.now() - 60000,
     enabled: row.getBool('enabled'),
     timeoutSeconds: row.getInt('timeoutSeconds'),
     nextRunAt: row.getString('nextRunAt'),
@@ -61,10 +69,10 @@ const taskMetadata = (row: core.Record, canManage = true) => {
     updated: row.getString('updated'),
   }
 }
-const next = (schedule: unknown, now = Date.now()) => {
+const next = (schedule: unknown, now = Date.now(), timezone: WebCronTimezone = 'UTC') => {
   try {
     const parsed = parseWebCron(schedule),
-      due = nextWebCron(parsed, now)
+      due = nextWebCron(parsed, now, timezone)
     if (!due) throw new Error('Cette expression ne produit aucune occurrence dans les cinq prochaines années.')
     return { schedule: parsed.expression, due }
   } catch (error) {
@@ -74,7 +82,17 @@ const next = (schedule: unknown, now = Date.now()) => {
 const validate = (body: any, row?: core.Record) => {
   if (
     Object.keys(body).some(
-      (key) => !['name', 'command', 'schedule', 'enabled', 'timeoutSeconds', 'timezone'].includes(key)
+      (key) =>
+        ![
+          'name',
+          'command',
+          'schedule',
+          'enabled',
+          'timeoutSeconds',
+          'timezone',
+          'catchUp',
+          'maxCatchUpDelayMinutes',
+        ].includes(key)
     )
   )
     throw new BadRequestError('Options de tâche invalides.')
@@ -89,9 +107,31 @@ const validate = (body: any, row?: core.Record) => {
     throw new BadRequestError('Commande requise, limitée à 4 000 caractères.')
   if (typeof enabled !== 'boolean' || !Number.isInteger(timeout) || timeout < 1 || timeout > 900)
     throw new BadRequestError('La durée maximale doit être comprise entre 1 et 900 secondes.')
-  if (body.timezone !== undefined && body.timezone !== 'UTC')
-    throw new BadRequestError('Les horaires sont exprimés en UTC.')
-  return { name: name.trim(), command: cmd, enabled, timeoutSeconds: timeout, ...next(schedule) }
+  const timezone = body.timezone ?? (row ? row.getString('timezone') || 'UTC' : 'Indian/Reunion')
+  try {
+    webCronOffset(timezone)
+  } catch {
+    throw new BadRequestError('Choisissez UTC ou La Réunion (UTC+4).')
+  }
+  const catchUp = body.catchUp ?? (row?.getString('catchUp') || 'once')
+  const maxCatchUpDelayMinutes = body.maxCatchUpDelayMinutes ?? (row?.getInt('maxCatchUpDelayMinutes') || 15)
+  if (
+    !['once', 'skip'].includes(catchUp) ||
+    !Number.isInteger(maxCatchUpDelayMinutes) ||
+    maxCatchUpDelayMinutes < 1 ||
+    maxCatchUpDelayMinutes > 1440
+  )
+    throw new BadRequestError('Choisissez une reprise unique ou aucune, dans un délai de 1 à 1 440 minutes.')
+  return {
+    name: name.trim(),
+    command: cmd,
+    enabled,
+    timeoutSeconds: timeout,
+    timezone,
+    catchUp,
+    maxCatchUpDelayMinutes,
+    ...next(schedule, Date.now(), timezone),
+  }
 }
 /**
  * Les tâches appartiennent à l'application, pas à leur auteur : actives tant que l'application existe dans un projet
@@ -160,7 +200,7 @@ export const HandleWebTasksList = (e: core.RequestEvent) => {
     items: $app
       .findRecordsByFilter(TASKS, 'appId={:id}', 'created', 100, 0, { id: app.id })
       .map((row) => taskMetadata(row, canManage)),
-    timezone: 'UTC',
+    timezone: 'Indian/Reunion',
     worker,
   })
 }
@@ -180,6 +220,9 @@ export const HandleWebTasksCreate = (e: core.RequestEvent) => {
     row.set('schedule', value.schedule)
     row.set('enabled', value.enabled)
     row.set('timeoutSeconds', value.timeoutSeconds)
+    row.set('timezone', value.timezone)
+    row.set('catchUp', value.catchUp)
+    row.set('maxCatchUpDelayMinutes', value.maxCatchUpDelayMinutes)
     row.set('nextRunAt', value.due)
     tx.save(row)
     result = row
@@ -193,8 +236,15 @@ export const HandleWebTaskUpdate = (e: core.RequestEvent) => {
   task.set('name', value.name)
   task.set('commandEncrypted', encryptWebValue({ command: value.command }))
   task.set('timeoutSeconds', value.timeoutSeconds)
-  if (task.getString('schedule') !== value.schedule || (!task.getBool('enabled') && value.enabled))
+  if (
+    task.getString('schedule') !== value.schedule ||
+    (task.getString('timezone') || 'UTC') !== value.timezone ||
+    (!task.getBool('enabled') && value.enabled)
+  )
     task.set('nextRunAt', value.due)
+  task.set('timezone', value.timezone)
+  task.set('catchUp', value.catchUp)
+  task.set('maxCatchUpDelayMinutes', value.maxCatchUpDelayMinutes)
   task.set('schedule', value.schedule)
   task.set('enabled', value.enabled)
   $app.save(task)
@@ -307,7 +357,10 @@ export const HandleWebTaskClaim = (e: core.RequestEvent) => {
       const scheduledAt = task.getString('nextRunAt'),
         occurrence = `cron:${scheduledAt.slice(0, 16)}`
       task.set('lastScheduledAt', scheduledAt)
-      task.set('nextRunAt', next(task.getString('schedule'), now).due)
+      task.set(
+        'nextRunAt',
+        next(task.getString('schedule'), now, (task.getString('timezone') || 'UTC') as WebCronTimezone).due
+      )
       if (!actorValid(task.getString('actorId'), task.getString('appId'), tx)) {
         // Application legacy dont l'auteur a perdu ses droits : la planification est suspendue, et c'est signalé.
         task.set('enabled', false)
@@ -324,11 +377,35 @@ export const HandleWebTaskClaim = (e: core.RequestEvent) => {
           }
         )
       } else if (
-        !overlap(task.id, tx) &&
         !tx.findRecordsByFilter(RUNS, 'taskId={:id} && occurrence={:occurrence}', '', 1, 0, { id: task.id, occurrence })
           .length
-      )
-        enqueue(task, task.getString('actorId'), 'cron', occurrence, scheduledAt, tx)
+      ) {
+        const delay = Math.max(0, now - Date.parse(scheduledAt))
+        const missed =
+          overlap(task.id, tx) ||
+          (delay > 60000 &&
+            (task.getString('catchUp') === 'skip' || delay > (task.getInt('maxCatchUpDelayMinutes') || 15) * 60000))
+        if (missed) {
+          const skipped = new Record(tx.findCollectionByNameOrId(RUNS))
+          for (const [key, value] of Object.entries({
+            appId: task.getString('appId'),
+            taskId: task.id,
+            taskName: task.getString('name'),
+            actorId: task.getString('actorId'),
+            trigger: 'cron',
+            occurrence,
+            scheduledAt,
+            status: 'missed',
+            timeoutSeconds: task.getInt('timeoutSeconds'),
+            exitCode: -1,
+            finishedAt: nowText,
+            error: 'Occurrence manquée : tâche déjà en attente ou délai de reprise dépassé.',
+          }))
+            skipped.set(key, value)
+          tx.save(skipped)
+          task.set('lastMissedAt', scheduledAt)
+        } else enqueue(task, task.getString('actorId'), 'cron', occurrence, scheduledAt, tx)
+      }
       tx.save(task)
     }
     for (const row of tx.findRecordsByFilter(RUNS, 'status="queued"', 'created,id', 100, 0)) {

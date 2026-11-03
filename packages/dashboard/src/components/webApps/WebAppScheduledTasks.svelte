@@ -23,6 +23,9 @@
     schedule = '0 * * * *',
     enabled = true,
     timeoutSeconds = 60
+  let timezone: 'UTC' | 'Indian/Reunion' = 'Indian/Reunion',
+    catchUp: 'once' | 'skip' = 'once',
+    maxCatchUpDelayMinutes = 15
   let page = 1,
     hasMore = false,
     taskFilter = '',
@@ -35,15 +38,19 @@
     failed: 'Échec',
     timed_out: 'Durée dépassée',
     cancelled: 'Annulée',
+    missed: 'Occurrence manquée',
   }
-  const utc = (value: string) => {
+  const atZone = (value: string, zone: 'UTC' | 'Indian/Reunion' = timezone) => {
     const date = new Date(value)
-    return Number.isNaN(date.getTime()) ? '—' : date.toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+    return Number.isNaN(date.getTime())
+      ? '—'
+      : new Intl.DateTimeFormat('fr-FR', { timeZone: zone, dateStyle: 'short', timeStyle: 'medium' }).format(date) +
+          (zone === 'UTC' ? ' UTC' : ' · La Réunion')
   }
   $: cronPreview = (() => {
     try {
-      const value = nextWebCron(parseWebCron(schedule), Date.now())
-      return value ? utc(value) : 'Aucune occurrence dans les cinq prochaines années.'
+      const value = nextWebCron(parseWebCron(schedule), Date.now(), timezone)
+      return value ? atZone(value) : 'Aucune occurrence dans les cinq prochaines années.'
     } catch (e) {
       return e instanceof Error ? e.message : 'Expression invalide.'
     }
@@ -95,6 +102,9 @@
     schedule = task?.schedule || '0 * * * *'
     enabled = task?.enabled ?? true
     timeoutSeconds = task?.timeoutSeconds || 60
+    timezone = task?.timezone || 'Indian/Reunion'
+    catchUp = task?.catchUp || 'once'
+    maxCatchUpDelayMinutes = task?.maxCatchUpDelayMinutes || 15
     error = ''
     message = ''
   }
@@ -111,10 +121,19 @@
       parseWebCron(schedule)
       await webRequest(`/${appId}/tasks${editing === 'new' ? '' : '/' + editing}`, {
         method: editing === 'new' ? 'POST' : 'PATCH',
-        body: { name, command, schedule, enabled, timeoutSeconds: Number(timeoutSeconds), timezone: 'UTC' },
+        body: {
+          name,
+          command,
+          schedule,
+          enabled,
+          timeoutSeconds: Number(timeoutSeconds),
+          timezone,
+          catchUp,
+          maxCatchUpDelayMinutes: Number(maxCatchUpDelayMinutes),
+        },
       })
       close()
-      message = 'Tâche enregistrée. Les prochaines occurrences utilisent cet horaire UTC.'
+      message = 'Tâche enregistrée. Les prochaines occurrences utilisent le fuseau choisi.'
       await load()
     } catch (e) {
       error = webError(e)
@@ -168,7 +187,7 @@
 <section class="web-panel tasks-panel">
   <div class="web-row">
     <div>
-      <span class="web-eyebrow">Automatisations · UTC</span>
+      <span class="web-eyebrow">Automatisations</span>
       <h2>Tâches planifiées</h2>
     </div>
     {#if canManage}<button
@@ -235,7 +254,7 @@
             fichiers sont ceux du conteneur publié.</span
           ></label
         ><label class="web-field web-field--full"
-          ><span>Expression cron · cinq champs · UTC</span><input
+          ><span>Expression cron · cinq champs</span><input
             class="cron-input"
             bind:value={schedule}
             required
@@ -247,6 +266,29 @@
             acceptés.</span
           ></label
         >
+        <label class="web-field"
+          ><span>Fuseau horaire</span><select bind:value={timezone} disabled={!!busy}
+            ><option value="Indian/Reunion">La Réunion · UTC+4</option><option value="UTC">UTC</option></select
+          ></label
+        >
+        <label class="web-field"
+          ><span>Après une interruption</span><select bind:value={catchUp} disabled={!!busy}
+            ><option value="once">Rejouer une seule occurrence</option><option value="skip"
+              >Attendre le prochain horaire</option
+            ></select
+          ></label
+        >
+        {#if catchUp === 'once'}<label class="web-field"
+            ><span>Retard maximal à rattraper · minutes</span><input
+              type="number"
+              min="1"
+              max="1440"
+              step="1"
+              required
+              bind:value={maxCatchUpDelayMinutes}
+              disabled={!!busy}
+            /></label
+          >{/if}
       </div>
       <div class="web-actions">
         <button class="web-button" type="button" onclick={() => (schedule = '*/15 * * * *')}
@@ -254,7 +296,7 @@
         ><button class="web-button" type="button" onclick={() => (schedule = '0 * * * *')}>Chaque heure</button><button
           class="web-button"
           type="button"
-          onclick={() => (schedule = '0 2 * * *')}>Chaque nuit · 02:00 UTC</button
+          onclick={() => (schedule = '0 2 * * *')}>Chaque nuit · 02:00</button
         >
       </div>
       <p class="web-help" role="status">Prochaine occurrence : {cronPreview}</p>
@@ -275,22 +317,32 @@
       class="tasks-empty"
     >
       <strong>Vos opérations récurrentes, au même endroit.</strong>
-      <p class="web-help">Ajoutez une commande, un horaire UTC et une limite de temps pour suivre chaque exécution.</p>
+      <p class="web-help">Ajoutez une commande, un horaire et une limite de temps pour suivre chaque exécution.</p>
     </div>{/if}
   {#each tasks as task}<article class="task-card">
       <div class="web-row">
         <div>
           <h3>{task.name}</h3>
-          <p class="web-help"><code>{task.schedule}</code> · UTC · maximum {task.timeoutSeconds}s</p>
+          <p class="web-help">
+            <code>{task.schedule}</code> · {task.timezone === 'UTC' ? 'UTC' : 'La Réunion · UTC+4'} · maximum {task.timeoutSeconds}s
+          </p>
         </div>
         <span class="web-status" data-tone={task.enabled ? 'success' : 'neutral'}
-          >{task.enabled ? 'Planifiée' : 'Suspendue'}</span
+          >{task.enabled ? (task.late ? 'En retard' : 'Planifiée') : 'Suspendue'}</span
         >
       </div>
       <dl class="task-facts">
         <div>
           <dt>Prochaine occurrence</dt>
-          <dd>{task.enabled ? utc(task.nextRunAt) : 'Planification suspendue'}</dd>
+          <dd>{task.enabled ? atZone(task.nextRunAt, task.timezone) : 'Planification suspendue'}</dd>
+        </div>
+        <div>
+          <dt>Dernier succès</dt>
+          <dd>{task.lastSuccessAt ? atZone(task.lastSuccessAt, task.timezone) : 'Aucun succès enregistré'}</dd>
+        </div>
+        <div>
+          <dt>Dernière occurrence manquée</dt>
+          <dd>{task.lastMissedAt ? atZone(task.lastMissedAt, task.timezone) : 'Aucune enregistrée'}</dd>
         </div>
         <div>
           <dt>Dernière exécution</dt>

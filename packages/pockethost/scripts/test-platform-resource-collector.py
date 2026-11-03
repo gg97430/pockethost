@@ -458,6 +458,18 @@ class ConfigTests(Fixture):
             with self.assertRaises(ValueError):
                 m.load_config(self.write_config(config), trusted=False)
 
+    def test_only_the_separate_recovery_user_slice_can_be_accounted_as_a_whole(self):
+        service={'id':'backups:project-sandbox','category':'backups','cgroup':'user.slice/user-1002.slice'}
+        config=copy.deepcopy(self.config);config['services']=[service]
+        self.assertEqual(m.load_config(self.write_config(config),trusted=False)['services'],[service])
+        for change in [{'id':'platform:whole-host'},{'category':'hosting'},{'cgroup':'user.slice/user-1001.slice'},{'cgroup':'user.slice/user-1002.slice/user@1002.service'}]:
+            config['services']=[{**service,**change}]
+            with self.assertRaises(ValueError):m.load_config(self.write_config(config),trusted=False)
+        parent=self.cgroup/'user.slice/user-1002.slice';self.counters(parent,memory=170000,inactive=20000)
+        sample=self.collector(services=[service]).sample(now=1)
+        row=next(row for row in sample['resources']if row['id']=='backups:project-sandbox')
+        self.assertEqual(row['category'],'backups');self.assertEqual(row['memoryBytes'],150000)
+
     def test_config_symlink_and_non_private_files_fail_before_read(self):
         path = self.write_config()
         path.chmod(0o644)

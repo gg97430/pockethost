@@ -89,6 +89,8 @@ const resolveRequest = async (pathname) => {
   const fallback = path.join(root, '404.html')
   const stat = await statFile(fallback)
   const isAppRoute =
+    pathname === '/fleet' ||
+    pathname === '/fleet/' ||
     pathname === '/applications' ||
     pathname.startsWith('/applications/') ||
     pathname === '/dashboard' ||

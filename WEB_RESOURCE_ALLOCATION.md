@@ -4,7 +4,9 @@ Le mode adaptatif partage la capacité CPU et admet les charges selon leur deman
 
 ## Ajustement automatique de RAM
 
-Le gestionnaire examine les compteurs cgroup v2 toutes les cinq secondes. À partir de 70 % d'utilisation non récupérable, il augmente la limite par paliers, avec au moins 256 Mio de marge. Le cache fichier inactif n'est pas assimilé au tas applicatif. Après au moins 30 minutes sous 35 %, il peut diminuer la limite de 25 % au plus, en conservant au moins le double de l'usage non récupérable plus 256 Mio et en restant au-dessus de toute la mémoire actuellement chargée. Il ne force pas le ramasse-miettes et n'arrête aucun conteneur pour réduire sa RAM.
+Le gestionnaire examine les compteurs cgroup v2 toutes les cinq secondes. À partir de 70 % d'utilisation non récupérable, il augmente la limite par paliers, avec au moins 256 Mio de marge. Une hausse du compteur `memory.events.max` déclenche aussi une augmentation fondée sur `memory.peak`, même si le pic s'est terminé avant la mesure. Une pression provoquée par le plafond du conteneur n'interdit pas sa croissance lorsque l'hôte et ses ancêtres disposent de marge. Le cache fichier inactif n'est pas assimilé au tas applicatif.
+
+Les bases natives démarrent avec un plafond d'au moins 4 Gio, borné par la moitié de la RAM physique et le plafond natif de 16 Gio. Les limites apprises sont conservées par identifiant de base, dans `database-history.json`, et appliquées dès la création du prochain conteneur. Une période d'inactivité ne réduit plus le plafond appris d'une base : ce plafond n'est pas une consommation préallouée. Pour les hébergements, après au moins 30 minutes sous 35 %, le gestionnaire peut diminuer la limite de 25 % au plus, en conservant au moins le double de l'usage non récupérable plus 256 Mio et en restant au-dessus de toute la mémoire actuellement chargée. Il ne force pas le ramasse-miettes et n'arrête aucun conteneur pour réduire sa RAM.
 
 La réserve physique est de 15 % de la RAM de l'hôte, avec un minimum de 2 Gio. Une croissance vérifie aussi les ancêtres cgroup et la pression PSI. Les limites absolues par défaut sont de 8 Gio par application web (partagés entre les services Compose) et 16 Gio par base, sans dépasser respectivement un quart et la moitié de la RAM physique. Les plafonds déjà plus grands ne sont pas abaissés silencieusement. Le CPU, les constructions et les auxiliaires de liaison BDD gardent leur politique existante. Les pics simultanés et les allocations brusques entre deux mesures restent possibles : ce mécanisme ne constitue pas une garantie physique.
 
@@ -13,6 +15,18 @@ Les profils `fixed`, les limites mémoire BDD déjà explicites, les modificatio
 Pour les profils adaptatifs, `resources.memoryMiB` devient la **limite de démarrage**, puis le gestionnaire peut la dépasser dans la politique opérateur ci-dessus. Pour conserver une limite individuelle stricte, sélectionner `fixed`. Les graphes montrent la limite Docker réellement appliquée. Les alertes RAM restent actives si le service atteint sa limite malgré l'ajustement ; l'arrêt ou la défaillance du gestionnaire est aussi supervisé.
 
 La configuration locale root se trouve dans `/etc/kolab/memory-allocation.json`. L'état initial et les limites appliquées sont conservés dans `/var/lib/kolab-memory-allocation/state.json` (0600) ; le bilan sans secrets est `status.json`. L'installation ne modifie aucun compte, secret, domaine ni donnée métier. Arrêter le service suspend les prochains ajustements et conserve les dernières limites sûres ; ne pas rétablir brutalement une ancienne limite sous la consommation actuelle. Le mode global `WEB_APPS_ALLOCATION_MODE=fixed` interdit le lancement du gestionnaire.
+
+### Plafond dédié à une base
+
+L'opérateur peut définir un plafond fixe persistant dans `/etc/kolab/database-memory-reservations.json`, fichier régulier appartenant à root, non modifiable par les utilisateurs. Exemple pour 32 Gio, en remplaçant l'identifiant :
+
+```json
+{ "version": 1, "databases": { "abcdefghijklmno": 32768 } }
+```
+
+Le daemon applique ce montant à `Memory` et `MemoryReservation` dès la création du conteneur. Éditer le fichier ne redimensionne pas à lui seul une base déjà en cours : appliquer aussi le changement mémoire Docker vérifié, sans redémarrage, en préservant sa politique de swap. La somme des montants doit laisser au moins 15 % de RAM physique, avec un minimum de 2 Gio, à l'hôte. Le gestionnaire et l'admission des hébergements soustraient la part inutilisée de ces engagements de leur capacité disponible, y compris quand la base est éteinte. Le bilan public root `/run/kolab-memory-allocation/reservations.json` expire après 30 secondes ; en son absence, toute la réservation est retenue par prudence. Une politique invalide refuse les nouvelles allocations.
+
+Ce mécanisme protège le budget des prochaines allocations ; la réservation souple Docker ne constitue pas une isolation physique exclusive contre tous les pics simultanés des processus déjà admis. Sauvegarder séparément la politique et `/var/lib/kolab-memory-allocation/database-history.json` sur chaque hôte. Ne pas les recopier entre serveurs. Le répertoire `/etc/kolab` doit permettre de traverser ce chemin public ; les fichiers contenant des secrets gardent leurs droits restrictifs.
 
 ## Configuration d'une application
 

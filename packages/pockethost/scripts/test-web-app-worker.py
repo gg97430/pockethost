@@ -14,6 +14,54 @@ class WorkerTests(unittest.TestCase):
   self.value={'id':'a'*15,'appId':'b'*15,'action':'deploy','commit':'c'*40,'snapshot':{'config':{'repository':'owner/repo','rootDirectory':'.','generatedDomain':'web-example.monappli.re','healthPath':'/'},'env':{'SECRET':{'value':'secret-across-chunks','build':True,'runtime':True}},'domains':[]}}
  def tearDown(self):self.admission.stop();w.ROOT=self.previous;self.tmp.cleanup()
  def job(self):return w.Job(self.value)
+ def candidate(self,**extra):return {'container':'ph-web-'+self.value['appId']+'-'+self.value['id'],'target':'http://127.0.0.1:12345',**extra}
+ def test_dead_candidate_fails_without_waiting_for_the_health_deadline(self):
+  j=self.job();row={'State':{'Status':'exited','Running':False,'ExitCode':1}}
+  with mock.patch.object(j,'stage'),mock.patch.object(j,'heartbeat'),mock.patch.object(j,'site_logs')as logs,mock.patch.object(w,'docker',return_value=json.dumps([row])),mock.patch.object(w.time,'sleep',side_effect=AssertionError('Must not wait')):
+   with self.assertRaisesRegex(RuntimeError,'code de sortie 1'):j.health(self.candidate())
+  logs.assert_called_once()
+ def test_unhealthy_compose_service_fails_without_waiting(self):
+  j=self.job();row={'State':{'Status':'running','Running':True,'Health':{'Status':'unhealthy'}}}
+  result=self.candidate(runtimeKind='compose',services=[{'container':self.candidate()['container']}])
+  with mock.patch.object(j,'stage'),mock.patch.object(j,'heartbeat'),mock.patch.object(j,'site_logs')as logs,mock.patch.object(w,'docker',return_value=json.dumps([row])),mock.patch.object(w.time,'sleep',side_effect=AssertionError('Must not wait')):
+   with self.assertRaisesRegex(RuntimeError,'contrôle de santé en échec'):j.health(result)
+  logs.assert_called_once()
+ def test_repeated_restart_loop_fails_but_one_restart_can_recover(self):
+  j=self.job();row={'RestartCount':3,'State':{'Status':'restarting','Running':True,'Restarting':True,'ExitCode':1}}
+  with mock.patch.object(j,'site_logs'),mock.patch.object(w,'docker',return_value=json.dumps([row])):
+   with self.assertRaisesRegex(RuntimeError,'redémarrages répétés'):j.candidate_states(self.candidate())
+   row['RestartCount']=1
+  with mock.patch.object(w,'docker',return_value=json.dumps([row])):self.assertEqual(j.candidate_states(self.candidate()),[row])
+ def test_running_candidate_can_finish_initializing_and_still_needs_three_http_successes(self):
+  j=self.job();row={'State':{'Status':'running','Running':True}};result=self.candidate()
+  responses=[types.SimpleNamespace(status=value)for value in [503,200,200,200]]
+  contexts=[]
+  for response in responses:
+   context=mock.MagicMock();context.__enter__.return_value=response;contexts.append(context)
+  opener=mock.Mock();opener.open.side_effect=contexts
+  with mock.patch.object(j,'stage'),mock.patch.object(j,'heartbeat'),mock.patch.object(w,'docker',return_value=json.dumps([row])),mock.patch.object(w.urllib.request,'build_opener',return_value=opener),mock.patch.object(w.time,'sleep')as sleep:
+   j.health(result)
+  self.assertEqual(opener.open.call_count,4);self.assertEqual(sleep.call_count,3)
+ def test_supersession_is_checked_before_slow_resource_checks(self):
+  j=self.job()
+  with mock.patch.object(w,'api',return_value={'cancelRequested':True,'superseded':True}),mock.patch.object(w,'resources',side_effect=AssertionError('Slow check before cancellation')),mock.patch.object(w,'check_runtime_budgets'),mock.patch.object(w,'publish_runtime_stats'):
+   started=time.monotonic()
+   with self.assertRaisesRegex(w.JobCancelled,'Remplacé'):j.run([sys.executable,'-c','import time;time.sleep(60)'])
+  self.assertLess(time.monotonic()-started,8);self.assertIsNone(j.process)
+ def test_failed_candidate_cleanup_runs_only_once(self):
+  j=self.job()
+  with mock.patch.object(w,'docker',return_value='')as docker:
+   j.cleanup_failure();count=docker.call_count;j.cleanup_failure()
+  self.assertGreater(count,0);self.assertEqual(docker.call_count,count)
+ def test_idle_cache_deadline_kills_the_cli_and_its_plugin_child(self):
+  marker=self.root/'plugin-survived';processes=[];popen=subprocess.Popen
+  child='import time,pathlib;time.sleep(.5);pathlib.Path('+repr(str(marker))+').write_text("survived");time.sleep(30)'
+  command='import subprocess,sys,time;subprocess.Popen([sys.executable,"-c",'+repr(child)+']);time.sleep(30)'
+  def launch(args,**kwargs):
+   process=popen([sys.executable,'-c',command],**kwargs);processes.append(process);return process
+  with mock.patch.object(w.subprocess,'Popen',side_effect=launch):
+   started=time.monotonic();w.prune_idle_cache(timeout=.1)
+  self.assertLess(time.monotonic()-started,2);self.assertLess(processes[0].returncode,0);time.sleep(.6);self.assertFalse(marker.exists())
  def test_default_and_symbolic_docker_sockets_are_refused(self):
   for p in ['/var/run/docker.sock','unix:///var/run/docker.sock','/tmp/docker.sock','/run/user/0/docker.sock']:
    with self.assertRaises(RuntimeError):w.validate_socket(p)

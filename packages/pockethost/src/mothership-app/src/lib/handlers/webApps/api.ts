@@ -12,6 +12,7 @@ import {
   webAppAccessView,
 } from './access'
 import { assertBackupAppRevision } from './backups'
+import { webChecksSnapshot } from './checks'
 import { scrubWebCiCredentials } from './ci'
 import { assertWebNotDeleting, webDeletionView } from './deletionState'
 import { auditWebAppEnv, planWebAppEnv } from './environment'
@@ -394,6 +395,7 @@ const enqueueWebDeployment = (
   row.set('commit', commit || '')
   row.set('status', 'queued')
   row.set('stage', 'En attente')
+  if (action === 'deploy' || action === 'ci-deploy') snapshot.checks = webChecksSnapshot(app.id, store)
   row.set('snapshotEncrypted', encrypt(snapshot))
   store.save(row)
   return row
@@ -992,7 +994,8 @@ export const HandleWebWorkerProjectLimits = (e: core.RequestEvent) => {
 }
 export const HandleWebWorkerClaim = (e: core.RequestEvent) => {
   requireWorker(e)
-  let job: any = null
+  let job: any = null,
+    retryClaim = false
   $app.runInTransaction((tx) => {
     const running = tx.findRecordsByFilter('web_deployments', 'status="running"', '', 1, 0)
     if (running.length) {
@@ -1056,12 +1059,14 @@ export const HandleWebWorkerClaim = (e: core.RequestEvent) => {
             .filter(Boolean),
         }
       : null
-    if (r.getString('action') === 'ci-deploy' && Date.parse(claimedSnapshot.ci?.expiresAt || '') <= Date.now()) {
+    const ciExpiresAt = Date.parse(claimedSnapshot.ci?.expiresAt || '')
+    if (r.getString('action') === 'ci-deploy' && (!Number.isFinite(ciExpiresAt) || ciExpiresAt <= Date.now())) {
       r.set('status', 'failed')
       r.set('error', 'Les identifiants CI éphémères ont expiré. Relancez le workflow GitHub.')
       r.set('finishedAt', new Date().toISOString())
       scrubWebCiCredentials(r)
       tx.save(r)
+      retryClaim = true
       return
     }
     // Source « Dépôt Git » : identifiants lus sur la ligne ACTUELLE (une rotation s'applique aux jobs en file et aux
@@ -1092,6 +1097,7 @@ export const HandleWebWorkerClaim = (e: core.RequestEvent) => {
         owner.set('lastError', message)
         if (!owner.getString('activeDeployment')) owner.set('status', 'failed')
         tx.save(owner)
+        retryClaim = true
         return
       }
     }
@@ -1119,6 +1125,7 @@ export const HandleWebWorkerClaim = (e: core.RequestEvent) => {
           owner.set('lastError', message)
           if (!owner.getString('activeDeployment')) owner.set('status', 'failed')
           tx.save(owner)
+          retryClaim = true
           return
         }
         github = { githubAppId: '', githubInstallationId: '', privateKey: '' }
@@ -1150,7 +1157,7 @@ export const HandleWebWorkerClaim = (e: core.RequestEvent) => {
   if (job) {
     job.currentDesiredCommit = findWebApp(job.appId).getString('desiredCommit')
   }
-  return webJson(e, { job })
+  return webJson(e, { job, retryClaim })
 }
 export const HandleWebWorkerReport = (e: core.RequestEvent) => {
   requireWorker(e)
@@ -1224,6 +1231,24 @@ export const HandleWebWorkerReport = (e: core.RequestEvent) => {
     if (job.getString('status') !== 'running') throw new BadRequestError('Déploiement non actif.')
     const now = new Date().toISOString()
     job.set('heartbeatAt', now)
+    // Before the publication gate, a queued replacement makes this build obsolete.
+    // Keep the lease until the worker has stopped its command and rolled back the candidate.
+    const superseded =
+      !input.status &&
+      cancellable(job) &&
+      !job.getBool('cancelRequested') &&
+      tx.findRecordsByFilter(
+        'web_deployments',
+        'appId={:app} && status="queued" && (action="deploy" || action="ci-deploy")',
+        '',
+        1,
+        0,
+        { app: app.id }
+      ).length > 0
+    if (superseded) {
+      job.set('cancelRequested', true)
+      job.set('cancelRequestedAt', now)
+    }
     let phaseKey =
       typeof input.stageKey === 'string' && phaseKeys[input.stageKey]
         ? input.stageKey
@@ -1313,6 +1338,7 @@ export const HandleWebWorkerReport = (e: core.RequestEvent) => {
     tx.save(job)
     response = {
       ok: true,
+      superseded,
       status: job.getString('status'),
       desiredCommit: app.getString('desiredCommit'),
       cancelRequested: job.getBool('cancelRequested'),

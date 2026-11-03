@@ -18,6 +18,8 @@ MIB = 1024**2
 
 class AllocationTests(unittest.TestCase):
     def setUp(self):
+        reservations=patch.object(r,'reserved_headroom',return_value=0)
+        reservations.start(); self.addCleanup(reservations.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
@@ -128,6 +130,13 @@ class AllocationTests(unittest.TestCase):
             with self.assertRaises(r.ResourcePressure): r.admit(self.docker,build=True)
         with patch.object(r,'host_memory',side_effect=RuntimeError('unverifiable')):
             with self.assertRaises(RuntimeError): r.admit(self.docker,256,500)
+
+    def test_unused_dedicated_database_reservation_blocks_builds(self):
+        with patch.object(r,'reserved_headroom',return_value=32768*MIB),patch.object(r,'host_memory',return_value={'totalBytes':65536*MIB,'availableBytes':40000*MIB}):
+            with self.assertRaises(r.ResourcePressure):r.admit(self.docker,build=True)
+        # As the database actually uses its RAM, only the unused part is deducted.
+        with patch.object(r,'reserved_headroom',return_value=8192*MIB),patch.object(r,'host_memory',return_value={'totalBytes':65536*MIB,'availableBytes':40000*MIB}):
+            r.admit(self.docker,256,500)
 
     def test_missing_or_corrupt_host_counters_are_not_treated_as_free_memory(self):
         path=self.root/'meminfo'

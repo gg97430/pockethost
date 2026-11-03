@@ -112,6 +112,30 @@ class PairedPublication(unittest.TestCase):
         self.assertEqual(events[-3:], [('rollback', host) for host in reversed(fleet.ACTIVE)])
         self.assertFalse(any(name == 'commit' for name, _ in events))
 
+    def test_pilots_both_verify_before_app3_is_uploaded(self):
+        self.data['waves'] = [['app4','app5'],['app3']]; self.save()
+        events=self.execute()
+        for pilot in ['app4','app5']:
+            self.assertLess(events.index(('verify',pilot)),events.index(('upload','app3')))
+        self.assertEqual([host for name,host in events if name=='activate'],['app4','app5','app3'])
+
+    def test_failed_pilot_never_touches_app3(self):
+        self.data['waves'] = [['app4','app5'],['app3']]; self.save()
+        events=self.execute(('verify','app5'))
+        self.assertFalse(any(host=='app3'for _,host in events))
+        self.assertEqual(events[-2:],[('rollback','app5'),('rollback','app4')])
+
+    def test_app3_preflight_failure_rolls_back_validated_pilots(self):
+        self.data['waves'] = [['app4','app5'],['app3']]; self.save()
+        events=self.execute(('prepare','app3'))
+        self.assertNotIn(('activate','app3'),events)
+        self.assertEqual(events[-2:],[('rollback','app5'),('rollback','app4')])
+
+    def test_invalid_waves_refused(self):
+        for waves in [[],[[]],[['app4','app5']],[['app4','app5'],['app3','app3']],[['app4','app5'],['app2']],['app4']]:
+            self.data['waves']=waves;self.save()
+            with self.assertRaises(ValueError):self.execute()
+
 
 if __name__ == '__main__':
     unittest.main()

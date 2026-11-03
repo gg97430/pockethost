@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextWebCron, parseWebCron } from './webCron'
+import { nextWebCron, parseWebCron, webCronOffset } from './webCron'
 const next = (expression: string, after = '2026-10-29T10:00:00Z') =>
   nextWebCron(parseWebCron(expression), Date.parse(after))
 describe('strict UTC scheduled tasks', () => {
@@ -31,5 +31,17 @@ describe('strict UTC scheduled tasks', () => {
       '* * * * *;touch /tmp/x',
     ])
       expect(() => parseWebCron(expression)).toThrow()
+  })
+  it('uses Reunion calendar days across UTC midnight and year boundaries', () => {
+    expect(nextWebCron(parseWebCron('0 2 * * *'), Date.parse('2026-10-29T10:00:00Z'), 'Indian/Reunion')).toBe(
+      '2026-10-29T22:00:00.000Z'
+    )
+    expect(nextWebCron(parseWebCron('0 0 1 1 *'), Date.parse('2026-12-31T19:59:59Z'), 'Indian/Reunion')).toBe(
+      '2026-12-31T20:00:00.000Z'
+    )
+    expect(nextWebCron(parseWebCron('0 0 * * 0'), Date.parse('2026-10-31T10:00:00Z'), 'Indian/Reunion')).toBe(
+      '2026-10-31T20:00:00.000Z'
+    )
+    expect(() => webCronOffset('Europe/Paris')).toThrow()
   })
 })

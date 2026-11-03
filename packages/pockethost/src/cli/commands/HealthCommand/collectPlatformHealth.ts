@@ -16,6 +16,26 @@ import {
 } from '../../../common/platformMonitoring'
 
 const exec = promisify(execFile)
+export const projectRecoveryStatus = (report: any, now = Date.now()): { state: MonitorState; detail: string } => {
+  const checkedAt = Date.parse(report?.checkedAt || '')
+  if (
+    !Number.isFinite(checkedAt) ||
+    checkedAt > now + 30000 ||
+    now - checkedAt > 45000 ||
+    ['ready', 'blocked', 'sandboxReady', 'hostingUid1001Denied'].some((key) => typeof report?.[key] !== 'boolean')
+  )
+    return { state: 'error', detail: 'Le service de reprise ne fournit plus de mesure actuelle.' }
+  if (report.blocked)
+    return { state: 'warning', detail: 'Nettoyage des copies à terminer ; les nouveaux essais sont suspendus.' }
+  if (!report.sandboxReady || !report.hostingUid1001Denied)
+    return {
+      state: 'error',
+      detail: 'Le moteur de copies isolées est indisponible ou son isolation n’est pas confirmée.',
+    }
+  return report.ready
+    ? { state: 'ok', detail: 'Service de reprise prêt · copies séparées des hébergements.' }
+    : { state: 'error', detail: 'Le service de reprise ne confirme pas sa connexion au contrôleur.' }
+}
 export const memoryAllocationStatus = (report: any, now = Date.now()): { state: MonitorState; detail: string } => {
   const checkedAt = Date.parse(report?.checkedAt || '')
   if (
@@ -321,6 +341,11 @@ export async function collectPlatformHealth(options: CollectOptions) {
     await guard('memory-allocation', 'infrastructure', 'Allocation automatique de RAM', async () => {
       const status = memoryAllocationStatus(await readStatus('/var/lib/kolab-memory-allocation/status.json'))
       add('memory-allocation', 'infrastructure', 'Allocation automatique de RAM', status.state, status.detail)
+    })
+  if (existsSync('/etc/kolab/project-recovery.json'))
+    await guard('project-recovery', 'backups', 'Reprise des projets et copies isolées', async () => {
+      const status = projectRecoveryStatus(await readStatus('/run/kolab-project-recovery/health.json'))
+      add('project-recovery', 'backups', 'Reprise des projets et copies isolées', status.state, status.detail)
     })
   const load = (loadavg()[1] || 0) / Math.max(1, cpus().length)
   add(

@@ -44,6 +44,25 @@ class Redactor:
 class _UnixHTTP(http.client.HTTPConnection):
  def __init__(self,path,timeout=8):super().__init__('localhost',timeout=timeout);self.path=path
  def connect(self):self.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);self.sock.settimeout(self.timeout);self.sock.connect(self.path)
+def valid_readiness_mounts(value,job):
+ """Accept only the published service's exact platform-owned, read-only DB mounts."""
+ if value.get('HostConfig',{}).get('Binds'):return False
+ mounts=value.get('Mounts',[]);binds=[mount for mount in mounts if mount.get('Type')=='bind']
+ if (value.get('Config',{}).get('Labels')or{}).get('pockethost.web.private-db.wait')!='true':return not binds
+ root=os.environ.get('WEB_APPS_ROOT','/home/pockethost-web/data')
+ if not os.path.isabs(root)or os.path.normpath(root)!=root or not all(IDENT.fullmatch(str(job.get(key,'')))for key in ['appId','deploymentId']):return False
+ service=(value.get('Config',{}).get('Labels')or{}).get('pockethost.web.service','web')
+ if not isinstance(service,str)or not re.fullmatch('[a-z][a-z0-9-]{0,30}',service):return False
+ home=os.path.join(root,'private-db-runtime',job['appId'],job['deploymentId']+'-'+service)
+ expected={'/run/kolab-ready':home+'/ready','/run/kolab-wait-env':home+'/wait-env','/run/kolab-wait.cjs':'/opt/pockethost-web/web_private_db_wait.cjs'}
+ if len(binds)!=3 or len({mount.get('Destination')for mount in binds})!=3:return False
+ for mount in mounts:
+  destination=mount.get('Destination','')
+  overlaps=any(destination==path or destination.startswith(path+'/')or path.startswith(destination+'/')for path in expected)
+  if mount.get('Type')=='bind':
+   if mount.get('RW')is not False or destination not in expected or mount.get('Source')!=expected[destination]:return False
+  elif overlaps:return False
+ return True
 class DockerTasks:
  def __init__(self,path):self.path=path
  def verify(self):
@@ -63,15 +82,16 @@ class DockerTasks:
   if job['containerName']!=expected:raise RuntimeError('Conteneur publié invalide.')
   value=self.request('GET','/containers/'+expected+'/json');config=value.get('Config',{});host=value.get('HostConfig',{});labels=config.get('Labels',{})or{}
   if not HEX.fullmatch(value.get('Id',''))or value.get('Name','').lstrip('/')!=expected or not value.get('State',{}).get('Running')or config.get('User')!='10001:10001'or labels.get('pockethost.web')!='true'or labels.get('pockethost.web.app')!=job['appId']or labels.get('pockethost.web.deployment')!=job['deploymentId']or host.get('Privileged')or not host.get('ReadonlyRootfs'):raise RuntimeError('Le conteneur publié ne respecte pas son isolation.')
+  if not valid_readiness_mounts(value,job):raise RuntimeError('Montages de connexion privée non autorisés dans le conteneur du site.')
   from web_app_runtime import tooling_volume_name,tooling_node_prefix
   tools_image=os.environ.get('WEB_APPS_STORAGE_HELPER_IMAGE','');tools=tooling_volume_name(tools_image)if re.fullmatch('sha256:[a-f0-9]{64}',tools_image)else'';portable=False
   for mount in value.get('Mounts',[]):
-   if mount.get('Type')not in ['volume','tmpfs']or 'docker.sock'in str(mount.get('Source','')):raise RuntimeError('Montage non autorisé dans le conteneur du site.')
+   if mount.get('Type')not in ['volume','tmpfs','bind']or 'docker.sock'in str(mount.get('Source','')):raise RuntimeError('Montage non autorisé dans le conteneur du site.')
    if mount.get('Type')=='volume':
     source=mount.get('Name','');destination=mount.get('Destination','')
     if tools and source==tools and labels.get('pockethost.web.tooling')==tools and destination=='/__pockethost_tools'and mount.get('RW')is False:portable=True
     elif source=='ph-web-next-'+job['appId']+'-'+job['deploymentId']:pass
-    elif re.fullmatch('ph-web-data-'+job['appId']+r'-[a-z][a-z0-9-]{0,30}-(?:v1|r[a-z0-9]{15})',source)and re.fullmatch(r'/(?:data|mnt|app/(?:data|uploads|storage))(?:/[A-Za-z0-9_.-]+)*',destination)and not any(part in ('.','..')for part in destination.split('/')):pass
+    elif re.fullmatch('ph-web-data-'+job['appId']+r'-[a-z][a-z0-9-]{0,30}-(?:v1|r[a-z0-9]{15})',source)and(destination=='/app/.next/cache'or re.fullmatch(r'/(?:data|mnt|app/(?:data|uploads|storage))(?:/[A-Za-z0-9_.-]+)*',destination))and not any(part in ('.','..')for part in destination.split('/')):pass
     else:raise RuntimeError('Montage non autorisé dans le conteneur du site.')
   self.node_prefix=tooling_node_prefix()if portable else['/usr/local/bin/node']
   self.portable=portable
@@ -102,6 +122,9 @@ class TaskWorker:
   if url.scheme!='http'or url.hostname not in ['127.0.0.1','::1']or url.username or url.password or url.query or url.fragment or url.path not in ['', '/']or len(secret)<32:raise ValueError('Contrôleur local et secret privé requis.')
   self.control=control_url.rstrip('/');self.secret=secret;self.root=pathlib.Path(root).absolute();self.stop=stop_event or threading.Event();self.engine=DockerTasks(docker_socket)
  def api(self,path,body):
+  from platform_maintenance import claim_response
+  paused=claim_response(path,'tasks')
+  if paused is not None:return paused
   request=urllib.request.Request(self.control+'/api/web-apps/_tasks/'+path,headers={'Content-Type':'application/json','X-Web-Worker':self.secret},data=json.dumps(body).encode())
   # No redirects: worker credentials never leave the configured loopback controller.
   class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -119,9 +142,9 @@ class TaskWorker:
  def validate_job(self,job):
   if not isinstance(job,dict)or not all(IDENT.fullmatch(str(job.get(key,'')))for key in ['id','taskId','appId','deploymentId'])or not re.fullmatch('[A-Za-z0-9]{80}',str(job.get('proof','')))or not isinstance(job.get('command'),str)or not 1<=len(job['command'])<=4000 or '\0'in job['command']or type(job.get('timeoutSeconds'))is not int or not 1<=job['timeoutSeconds']<=900 or not isinstance(job.get('secrets'),list)or len(job['secrets'])>200 or any(not isinstance(value,str)for value in job['secrets'])or sum(len(value)for value in job['secrets'])>200000:raise RuntimeError('Mission de tâche invalide.')
  def execute(self,job):
-  self.validate_job(job);marker=secrets.token_hex(32);container='';connection=response=raw_socket=None;reader=None;reader_stop=threading.Event();chunks=queue.Queue(maxsize=32);redactor=Redactor(job['secrets']);reason='';code=-1;status='failed';buffer=b'';started=time.monotonic();last_check=started-10;since=int(time.time()*1000)-2000
+  self.validate_job(job);marker=secrets.token_hex(32);container='';connection=response=raw_socket=None;reader=None;reader_stop=threading.Event();chunks=queue.Queue(maxsize=32);redactor=Redactor(job['secrets']);reason='';code=-1;status='failed';buffer=b'';started=time.monotonic();last_check=started-10;since=int(time.time()*1000)-2000;stage='inspect'
   try:
-   container=self.engine.inspect(job);ident=self.engine.create(container,marker,job['timeoutSeconds'],job['command']);connection,response,raw_socket=self.engine.attach(ident)
+   container=self.engine.inspect(job);stage='create';ident=self.engine.create(container,marker,job['timeoutSeconds'],job['command']);stage='attach';connection,response,raw_socket=self.engine.attach(ident);stage='output'
    def read():
     try:
      while not reader_stop.is_set():
@@ -152,14 +175,19 @@ class TaskWorker:
      if len(buffer)<8+length:break
      redactor.feed(buffer[8:8+length]);buffer=buffer[8+length:]
    if buffer:raise RuntimeError()
-   details=self.engine.request('GET','/exec/'+ident+'/json');code=details.get('ExitCode',-1)
+   stage='result';details=self.engine.request('GET','/exec/'+ident+'/json');code=details.get('ExitCode',-1)
    if details.get('Running')or type(code)is not int or not -1<=code<=255:raise RuntimeError()
    status='succeeded'if code==0 else'timed_out'if code in [124,137]and time.monotonic()-started>=job['timeoutSeconds']else'failed'
-  except Exception:pass
+  except Exception:
+   if not reason and status!='timed_out':
+    # Never expose raw engine exceptions, container environment or command text.
+    diagnostic={'inspect':'Validation du conteneur publié refusée (isolation ou montages).','create':'Création de la commande refusée par le moteur.','attach':'Démarrage ou connexion à la commande impossible.','output':'Lecture de la sortie ou validation de l’exécution impossible.','result':'Lecture du code de sortie impossible.'}[stage]
+    redactor.feed(('\n[Kolab] '+diagnostic+'\n').encode())
   finally:
    if container:
     try:self.engine.cleanup(container,marker,since)
-    except Exception:status='failed';reason='cleanup_failed'
+    except Exception:
+     status='failed';reason='cleanup_failed';redactor.feed('\n[Kolab] Nettoyage des processus de la tâche impossible.\n'.encode())
    reader_stop.set()
    if raw_socket:
     try:raw_socket.shutdown(socket.SHUT_RDWR)

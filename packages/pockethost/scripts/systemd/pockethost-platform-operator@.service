@@ -1,0 +1,28 @@
+[Unit]
+Description=Kolab bounded memory and admission operator request
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /opt/pockethost-web/platform_operator_socket.py socket
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/etc/kolab /run/kolab-platform-maintenance /home/ubuntu/.local/share/pockethost/data/mothership/pb_data
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=320M
+MemorySwapMax=0
+CPUQuota=50%
+TasksMax=12
+LimitNOFILE=64
+RuntimeMaxSec=35

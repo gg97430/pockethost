@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-worker Next.js deployment engine. Never uses the PocketBase Docker daemon."""
 import os,sys,json,pathlib,time,datetime,subprocess,urllib.request,urllib.error,tempfile,tarfile,shutil,signal,fcntl,re,secrets,base64,socket,shlex,hashlib,hmac,threading,contextlib,io
+from platform_maintenance import claim_response as maintenance_claim, status as maintenance_status
 os.umask(0o027)
 ROOT=pathlib.Path(os.environ.get('WEB_APPS_ROOT','/home/pockethost-web/data')).absolute()
 SOCKET=os.environ.get('WEB_APPS_DOCKER_SOCKET','')
@@ -32,11 +33,13 @@ def allocation_status():
 
 def publish_job_status(deployment):
  status=load(ROOT/'worker-status.json')
- status.update({'ready':True,'rootless':True,'allocationMode':allocation_status(),'checkedAt':stamp(),'deployment':deployment,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS})
+ status.update({'ready':True,'rootless':True,'allocationMode':allocation_status(),'checkedAt':stamp(),'deployment':deployment,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS,'maintenance':maintenance_status()})
  atomic(ROOT/'worker-status.json',status)
 
 
 def api(path,body):
+ paused=maintenance_claim(path)
+ if paused is not None:return paused
  if not re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{3,4}',CONTROL)or not 1024<=int(CONTROL.rsplit(':',1)[1])<=65535 or len(SECRET)<32:raise RuntimeError('Contrôleur loopback et secret privé requis.')
  request=urllib.request.Request(CONTROL+'/api/web-apps/_worker/'+path,headers={'Content-Type':'application/json','X-Web-Worker':SECRET},data=json.dumps(body).encode())
  with urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect()).open(request,timeout=30)as response:
@@ -200,6 +203,7 @@ class Job:
 
  def check_cancel(self,response):
   if self.value.get('action')in ['deploy','ci-deploy'] and (response.get('cancelRequested') or response.get('status')=='cancelled'):
+   if response.get('superseded'):raise JobCancelled('Remplacé par un déploiement plus récent. La version publiée est conservée.')
    raise JobCancelled('Déploiement annulé. La version publiée est conservée.')
   return response
  def heartbeat(self,force=False):
@@ -247,8 +251,8 @@ class Job:
      if time.monotonic()-getattr(self,'build_started',self.started)>build_seconds(ROOT,self):raise RuntimeError('Durée maximale de construction de ce projet dépassée. La version publiée est conservée.')
     if limit is not None and time.monotonic()-began>limit:raise CommandTimeout('Délai maximal de la commande dépassé.')
     if watch:watch()
-    if budget and time.monotonic()-heartbeat>5:
-     resources();check_runtime_budgets();self.heartbeat(True);heartbeat=time.monotonic()
+    if budget and self.process.poll()is None and time.monotonic()-heartbeat>5:
+     self.heartbeat(True);resources();check_runtime_budgets();heartbeat=time.monotonic()
     for key,_ in selector.select(timeout=1):
      chunk=os.read(key.fileobj.fileno(),8192)
      if chunk:self.log(chunk.decode(errors='replace'))
@@ -315,7 +319,10 @@ class Job:
   self.heartbeat(True);return dirs[0]
 
  def fetch_source(self,folder):
-  return self.fetch_git(folder) if self.snapshot['config'].get('source')=='git' else self.fetch(folder)
+  context=self.fetch_git(folder) if self.snapshot['config'].get('source')=='git' else self.fetch(folder)
+  from web_app_preflight import source_contract
+  source_contract(self,context)
+  return context
 
  def fetch_git(self,folder):
   # Deploy-key source: job.git comes from the claim (current web_git_sources row). Never touches GitHub.
@@ -485,12 +492,27 @@ class Job:
   atomic(ROOT/'runtime-budgets'/(self.id+'.json'),{'appId':self.app,'deploymentId':self.id,'container':name,'volume':volume,'path':nextdir,'baselineBytes':baseline})
   return {'image':image,'imageId':image_id,'container':name,'volume':volume,'target':'http://127.0.0.1:'+bindings[0]['HostPort'],'serverPath':server,'serverDirectory':serverdir}
 
+ def candidate_states(self,result):
+  names=list(dict.fromkeys([result.get('container'),*[item.get('container')for item in result.get('services',[])]]))
+  if not names or any(not isinstance(name,str)or not re.fullmatch('ph-web-'+self.app+'-'+self.id+'(?:-[a-z][a-z0-9-]{0,30})?',name)for name in names):
+   raise RuntimeError('Identité du candidat invalide pendant le contrôle de santé.')
+  infos=json.loads(docker(['inspect',*names],timeout=5))
+  if len(infos)!=len(names):raise RuntimeError('Le candidat est introuvable pendant le contrôle de santé.')
+  for info in infos:
+   state=info.get('State')or{}
+   repeated=info.get('RestartCount',0)>=3
+   if repeated or(state.get('Status')in ['exited','dead','removing']and not state.get('Restarting'))or(state.get('Health')or{}).get('Status')=='unhealthy':
+    self.site_logs(result)
+    detail='mémoire insuffisante (OOM)'if state.get('OOMKilled')else'redémarrages répétés (code de sortie '+str(state.get('ExitCode',0))+')'if repeated else'code de sortie '+str(state.get('ExitCode',0))if state.get('Status')in ['exited','dead']else'contrôle de santé en échec'
+    raise RuntimeError('Un conteneur du candidat s’est arrêté ou est défaillant : '+detail+'. La version publiée est conservée.')
+  return infos
+
  def health(self,result):
   if result.get('runtimeKind') and result.get('runtimeKind')!='nextjs':
    deadline=time.monotonic()+120;good=0;self.stage('health')
    while time.monotonic()<deadline:
-    infos=[json.loads(docker(['inspect',item['container']]))[0]for item in result.get('services',[])]
-    valid=bool(infos)and all(info.get('State',{}).get('Running')and info.get('State',{}).get('Health',{}).get('Status','healthy')=='healthy'for info in infos)
+    self.heartbeat();infos=self.candidate_states(result)
+    valid=bool(infos)and all(info.get('State',{}).get('Running')and not info.get('State',{}).get('Restarting')and info.get('State',{}).get('Health',{}).get('Status','healthy')=='healthy'for info in infos)
     self.heartbeat();good=good+1 if valid else 0
     if good>=3:break
     time.sleep(1)
@@ -499,6 +521,7 @@ class Job:
    if not result.get('public',True):return
   self.stage('health');good=0;deadline=time.monotonic()+120;path=self.snapshot['config'].get('healthPath','/')
   while time.monotonic()<deadline:
+   self.heartbeat();self.candidate_states(result)
    try:
     request=urllib.request.Request(result['target']+path,headers={'Host':self.snapshot['config']['generatedDomain'],'X-Forwarded-Proto':'https'})
     with urllib.request.build_opener(NoRedirect()).open(request,timeout=5) as response:ok=200<=response.status<400
@@ -601,8 +624,6 @@ class Job:
    if not info.get('Containers'):
     try:docker(['network','rm',ident])
     except subprocess.CalledProcessError:pass
-  try:docker(['buildx','prune','--builder',BUILDER,'--force','--keep-storage',build_cache_limit()],timeout=60)
-  except Exception:pass
   return [reference for r in rows if r['Id'] in keep for reference in [r['Id'],*r.get('RepoTags',[])]]
 
  def stop_old(self,except_name='',strict=False):
@@ -654,6 +675,7 @@ class Job:
   atomic(path,{'entries':[{'fingerprint':fingerprint,'image':image,'deployment':self.id},*entries]})
 
  def cleanup_failure(self):
+  if getattr(self,'failure_cleaned',False):return
   for ident in docker(['ps','-aq','--filter','label=pockethost.web.app='+self.app,'--filter','label=pockethost.web.deployment='+self.id]).split():
    info=json.loads(docker(['inspect',ident]))[0];labels=info.get('Config',{}).get('Labels')or{}
    if labels.get('pockethost.web.app')!=self.app or labels.get('pockethost.web.deployment')!=self.id or not info.get('Name','').lstrip('/').startswith('ph-web-'+self.app+'-'+self.id):raise RuntimeError('Nettoyage d’un candidat étranger refusé.')
@@ -683,6 +705,7 @@ class Job:
    except Exception:pass
   folder=ROOT/'assets'/self.app/self.id
   if folder.is_dir() and not folder.is_symlink():shutil.rmtree(folder)
+  self.failure_cleaned=True
 
  def execute(self):
   action=self.value['action'];result={};candidate=''
@@ -719,7 +742,10 @@ class Job:
   if action=='ci-deploy':
    expires=self.snapshot.get('ci',{}).get('expiresAt','')
    if not expires or datetime.datetime.fromisoformat(expires.replace('Z','+00:00')).timestamp()<time.time():raise RuntimeError('Les identifiants temporaires CI ont expiré. Relancez le pipeline.')
-  if action in ['deploy','ci-deploy']:self.heartbeat(True)
+  if action in ['deploy','ci-deploy']:
+   self.heartbeat(True)
+   from web_app_preflight import run as preflight
+   preflight(self)
   if action=='stop':
    self.checkpoint();self.routes('',False)
    with self.blocking_heartbeat():self.stop_old(strict=True)
@@ -755,11 +781,11 @@ class Job:
      with tempfile.TemporaryDirectory(prefix='build-',dir=ROOT) as work:
       work=pathlib.Path(work);needs_source=profile['kind']not in ['image','worker']or not profile.get('image');needs_source=any(not item.get('image')for item in profile['compose']['services'].values())if profile['kind']=='compose'else needs_source;context=self.fetch_source(work)if needs_source else None;self.stage('build');result=self.start(self.build(context,work))
    candidate=result['container'];self.health(result);response=self.stage('publish')
-   if action in ['deploy','ci-deploy'] and response.get('desiredCommit')!=self.value['commit']:raise RuntimeError('Un commit plus récent est en attente. Cette version ne sera pas publiée.')
+   if action in ['deploy','ci-deploy'] and response.get('desiredCommit')!=self.value['commit']:raise JobCancelled('Un commit plus récent est en attente. Cette version ne sera pas publiée.')
    if not result.get('runtimeKind')or result['runtimeKind']=='nextjs'or result.get('framework')=='nextjs':self.cache_assets(result)
    self.checkpoint(candidate);previous=self.previous;self.routes(result['target'],result.get('public',True));published=True;response=api('report',{'id':self.id,'stage':'Publication vérifiée'})
    if action in ['deploy','ci-deploy'] and response.get('desiredCommit')!=self.value['commit']:
-    atomic(ROOT/'routes.json',previous);raise RuntimeError('Un commit plus récent a remplacé cette publication.')
+    atomic(ROOT/'routes.json',previous);raise JobCancelled('Un commit plus récent a remplacé cette publication.')
    if action=='deploy':self.remember_image(fingerprint,result)
    # Existing requests drain before the former container stops. No automatic retry of POSTs.
    return result
@@ -842,6 +868,16 @@ def reconcile():
   if state.get('status')=='running':api('report',{'id':orphan['id'],'status':'cancelled'if state.get('cancelRequested')else'failed','error':''if state.get('cancelRequested')else'Worker interrompu pendant le déploiement. La version précédente reste publiée.','stage':'Annulé'if state.get('cancelRequested')else'Interrompu'})
  (ROOT/'current-job.json').unlink(missing_ok=True)
 
+def prune_idle_cache(timeout=3):
+ # Docker may launch the buildx plugin as a child. Bound the whole client group,
+ # without waiting on a pipe inherited by the plugin after its parent exits.
+ process=subprocess.Popen(['docker','--host','unix://'+SOCKET,'buildx','prune','--builder',BUILDER,'--force','--keep-storage',build_cache_limit()],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+ try:process.wait(timeout=timeout)
+ except subprocess.TimeoutExpired:
+  try:os.killpg(process.pid,signal.SIGKILL)
+  except ProcessLookupError:pass
+  process.wait(timeout=2)
+
 def main():
  allocation_label=allocation_status()
  if not re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{3,4}',CONTROL)or not 1024<=int(CONTROL.rsplit(':',1)[1])<=65535 or len(SECRET)<32:raise RuntimeError('Configuration locale du worker invalide.')
@@ -850,7 +886,7 @@ def main():
  lock=open(ROOT/'worker.lock','a+')
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:raise RuntimeError('Un worker est déjà actif.')
- ready=False;lastcheck=0;background={}
+ ready=False;lastcheck=0;last_cache_prune=time.monotonic();background={}
  def backup_loop():
   from web_app_backups import tick
   while True:
@@ -870,6 +906,9 @@ def main():
     if 'tasks'not in background:
      from web_app_tasks import start_task_runner
      background['tasks']=start_task_runner(CONTROL,SECRET,SOCKET,ROOT)
+    if 'checks'not in background:
+     from web_app_checks import start_check_runner
+     background['checks']=start_check_runner(CONTROL,SECRET,ROOT)
     if 'runtime-logs'not in background:
      from web_app_observability import start_runtime_log_collector
      background['runtime-logs']=start_runtime_log_collector(CONTROL,SECRET,SOCKET,ROOT)
@@ -885,14 +924,16 @@ def main():
     if 'backups'not in background:
      background['backups']=threading.Thread(target=backup_loop,name='web-backups',daemon=True);background['backups'].start()
    reconcile();warning=check_runtime_budgets();publish_runtime_stats()
-   atomic(ROOT/'worker-status.json',{'ready':ready,'rootless':ready,'allocationMode':allocation_label,'checkedAt':stamp(),'error':warning,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS,'httpsReady':bool(re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',os.environ.get('WEB_APPS_CERT_EMAIL',''))and shutil.which('certbot'))})
+   atomic(ROOT/'worker-status.json',{'ready':ready,'rootless':ready,'allocationMode':allocation_label,'checkedAt':stamp(),'error':warning,'git':GIT_TOOLS,'railpack':RAILPACK_TOOLS,'maintenance':maintenance_status(),'httpsReady':bool(re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',os.environ.get('WEB_APPS_CERT_EMAIL',''))and shutil.which('certbot'))})
    try:
     from web_app_storage import tick as storage_tick
     if storage_tick(ROOT,api,docker):time.sleep(1);continue
    except Exception:time.sleep(5);continue
    from web_app_deletion import tick as deletion_tick
    if deletion_tick(ROOT,api,docker,atomic,load):continue
-   value=api('claim',{}).get('job')
+   claim=api('claim',{});value=claim.get('job')
+   if not value and claim.get('retryClaim'):continue
+   if not value and claim.get('maintenance',{}).get('paused'):time.sleep(1);continue
    if value:
     atomic(ROOT/'current-job.json',{'id':value['id'],'appId':value['appId'],'action':value['action']});job=Job(value)
     acknowledged=False
@@ -926,7 +967,7 @@ def main():
        state=api('report',{'id':job.id,'inspect':True})
        if state.get('status')!='ready':
         if job.published and job.previous is not None:atomic(ROOT/'routes.json',job.previous)
-        if job.candidate:
+        if job.candidate and not getattr(job,'failure_cleaned',False):
          try:docker(['rm','-f',job.candidate])
          except Exception:pass
         job.cleanup_failure()
@@ -936,6 +977,12 @@ def main():
     finally:
      if acknowledged:(ROOT/'current-job.json').unlink(missing_ok=True)
     if acknowledged:continue
+   elif time.monotonic()-last_cache_prune>=300:
+    # Cache GC is idle maintenance, never a sixty-second delay between jobs.
+    last_cache_prune=time.monotonic()
+    try:prune_idle_cache()
+    except Exception:pass
+    continue
   except Exception as e:
    message=str(e) if isinstance(e,RuntimeError) else 'Worker indisponible : vérifiez le moteur dédié et la connexion locale.'
    atomic(ROOT/'worker-status.json',{'ready':False,'rootless':ready,'allocationMode':allocation_label,'checkedAt':stamp(),'error':message,'railpack':RAILPACK_TOOLS})

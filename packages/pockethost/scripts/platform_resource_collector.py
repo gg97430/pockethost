@@ -634,11 +634,13 @@ def load_config(path, trusted=True):
     ids, cgroups = set(), set()
     for service in config['services']:
         cg = pathlib.PurePosixPath(service.get('cgroup', ''))
+        project_sandbox = (service.get('id') == 'backups:project-sandbox' and service.get('category') == 'backups'
+                           and service.get('cgroup') == 'user.slice/user-1002.slice')
         if (set(service) != {'id', 'category', 'cgroup'} or not RESOURCE_ID.fullmatch(str(service['id']))
                 or service['id'] in ids or str(cg) in cgroups or service['category'] not in ('platform', 'backups', 'builds')
                 or cg.is_absolute() or '..' in cg.parts or not cg.parts
                 or any(not re.fullmatch(r'[A-Za-z0-9_@.:-]+', part) or part == '.' for part in cg.parts)
-                or not cg.name.endswith('.service') or re.fullmatch(r'user@\d+\.service', cg.name)):
+                or not project_sandbox and (not cg.name.endswith('.service') or re.fullmatch(r'user@\d+\.service', cg.name))):
             raise ValueError('Invalid service accounting root')
         ids.add(service['id'])
         cgroups.add(str(cg))

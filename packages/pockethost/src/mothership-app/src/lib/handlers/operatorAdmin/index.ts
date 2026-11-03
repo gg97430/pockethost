@@ -1,4 +1,6 @@
 export * from './api'
+export * from './controls'
+export * from './fleet'
 export * from './monitoring'
 export * from './operatorSettings'
 export * from './resources'

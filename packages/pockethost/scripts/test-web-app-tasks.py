@@ -55,6 +55,55 @@ class TaskTests(unittest.TestCase):
   with mock.patch.dict(os.environ,{'WEB_APPS_STORAGE_HELPER_IMAGE':image}):
    with self.assertRaises(RuntimeError):engine.inspect(self.job)
 
+ def test_private_database_readiness_mounts_match_exact_published_app_and_deployment(self):
+  import copy
+  root='/home/pockethost-web/data';home=root+'/private-db-runtime/'+self.job['appId']+'/'+self.job['deploymentId']+'-web'
+  valid={'Id':'f'*64,'Name':'/'+self.job['containerName'],'State':{'Running':True},'Config':{'User':'10001:10001','Labels':{'pockethost.web':'true','pockethost.web.app':self.job['appId'],'pockethost.web.deployment':self.job['deploymentId'],'pockethost.web.private-db.wait':'true'}},'HostConfig':{'ReadonlyRootfs':True,'CapDrop':['ALL'],'SecurityOpt':['no-new-privileges']},'Mounts':[
+   {'Type':'bind','Source':home+'/ready','Destination':'/run/kolab-ready','RW':False},
+   {'Type':'bind','Source':home+'/wait-env','Destination':'/run/kolab-wait-env','RW':False},
+   {'Type':'bind','Source':'/opt/pockethost-web/web_private_db_wait.cjs','Destination':'/run/kolab-wait.cjs','RW':False}]}
+  engine=m.DockerTasks('/run/user/1001/docker.sock');engine.request=lambda *args:valid
+  with mock.patch.dict(os.environ,{'WEB_APPS_ROOT':root}):self.assertEqual(engine.inspect(self.job),'f'*64)
+  cases=[]
+  for index,field,value in [(0,'RW',True),(0,'RW',None),(0,'Source',home.replace(self.job['appId'],'z'*15)+'/ready'),(1,'Source',home.replace(self.job['deploymentId'],'z'*15)+'/wait-env'),(2,'Source','/etc/passwd'),(0,'Destination','/run/kolab-ready/subdir')]:
+   bad=copy.deepcopy(valid);bad['Mounts'][index][field]=value;cases.append(bad)
+  bad=copy.deepcopy(valid);bad['Mounts'].pop();cases.append(bad)
+  bad=copy.deepcopy(valid);bad['Mounts'][1]=copy.deepcopy(bad['Mounts'][0]);cases.append(bad)
+  bad=copy.deepcopy(valid);bad['Config']['Labels'].pop('pockethost.web.private-db.wait');cases.append(bad)
+  bad=copy.deepcopy(valid);bad['HostConfig']['Binds']=['/etc:/host:ro'];cases.append(bad)
+  for mount in [{'Type':'bind','Source':'/etc','Destination':'/host','RW':False},{'Type':'volume','Name':'ph-web-next-'+self.job['appId']+'-'+self.job['deploymentId'],'Destination':'/run/kolab-ready/injected'},{'Type':'tmpfs','Destination':'/run'}]:
+   bad=copy.deepcopy(valid);bad['Mounts'].append(mount);cases.append(bad)
+  for bad in cases:
+   engine.request=lambda *args:bad
+   with mock.patch.dict(os.environ,{'WEB_APPS_ROOT':root}),self.assertRaises(RuntimeError):engine.inspect(self.job)
+  engine.request=lambda *args:valid
+  for root in ['relative','/home/pockethost-web/../data','/home/pockethost-web/data/']:
+   with mock.patch.dict(os.environ,{'WEB_APPS_ROOT':root}),self.assertRaises(RuntimeError):engine.inspect(self.job)
+  # Compose fronts keep the published container name but use their own service directory.
+  valid['Config']['Labels']['pockethost.web.service']='app'
+  for index in [0,1]:valid['Mounts'][index]['Source']=valid['Mounts'][index]['Source'].replace(self.job['deploymentId']+'-web/',self.job['deploymentId']+'-app/')
+  with mock.patch.dict(os.environ,{'WEB_APPS_ROOT':'/home/pockethost-web/data'}):self.assertEqual(engine.inspect(self.job),'f'*64)
+  for service in ['web','../app','app/../../foreign','App','a'*32,'']:
+   with mock.patch.dict(valid['Config']['Labels'],{'pockethost.web.service':service}),mock.patch.dict(os.environ,{'WEB_APPS_ROOT':'/home/pockethost-web/data'}),self.assertRaises(RuntimeError):engine.inspect(self.job)
+
+ def test_exact_persistent_next_cache_matches_existing_storage_mount_policy(self):
+  engine=m.DockerTasks('/run/user/1001/docker.sock')
+  valid={'Id':'f'*64,'Name':'/'+self.job['containerName'],'State':{'Running':True},'Config':{'User':'10001:10001','Labels':{'pockethost.web':'true','pockethost.web.app':self.job['appId'],'pockethost.web.deployment':self.job['deploymentId']}},'HostConfig':{'ReadonlyRootfs':True,'CapDrop':['ALL'],'SecurityOpt':['no-new-privileges']},'Mounts':[{'Type':'volume','Name':'ph-web-data-'+self.job['appId']+'-next-cache-v1','Destination':'/app/.next/cache','RW':True}]}
+  engine.request=lambda *args:valid;self.assertEqual(engine.inspect(self.job),'f'*64)
+  for path in ['/app/.next','/app/.next/cache/subdir','/app/.next/cache/../server','/etc']:
+   with mock.patch.dict(valid['Mounts'][0],{'Destination':path}),self.assertRaises(RuntimeError):engine.inspect(self.job)
+  with mock.patch.dict(valid['Mounts'][0],{'Name':'ph-web-data-'+('z'*15)+'-next-cache-v1'}),self.assertRaises(RuntimeError):engine.inspect(self.job)
+
+ def test_launcher_errors_produce_stage_diagnostic_without_raw_exception_or_secrets(self):
+  for method,phrase in [('inspect','Validation du conteneur'),('create','Création de la commande'),('attach','Démarrage ou connexion'),('request','Lecture du code de sortie')]:
+   self.calls=[];self.worker.engine=FakeDocker()
+   def fail(*args):raise RuntimeError('RAW-PRIVATE-ENGINE-DETAIL private-across-chunks')
+   setattr(self.worker.engine,method,fail);self.worker.execute(self.job);report=self.report()
+   self.assertEqual(report['status'],'failed');self.assertEqual(report['exitCode'],-1);self.assertIn(phrase,report['log']);self.assertNotIn('RAW-PRIVATE',report['log']);self.assertNotIn('private-across-chunks',report['log'])
+   if method=='inspect':self.assertEqual(self.worker.engine.creates,[]);self.assertEqual(self.worker.engine.cleanups,[])
+  self.calls=[];self.worker.engine=FakeDocker();self.worker.engine.cleanup=fail;self.worker.execute(self.job)
+  self.assertEqual(self.report()['reason'],'cleanup_failed');self.assertIn('Nettoyage',self.report()['log']);self.assertNotIn('RAW-PRIVATE',self.report()['log'])
+
  def test_cleanup_exec_receives_run_start_and_rejects_invalid_values(self):
   engine=m.DockerTasks('/run/user/1001/docker.sock');calls=[]
   engine.request=lambda method,path,body=None:(calls.append(body)or{'Id':'e'*64})

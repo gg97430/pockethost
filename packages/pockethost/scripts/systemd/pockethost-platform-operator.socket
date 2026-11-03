@@ -1,0 +1,14 @@
+[Unit]
+Description=Kolab local memory and admission operator socket
+
+[Socket]
+ListenStream=/run/kolab-platform-operator.sock
+SocketUser=root
+SocketGroup=ubuntu
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

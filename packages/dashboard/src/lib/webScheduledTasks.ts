@@ -21,7 +21,12 @@ export type WebScheduledTask = {
   name: string
   command: string
   schedule: string
-  timezone: 'UTC'
+  timezone: 'UTC' | 'Indian/Reunion'
+  catchUp: 'once' | 'skip'
+  maxCatchUpDelayMinutes: number
+  lastMissedAt: string
+  lastSuccessAt: string
+  late: boolean
   enabled: boolean
   timeoutSeconds: number
   nextRunAt: string

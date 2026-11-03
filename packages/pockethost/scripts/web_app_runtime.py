@@ -9,6 +9,7 @@ import socket
 import stat
 import time
 import urllib.parse
+from database_memory_reservations import reserved_headroom
 
 KINDS = ('nextjs', 'auto', 'dockerfile', 'image', 'compose', 'worker')
 ID = re.compile(r'^[a-z0-9]{15}$')
@@ -345,6 +346,13 @@ def admit(docker, memory_mib=0, cpu_millicores=0, build=False, mode=None):
             reserved+=memory;requested+=reservation;cpu+=nano//1000000
     build_mib,build_millicores=build_reservation() if build else (0,0)
     extra=(memory_mib+build_mib)*1024**2
+    try:held_for_databases=reserved_headroom()
+    except (OSError,ValueError,KeyError,TypeError):
+        raise ResourcePressure('Admission différée : réservation mémoire des bases de données invérifiable.')from None
+    if held_for_databases and mode=='fixed':
+        host=host_memory()
+        if host['availableBytes']-held_for_databases<extra+max(1024**3,host['totalBytes']//10):
+            raise ResourcePressure('Admission différée : mémoire réservée aux bases de données ; priorité à leur fonctionnement.')
     if mode=='fixed' and cpu_millicores+build_millicores>effective_cpu_millicores():
         raise RuntimeError('Le plafond CPU demandé dépasse la capacité du groupe web.')
     if mode=='fixed':
@@ -352,7 +360,7 @@ def admit(docker, memory_mib=0, cpu_millicores=0, build=False, mode=None):
             raise RuntimeError('Admission suspendue : capacité insuffisante dans le budget web. Arrêtez un site ou réessayez après la construction en cours.')
     else:
         host=host_memory()
-        if host['availableBytes']<extra+max(1024**3,host['totalBytes']//10):
+        if host['availableBytes']-held_for_databases<extra+max(1024**3,host['totalBytes']//10):
             raise ResourcePressure('Admission différée : mémoire disponible du serveur insuffisante ; priorité aux services et aux bases de données.')
         builder=builder_resident_memory(docker,build_mib*1024**2)if build else None
         # Requests constrain admission; limits constrain peaks. Existing fixed

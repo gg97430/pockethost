@@ -380,11 +380,11 @@ const instanceAccessQuery = (user, instanceField = "id", ownerField = "uid") => 
 //#endregion
 //#region src/lib/handlers/operatorAdmin/settingsValidation.ts
 const email = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
-const invalid$2 = (message) => {
+const invalid$3 = (message) => {
 	throw new BadRequestError(message);
 };
 const validateOperatorSettingsInput = (input) => {
-	if (!input || typeof input !== "object" || Array.isArray(input)) invalid$2("Les paramètres doivent être un objet JSON.");
+	if (!input || typeof input !== "object" || Array.isArray(input)) invalid$3("Les paramètres doivent être un objet JSON.");
 	for (const key of [
 		"publicSignupEnabled",
 		"autoVerifyUsers",
@@ -392,37 +392,37 @@ const validateOperatorSettingsInput = (input) => {
 		"defaultInstanceDevMode",
 		"defaultSyncAdmin",
 		"defaultAutoVacuum"
-	]) if (key in input && typeof input[key] !== "boolean") invalid$2(`Valeur oui/non attendue pour ${key}.`);
-	if ("defaultUserQuota" in input && (!Number.isSafeInteger(input.defaultUserQuota) || input.defaultUserQuota < 0)) invalid$2("Le quota doit être un entier positif ou nul.");
+	]) if (key in input && typeof input[key] !== "boolean") invalid$3(`Valeur oui/non attendue pour ${key}.`);
+	if ("defaultUserQuota" in input && (!Number.isSafeInteger(input.defaultUserQuota) || input.defaultUserQuota < 0)) invalid$3("Le quota doit être un entier positif ou nul.");
 	if ("defaultSubscription" in input && ![
 		"free",
 		"premium",
 		"founder",
 		"flounder",
 		"legacy"
-	].includes(input.defaultSubscription)) invalid$2("Offre par défaut invalide.");
+	].includes(input.defaultSubscription)) invalid$3("Offre par défaut invalide.");
 	if ("serverTimezone" in input) {
-		if (typeof input.serverTimezone !== "string" || !input.serverTimezone.trim()) invalid$2("Fuseau horaire obligatoire.");
+		if (typeof input.serverTimezone !== "string" || !input.serverTimezone.trim()) invalid$3("Fuseau horaire obligatoire.");
 		const name = input.serverTimezone.trim();
 		const zone = new Timezone(name);
 		if (![
 			"UTC",
 			"Etc/UTC",
 			"Local"
-		].includes(name) && zone.string() === "UTC") invalid$2("Fuseau horaire invalide. Exemple : Indian/Reunion.");
+		].includes(name) && zone.string() === "UTC") invalid$3("Fuseau horaire invalide. Exemple : Indian/Reunion.");
 	}
 	for (const [key, max] of [
 		["supportEmail", 254],
 		["maintenanceMessage", 2e3],
 		["notes", 1e4]
-	]) if (key in input && (typeof input[key] !== "string" || input[key].length > max)) invalid$2(`Le champ ${key} est invalide ou trop long.`);
-	if (input.supportEmail && !email.test(input.supportEmail.trim())) invalid$2("Adresse email de support invalide.");
-	for (const group of ["smtp", "backupS3"]) if (group in input && (!input[group] || typeof input[group] !== "object" || Array.isArray(input[group]))) invalid$2(`Configuration ${group} invalide.`);
+	]) if (key in input && (typeof input[key] !== "string" || input[key].length > max)) invalid$3(`Le champ ${key} est invalide ou trop long.`);
+	if (input.supportEmail && !email.test(input.supportEmail.trim())) invalid$3("Adresse email de support invalide.");
+	for (const group of ["smtp", "backupS3"]) if (group in input && (!input[group] || typeof input[group] !== "object" || Array.isArray(input[group]))) invalid$3(`Configuration ${group} invalide.`);
 	if (input.smtp) {
 		const s = input.smtp;
-		for (const key of ["enabled", "tls"]) if (key in s && typeof s[key] !== "boolean") invalid$2(`Valeur oui/non attendue pour SMTP ${key}.`);
-		if ("port" in s && (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535)) invalid$2("Le port SMTP doit être un entier entre 1 et 65535.");
-		if ("authMethod" in s && !["PLAIN", "LOGIN"].includes(s.authMethod)) invalid$2("Méthode SMTP attendue : PLAIN ou LOGIN.");
+		for (const key of ["enabled", "tls"]) if (key in s && typeof s[key] !== "boolean") invalid$3(`Valeur oui/non attendue pour SMTP ${key}.`);
+		if ("port" in s && (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535)) invalid$3("Le port SMTP doit être un entier entre 1 et 65535.");
+		if ("authMethod" in s && !["PLAIN", "LOGIN"].includes(s.authMethod)) invalid$3("Méthode SMTP attendue : PLAIN ou LOGIN.");
 		for (const key of [
 			"host",
 			"username",
@@ -430,13 +430,13 @@ const validateOperatorSettingsInput = (input) => {
 			"localName",
 			"senderName",
 			"senderAddress"
-		]) if (key in s && (typeof s[key] !== "string" || s[key].length > (key === "password" ? 1024 : 255) || /[\r\n\0]/.test(s[key]) && key !== "password")) invalid$2(`Champ SMTP ${key} invalide.`);
-		if (s.senderAddress && !email.test(s.senderAddress.trim())) invalid$2("Expéditeur email invalide : saisissez uniquement une adresse, par exemple contact@monappli.re. Le nom va dans « Expéditeur nom ».");
-		if (s.host && /[\s/\\@]/.test(s.host.trim())) invalid$2("L’hôte SMTP doit contenir uniquement un nom de serveur ou une adresse IP, sans https:// ni port.");
+		]) if (key in s && (typeof s[key] !== "string" || s[key].length > (key === "password" ? 1024 : 255) || /[\r\n\0]/.test(s[key]) && key !== "password")) invalid$3(`Champ SMTP ${key} invalide.`);
+		if (s.senderAddress && !email.test(s.senderAddress.trim())) invalid$3("Expéditeur email invalide : saisissez uniquement une adresse, par exemple contact@monappli.re. Le nom va dans « Expéditeur nom ».");
+		if (s.host && /[\s/\\@]/.test(s.host.trim())) invalid$3("L’hôte SMTP doit contenir uniquement un nom de serveur ou une adresse IP, sans https:// ni port.");
 	}
 	if (input.backupS3) {
 		const s = input.backupS3;
-		if ("enabled" in s && typeof s.enabled !== "boolean") invalid$2("Valeur oui/non attendue pour S3/R2.");
+		if ("enabled" in s && typeof s.enabled !== "boolean") invalid$3("Valeur oui/non attendue pour S3/R2.");
 		for (const key of [
 			"endpoint",
 			"bucket",
@@ -444,34 +444,34 @@ const validateOperatorSettingsInput = (input) => {
 			"region",
 			"accessKeyId",
 			"secretAccessKey"
-		]) if (key in s && (typeof s[key] !== "string" || s[key].length > (key === "secretAccessKey" ? 1024 : 500))) invalid$2(`Champ S3/R2 ${key} invalide.`);
-		if (s.endpoint && !/^https?:\/\/[^\s/?#@]+(?::\d+)?(?:\/[^\s?#]*)?$/.test(s.endpoint.trim())) invalid$2("Endpoint S3/R2 invalide : une URL http:// ou https:// est attendue, sans identifiants dans l’URL.");
+		]) if (key in s && (typeof s[key] !== "string" || s[key].length > (key === "secretAccessKey" ? 1024 : 500))) invalid$3(`Champ S3/R2 ${key} invalide.`);
+		if (s.endpoint && !/^https?:\/\/[^\s/?#@]+(?::\d+)?(?:\/[^\s?#]*)?$/.test(s.endpoint.trim())) invalid$3("Endpoint S3/R2 invalide : une URL http:// ou https:// est attendue, sans identifiants dans l’URL.");
 	}
 };
 const validateSMTPConfiguration = (smtp) => {
 	validateOperatorSettingsInput({ smtp });
 	if (smtp.enabled) {
-		if (!smtp.host) invalid$2("Hôte SMTP obligatoire lorsque SMTP est activé.");
-		if (!smtp.senderAddress || !email.test(smtp.senderAddress)) invalid$2("Adresse email expéditeur valide obligatoire lorsque SMTP est activé.");
-		if (smtp.username && !smtp.password) invalid$2("Mot de passe SMTP obligatoire pour cet utilisateur.");
+		if (!smtp.host) invalid$3("Hôte SMTP obligatoire lorsque SMTP est activé.");
+		if (!smtp.senderAddress || !email.test(smtp.senderAddress)) invalid$3("Adresse email expéditeur valide obligatoire lorsque SMTP est activé.");
+		if (smtp.username && !smtp.password) invalid$3("Mot de passe SMTP obligatoire pour cet utilisateur.");
 	}
 };
 const validateS3Configuration = (s) => {
 	validateOperatorSettingsInput({ backupS3: s });
-	if (s.enabled && (!s.endpoint || !s.bucket || !s.accessKeyId || !s.secretAccessKey)) invalid$2("S3/R2 activé : renseignez l’endpoint, le bucket, la clé d’accès et la clé secrète.");
+	if (s.enabled && (!s.endpoint || !s.bucket || !s.accessKeyId || !s.secretAccessKey)) invalid$3("S3/R2 activé : renseignez l’endpoint, le bucket, la clé d’accès et la clé secrète.");
 };
 const validateOperatorUserInput = (input) => {
-	if ("managedInstances" in input && (!Array.isArray(input.managedInstances) || input.managedInstances.length > 1e3 || input.managedInstances.some((id) => typeof id !== "string" || !/^[a-z0-9]{15}$/.test(id)))) invalid$2("Sélection de bases invalide (1000 bases maximum).");
-	for (const key of ["verified", "superAdmin"]) if (key in input && typeof input[key] !== "boolean") invalid$2(`Valeur oui/non attendue pour ${key}.`);
-	if ("subscription_quantity" in input && (!Number.isSafeInteger(input.subscription_quantity) || input.subscription_quantity < 0)) invalid$2("Le quota utilisateur doit être un entier positif ou nul.");
+	if ("managedInstances" in input && (!Array.isArray(input.managedInstances) || input.managedInstances.length > 1e3 || input.managedInstances.some((id) => typeof id !== "string" || !/^[a-z0-9]{15}$/.test(id)))) invalid$3("Sélection de bases invalide (1000 bases maximum).");
+	for (const key of ["verified", "superAdmin"]) if (key in input && typeof input[key] !== "boolean") invalid$3(`Valeur oui/non attendue pour ${key}.`);
+	if ("subscription_quantity" in input && (!Number.isSafeInteger(input.subscription_quantity) || input.subscription_quantity < 0)) invalid$3("Le quota utilisateur doit être un entier positif ou nul.");
 	if ("subscription" in input && ![
 		"free",
 		"premium",
 		"founder",
 		"flounder",
 		"legacy"
-	].includes(input.subscription)) invalid$2("Offre utilisateur invalide.");
-	if ("suspension" in input && (typeof input.suspension !== "string" || input.suspension.length > 1e3)) invalid$2("Motif de suspension invalide ou trop long.");
+	].includes(input.subscription)) invalid$3("Offre utilisateur invalide.");
+	if ("suspension" in input && (typeof input.suspension !== "string" || input.suspension.length > 1e3)) invalid$3("Motif de suspension invalide ou trop long.");
 };
 
 //#endregion
@@ -3437,10 +3437,10 @@ const normalizeAssignedInstanceHostnames = (publicHostname, legacyHostnames) => 
 
 //#endregion
 //#region src/lib/security/migratedNativeAdmin.ts
-const ID$6 = /^[a-z0-9]{15}$/;
+const ID$10 = /^[a-z0-9]{15}$/;
 const unavailable = () => new InternalServerError("Identité native préservée indisponible ; synchronisation refusée.");
 const migratedNativeAdmin = (instance, owner) => {
-	if (!ID$6.test(instance.id) || instance.getString("uid") !== owner.id) throw new ForbiddenError("Propriétaire invalide.");
+	if (!ID$10.test(instance.id) || instance.getString("uid") !== owner.id) throw new ForbiddenError("Propriétaire invalide.");
 	const keyName = `migration:native-admin:${instance.id}`;
 	const rows = $app.findRecordsByFilter("web_app_settings", "key = {:key}", "", 2, 0, { key: keyName });
 	if (!rows.length) return null;
@@ -3453,9 +3453,9 @@ const migratedNativeAdmin = (instance, owner) => {
 	} catch {
 		throw unavailable();
 	}
-	if (!payload || !ID$6.test(payload.ownerId || "")) throw unavailable();
+	if (!payload || !ID$10.test(payload.ownerId || "")) throw unavailable();
 	if (payload.ownerId !== owner.id) return null;
-	if (!ID$6.test(payload.nativeId || "") || typeof payload.email !== "string" || payload.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email) || typeof payload.tokenKey !== "string" || payload.tokenKey.length < 20 || payload.tokenKey.length > 200 || typeof payload.passwordHash !== "string" || !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(payload.passwordHash)) throw unavailable();
+	if (!ID$10.test(payload.nativeId || "") || typeof payload.email !== "string" || payload.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email) || typeof payload.tokenKey !== "string" || payload.tokenKey.length < 20 || payload.tokenKey.length > 200 || typeof payload.passwordHash !== "string" || !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(payload.passwordHash)) throw unavailable();
 	return {
 		id: payload.nativeId,
 		email: payload.email,
@@ -3830,14 +3830,14 @@ const nextWebQueuedJob = (queue, tenantOf, lastServedAt) => {
 * nulles : aucune auto-attribution possible via l'API PocketBase.
 */
 const WEB_PROJECT_MEMBERS = "web_project_members";
-const ID$5 = /^[a-z0-9]{15}$/;
+const ID$9 = /^[a-z0-9]{15}$/;
 const usable = (user) => !!user && user.collection().name === "users" && !user.getString("suspension");
 const projectIdOf = (project) => typeof project === "string" ? project : project.id;
 const rolesFrom = (minRole) => WEB_ROLES.filter((role) => webRoleRank(role) >= webRoleRank(minRole));
 const isWebPlatformAdmin = (user) => usable(user) && user.getBool("superAdmin");
 const webProjectMemberRecord = (project, user, store = $app) => {
 	const projectId = projectIdOf(project), userId = typeof user === "string" ? user : user.id;
-	if (!ID$5.test(userId || "") || !ID$5.test(projectId || "")) return null;
+	if (!ID$9.test(userId || "") || !ID$9.test(projectId || "")) return null;
 	try {
 		return store.findFirstRecordByFilter(WEB_PROJECT_MEMBERS, "project={:project} && user={:user}", {
 			project: projectId,
@@ -4172,7 +4172,7 @@ const GuardWebDeletingRecord = (e) => {
 * `security/webProjectAccess.ts`, calqué sur `security/instanceAccess.ts`.
 */
 const WEB_MEMBERS = WEB_PROJECT_MEMBERS;
-const ID$4 = /^[a-z0-9]{15}$/;
+const ID$8 = /^[a-z0-9]{15}$/;
 const enabled = () => $os.getenv("WEB_APPS_ENABLED") === "true";
 const notFound = (target) => new NotFoundError(target.projectId && !target.appId && !target.environmentId ? "Projet introuvable." : "Application introuvable.");
 /** Ancienne sémantique de requireWebAdmin : superAdmin non suspendu et module activé. */
@@ -4234,11 +4234,11 @@ const resolveWebAccessTarget = (target, store = $app) => {
 		}
 	};
 	if (target.appId !== void 0) {
-		if (!ID$4.test(target.appId || "")) throw new BadRequestError("Application invalide.");
+		if (!ID$8.test(target.appId || "")) throw new BadRequestError("Application invalide.");
 		app = find("web_apps", target.appId);
 		environment = appEnvironment(app.id, store);
 	} else if (target.environmentId !== void 0) {
-		if (!ID$4.test(target.environmentId || "")) throw new BadRequestError("Environnement invalide.");
+		if (!ID$8.test(target.environmentId || "")) throw new BadRequestError("Environnement invalide.");
 		environment = find("web_app_environments", target.environmentId);
 		if (environment.getString("appId")) try {
 			app = store.findRecordById("web_apps", environment.getString("appId"));
@@ -4246,7 +4246,7 @@ const resolveWebAccessTarget = (target, store = $app) => {
 	}
 	const projectId = environment ? environment.getString("projectId") : target.projectId;
 	if (projectId !== void 0 && projectId !== "") {
-		if (!ID$4.test(projectId)) throw new BadRequestError("Projet invalide.");
+		if (!ID$8.test(projectId)) throw new BadRequestError("Projet invalide.");
 		if (target.projectId && environment && target.projectId !== projectId) throw notFound(target);
 		project = find("web_projects", projectId);
 	}
@@ -4309,7 +4309,7 @@ const webCan = (user, target, permission, store = $app) => {
 * appelants internes le vérifient déjà).
 */
 const webActorCan = (actorId, target, permission, store = $app) => {
-	if (!ID$4.test(actorId || "")) return false;
+	if (!ID$8.test(actorId || "")) return false;
 	let actor;
 	try {
 		actor = store.findRecordById("users", actorId);
@@ -4336,7 +4336,7 @@ const webAppAccessView = (user, app, store = $app) => {
 * modification de ces réglages exige la permission au moment de l'écriture (requireWebAppPermission).
 */
 const webAppSettingActive = (appId, actorId, store = $app) => {
-	if (!ID$4.test(appId || "")) return false;
+	if (!ID$8.test(appId || "")) return false;
 	try {
 		if (store.findRecordById("web_apps", appId).getString("deletionId")) return false;
 	} catch {
@@ -4883,7 +4883,7 @@ const webImageDigestValid = (value) => {
 
 //#endregion
 //#region src/lib/handlers/webApps/runtimes.ts
-const COLLECTION$6 = "web_runtime_profiles";
+const COLLECTION$7 = "web_runtime_profiles";
 const kinds = [
 	"nextjs",
 	"auto",
@@ -4911,7 +4911,7 @@ const command$2 = (value) => {
 	if (!Array.isArray(value) || value.length > 50 || value.some((x) => typeof x !== "string" || !x || x.length > 4096 || x.includes("\0"))) throw new BadRequestError("Commande attendue sous forme de tableau.");
 	return value;
 };
-const text$1 = (value) => {
+const text$3 = (value) => {
 	if (value === void 0 || value === null || value === "") return "";
 	if (typeof value !== "string" || value.length > 1e3 || /[\0\r\n]/.test(value)) throw new BadRequestError("Commande de démarrage ou de construction invalide (une ligne, 1000 caractères maximum).");
 	return value;
@@ -4970,7 +4970,7 @@ const validateRuntimeProfile = (input = {}) => {
 	if (kind === "auto" && (profile.command.length || profile.entrypoint.length)) throw new BadRequestError("Pour la construction automatique, utilisez la commande de démarrage (champ texte).");
 	if (kind === "auto" && input.buildTarget) throw new BadRequestError("Étape Dockerfile sans objet pour la construction automatique.");
 	for (const key of ["startCommand", "buildCommand"]) {
-		const value = text$1(input[key]);
+		const value = text$3(input[key]);
 		if (value && kind !== "auto") throw new BadRequestError("Profil de runtime invalide.");
 		if (value) profile[key] = value;
 	}
@@ -5060,7 +5060,7 @@ const validateRuntimeProfile = (input = {}) => {
 	else if (input.memoryRequestMiB !== void 0 && input.memoryRequestMiB !== null) throw new BadRequestError("Demande mémoire réservée au mode adaptatif.");
 	return profile;
 };
-const rowOf = (app, store = $app) => store.findRecordsByFilter(COLLECTION$6, "appId={:id}", "", 1, 0, { id: app.id })[0];
+const rowOf = (app, store = $app) => store.findRecordsByFilter(COLLECTION$7, "appId={:id}", "", 1, 0, { id: app.id })[0];
 const runtimeProfile = (app, store = $app) => {
 	const row = rowOf(app, store);
 	return row ? JSON.parse(row.getString("profile") || "{}") : validateRuntimeProfile();
@@ -5073,7 +5073,7 @@ const runtimeWorkerSnapshot = (app, store = $app) => {
 	};
 };
 /** Serveur et compte du registre : app.configure seulement (mêmes champs vides pour les autres rôles). */
-const view$1 = (app, canConfigure) => {
+const view$2 = (app, canConfigure) => {
 	const row = rowOf(app), registry = canConfigure && row?.getString("registryEncrypted") ? decryptWebValue(row.getString("registryEncrypted")) : {};
 	return {
 		profile: runtimeProfile(app),
@@ -5097,7 +5097,7 @@ const view$1 = (app, canConfigure) => {
 };
 const HandleWebRuntimeGet = (e) => {
 	const { app, role } = requireWebAppPermission(e, "app.read");
-	return webJson(e, view$1(app, webRoleAllows(role, "app.configure")));
+	return webJson(e, view$2(app, webRoleAllows(role, "app.configure")));
 };
 const HandleWebRuntimeUpdate = (e) => {
 	const app = requireWebAppPermission(e, "app.configure").app, input = webInput(e), profile = validateRuntimeProfile(input.profile);
@@ -5105,7 +5105,7 @@ const HandleWebRuntimeUpdate = (e) => {
 		let row = rowOf(app, tx);
 		if (input.revision !== void 0 && input.revision !== (row?.getString("revision") || "")) throw new BadRequestError("Le profil a changé. Rechargez la page.");
 		if (!row) {
-			row = new Record(tx.findCollectionByNameOrId(COLLECTION$6));
+			row = new Record(tx.findCollectionByNameOrId(COLLECTION$7));
 			row.set("appId", app.id);
 		}
 		if (input.registry !== void 0) {
@@ -5126,7 +5126,7 @@ const HandleWebRuntimeUpdate = (e) => {
 		row.set("revision", $security.randomString(24));
 		tx.save(row);
 	});
-	return webJson(e, view$1(app, true));
+	return webJson(e, view$2(app, true));
 };
 const currentWebRuntimeRevision = (app, store = $app) => rowOf(app, store)?.getString("revision") || "";
 const applyWebRuntimePublishedImage = (app, image, store = $app, expectedRevision) => {
@@ -5187,7 +5187,7 @@ const restoreWebRuntimeBackup = (app, value, store = $app) => {
 	const profile = validateRuntimeProfile(input);
 	let row = rowOf(app, store);
 	if (!row) {
-		row = new Record(store.findCollectionByNameOrId(COLLECTION$6));
+		row = new Record(store.findCollectionByNameOrId(COLLECTION$7));
 		row.set("appId", app.id);
 	}
 	if (registry) {
@@ -5840,8 +5840,8 @@ except Exception as error:
  print(json.dumps({'error':MESSAGES.get(code,MESSAGES['failed']),'code':code}))
 finally:signal.alarm(0)
 `;
-const COLLECTION$5 = "web_git_sources";
-const ID$3 = /^[a-z0-9]{15}$/;
+const COLLECTION$6 = "web_git_sources";
+const ID$7 = /^[a-z0-9]{15}$/;
 const WEBHOOK_ID = /^[A-Za-z0-9]{24}$/;
 const SCAN_LIFETIME = 600 * 1e3;
 const RATE_STORE = "web_git_source_rate";
@@ -5858,7 +5858,7 @@ const RATE_WINDOW = 60 * 1e3;
 const KEY_COMMENT = "pockethost-web-deploy";
 const FINGERPRINT = /^SHA256:[A-Za-z0-9+\/]{43}$/;
 const FAILED = "Le contrôle du dépôt Git a échoué. Réessayez.";
-const now$3 = () => (/* @__PURE__ */ new Date()).toISOString();
+const now$4 = () => (/* @__PURE__ */ new Date()).toISOString();
 const transport$1 = (action, values) => {
 	const file = `${$app.dataDir()}/.web-git-source-${$security.randomString(24)}.json`;
 	try {
@@ -5894,16 +5894,16 @@ const parse = (url) => {
 	}
 };
 const findSource = (id, store = $app) => {
-	if (!ID$3.test(id || "")) throw new BadRequestError("Dépôt Git invalide.");
+	if (!ID$7.test(id || "")) throw new BadRequestError("Dépôt Git invalide.");
 	try {
-		return store.findRecordById(COLLECTION$5, id);
+		return store.findRecordById(COLLECTION$6, id);
 	} catch {
 		throw new NotFoundError("Dépôt Git introuvable.");
 	}
 };
 const findCanonical = (canonical, store = $app) => {
 	try {
-		return store.findFirstRecordByFilter(COLLECTION$5, "canonical={:canonical}", { canonical });
+		return store.findFirstRecordByFilter(COLLECTION$6, "canonical={:canonical}", { canonical });
 	} catch {
 		return null;
 	}
@@ -6092,7 +6092,7 @@ const sourceAccess = (e, permission) => {
 const HandleWebGitSourceCreate = (e) => {
 	const actor = requirePlatformAdmin(e), input = webInput(e), remote = parse(input.url), projectId = typeof input.projectId === "string" ? input.projectId : "";
 	if (projectId) {
-		if (!ID$3.test(projectId)) throw new BadRequestError("Projet invalide.");
+		if (!ID$7.test(projectId)) throw new BadRequestError("Projet invalide.");
 		try {
 			$app.findRecordById("web_projects", projectId);
 		} catch {
@@ -6113,7 +6113,7 @@ const HandleWebGitSourceCreate = (e) => {
 	};
 	const existing = findCanonical(remote.canonical);
 	if (existing) return adopt(existing);
-	const key = generateKey(), preset = webGitHostKeyPreset(remote.host, remote.port), row = new Record($app.findCollectionByNameOrId(COLLECTION$5));
+	const key = generateKey(), preset = webGitHostKeyPreset(remote.host, remote.port), row = new Record($app.findCollectionByNameOrId(COLLECTION$6));
 	row.set("host", remote.host);
 	row.set("port", remote.port);
 	row.set("sshUser", remote.sshUser);
@@ -6128,7 +6128,7 @@ const HandleWebGitSourceCreate = (e) => {
 		preset: true
 	})));
 	if (preset.length) {
-		row.set("hostKeysConfirmedAt", now$3());
+		row.set("hostKeysConfirmedAt", now$4());
 		row.set("hostKeysConfirmedBy", actor.id);
 	}
 	row.set("webhookId", $security.randomString(24));
@@ -6168,7 +6168,7 @@ const HandleWebGitSourceScan = (e) => {
 				...k,
 				preset: true
 			})));
-			row.set("hostKeysConfirmedAt", now$3());
+			row.set("hostKeysConfirmedAt", now$4());
 			row.set("hostKeysConfirmedBy", user.id);
 			$app.save(row);
 		}
@@ -6210,7 +6210,7 @@ const HandleWebGitSourceConfirmHostKeys = (e) => {
 	const confirmed = webGitFingerprintSet(input.fingerprints);
 	let saved = initial;
 	$app.runInTransaction((tx) => {
-		const row = tx.findRecordById(COLLECTION$5, initial.id), remote = remoteOf(row);
+		const row = tx.findRecordById(COLLECTION$6, initial.id), remote = remoteOf(row);
 		if (webGitHostKeyPreset(remote.host, remote.port).length) throw new BadRequestError("Les empreintes de cet hébergeur sont déjà épinglées.");
 		const pending = row.getString("pendingHostKeysEncrypted") ? decryptWebValue(row.getString("pendingHostKeysEncrypted")) : {};
 		if (!pending.nonceHash || !$security.equal(pending.nonceHash, $security.sha256(input.nonce)) || !(Date.parse(pending.expiresAt) > Date.now()) || pending.host !== remote.host || pending.port !== remote.port) throw new BadRequestError("Ce scan est invalide ou expiré. Relancez le scan.");
@@ -6222,7 +6222,7 @@ const HandleWebGitSourceConfirmHostKeys = (e) => {
 			fingerprint: k.fingerprint,
 			preset: false
 		})));
-		row.set("hostKeysConfirmedAt", now$3());
+		row.set("hostKeysConfirmedAt", now$4());
 		row.set("hostKeysConfirmedBy", user.id);
 		row.set("pendingHostKeysEncrypted", "");
 		row.set("lastCheckStatus", "");
@@ -6234,8 +6234,8 @@ const HandleWebGitSourceConfirmHostKeys = (e) => {
 };
 const recordCheck = (id, status, error) => {
 	try {
-		const row = $app.findRecordById(COLLECTION$5, id);
-		row.set("lastCheckAt", now$3());
+		const row = $app.findRecordById(COLLECTION$6, id);
+		row.set("lastCheckAt", now$4());
 		row.set("lastCheckStatus", status.slice(0, 30));
 		row.set("lastError", error.slice(0, 500));
 		$app.save(row);
@@ -6323,7 +6323,7 @@ const HandleWebGitSourceRotateKey = (e) => {
 	row.set("publicKey", key.publicKey);
 	row.set("fingerprint", key.fingerprint);
 	row.set("privateKeyEncrypted", key.privateKeyEncrypted);
-	row.set("rotatedAt", now$3());
+	row.set("rotatedAt", now$4());
 	row.set("lastCheckStatus", "");
 	row.set("lastError", "");
 	$app.save(row);
@@ -6430,7 +6430,7 @@ const webGitWebhookDeliver = (e, queue) => {
 	if (!WEBHOOK_ID.test(hookId)) throw new NotFoundError();
 	let source;
 	try {
-		source = $app.findFirstRecordByFilter(COLLECTION$5, "webhookId={:id}", { id: hookId });
+		source = $app.findFirstRecordByFilter(COLLECTION$6, "webhookId={:id}", { id: hookId });
 	} catch {
 		throw new NotFoundError();
 	}
@@ -6455,7 +6455,7 @@ const webGitWebhookDeliver = (e, queue) => {
 		} catch {}
 		if (!row) return false;
 		row.set("duplicateCount", Math.min(1e5, row.getInt("duplicateCount") + 1));
-		row.set("lastReceivedAt", now$3());
+		row.set("lastReceivedAt", now$4());
 		tx.save(row);
 		return true;
 	};
@@ -6492,7 +6492,7 @@ const webGitWebhookDeliver = (e, queue) => {
 		seen.set("branch", branch);
 		seen.set("payloadCommit", /^[a-f0-9]{40}$/.test(change.after) ? change.after : "");
 		seen.set("resolvedCommit", head);
-		seen.set("lastReceivedAt", now$3());
+		seen.set("lastReceivedAt", now$4());
 		if (!ignored) for (const row of webGitSourceApps(source.id, tx).filter(matches)) {
 			deploy.push({
 				appId: row.id,
@@ -6861,7 +6861,7 @@ const monitoringHistoryRanges = {
 
 //#endregion
 //#region src/lib/handlers/webApps/deploymentFailureEmail.ts
-const ID$2 = /^[a-z0-9]{15}$/;
+const ID$6 = /^[a-z0-9]{15}$/;
 const DEPLOYMENT_EMAIL_MAX_BYTES = 1024 * 1024;
 /** No shell, symlink, special file or unbounded read; every directory is opened without following links. */
 const DEPLOYMENT_EMAIL_LOG_READER = String.raw`
@@ -6951,7 +6951,7 @@ const sanitizeDeploymentEmailLog = (text, snapshot, current) => {
 const oneLine = (value, limit = 180) => cleanControls(typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().slice(0, limit);
 /** Existing application only; deletion/suspension must also stop queued copies of its deployment logs. */
 const deploymentEmailApplication = (appId, store = $app) => {
-	if (!ID$2.test(appId || "")) return null;
+	if (!ID$6.test(appId || "")) return null;
 	try {
 		const app = store.findRecordById("web_apps", appId);
 		if (app.getString("deletionId") || [
@@ -6966,7 +6966,7 @@ const deploymentEmailApplication = (appId, store = $app) => {
 	}
 };
 const failureJob = (appId, jobId, store) => {
-	if (!ID$2.test(appId || "") || !ID$2.test(jobId || "")) return null;
+	if (!ID$6.test(appId || "") || !ID$6.test(jobId || "")) return null;
 	try {
 		const row = store.findRecordById("web_deployments", jobId);
 		return row.getString("appId") === appId && row.getString("status") === "failed" && ["deploy", "ci-deploy"].includes(row.getString("action")) ? row : null;
@@ -7011,7 +7011,7 @@ const boundedDeploymentAttachment = (text, truncated) => {
 };
 const deploymentFailureAttachment = (row, payload, test, store = $app) => {
 	const fallback = {
-		filename: `deployment-${ID$2.test(row.id) ? row.id : "invalid00000000"}.log`,
+		filename: `deployment-${ID$6.test(row.id) ? row.id : "invalid00000000"}.log`,
 		text: "Journal indisponible. Consultez le déploiement dans le dashboard.\n",
 		details: null
 	};
@@ -7142,7 +7142,7 @@ const HandleWebPlatformRecoveryDrill = (e) => {
 
 //#endregion
 //#region src/lib/handlers/webApps/notifications.ts
-const SETTINGS$3 = "web_notification_settings", DELIVERIES = "web_notification_deliveries", OUTBOX = "web_alert_events", PLATFORM = "web_platform_notification_settings";
+const SETTINGS$4 = "web_notification_settings", DELIVERIES = "web_notification_deliveries", OUTBOX = "web_alert_events", PLATFORM = "web_platform_notification_settings";
 /** Conservé pour les imports existants ; la liste et les libellés vivent dans common/webNotifications. */
 const WEB_NOTIFICATION_EVENTS = [...WEB_NOTIFICATION_EVENTS$1];
 const PLATFORM_EVENTS = [...WEB_PLATFORM_EVENTS];
@@ -7186,8 +7186,8 @@ const DEPLOYMENT_EMAIL_MODES = [
 ];
 const RATE_LIMITED = "Notification regroupée par la limite de fréquence.";
 const WORKER_DOWN_AFTER = 18e4;
-const stamp$4 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
-const id$3 = (value) => {
+const stamp$6 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
+const id$4 = (value) => {
 	if (typeof value !== "string" || !/^[a-z0-9]{15}$/.test(value)) throw new BadRequestError("Notification invalide.");
 	return value;
 };
@@ -7224,9 +7224,9 @@ const merge = (base, stored) => ({
 		...stored?.email || {}
 	}
 });
-const find$2 = (appId, store = $app) => {
+const find$3 = (appId, store = $app) => {
 	try {
-		return store.findFirstRecordByFilter(SETTINGS$3, "appId={:id}", { id: appId });
+		return store.findFirstRecordByFilter(SETTINGS$4, "appId={:id}", { id: appId });
 	} catch {
 		return null;
 	}
@@ -7238,7 +7238,7 @@ const config$1 = (row, platform = false) => {
 };
 /** Application preference also governs operator copies, independently of webhook subscriptions. */
 const deploymentEmailChoice = (appId, event, store, finishedAt = "") => {
-	const value = config$1(find$2(appId, store)), mode = value.deploymentEmails;
+	const value = config$1(find$3(appId, store)), mode = value.deploymentEmails;
 	if (!mode || mode === "inherit") return null;
 	if (mode === "none" || mode === "failed" && DEPLOYMENT_SUCCESSES.includes(event)) return false;
 	return !finishedAt || !value.deploymentEmailsActivatedAt || finishedAt >= value.deploymentEmailsActivatedAt;
@@ -7382,13 +7382,13 @@ const response = (row, appId) => {
 		pausedLegacy: !!row && !row.getBool("enabled") && (value.webhook.enabled || value.email.enabled)
 	};
 };
-const requireWorker$3 = (e) => {
+const requireWorker$5 = (e) => {
 	if (!webEnabled()) throw new NotFoundError();
 	const expected = $os.getenv("WEB_APPS_WORKER_SECRET");
 	if (expected.length < 32 || !$security.equal(expected, e.request.header.get("X-Web-Worker") || "")) throw new UnauthorizedError();
 	if (!webDirectLoopback(e)) throw new ForbiddenError("Accès local requis.");
 };
-const metadata$3 = (row) => ({
+const metadata$4 = (row) => ({
 	id: row.id,
 	channel: row.getString("channel"),
 	event: row.getString("event"),
@@ -7485,10 +7485,10 @@ const saveSettings = (row, old, actorId, value, tx) => {
 	row.set("configEncrypted", encryptWebValue(value));
 	row.set("enabled", nowEnabled);
 	if (!old || !row.getString("activatedAt") || !wasEnabled && nowEnabled) {
-		row.set("activatedAt", stamp$4());
+		row.set("activatedAt", stamp$6());
 		row.set("sourceCursors", {});
 	}
-	row.set("scanAfter", stamp$4(Date.now() - SCAN_EVERY));
+	row.set("scanAfter", stamp$6(Date.now() - SCAN_EVERY));
 	tx.save(row);
 };
 /**
@@ -7498,7 +7498,7 @@ const saveSettings = (row, old, actorId, value, tx) => {
 * l'historique de l'application.
 */
 const resetWebNotificationChannels = (appId, actorId, store) => {
-	const row = find$2(appId, store);
+	const row = find$3(appId, store);
 	if (!row) return false;
 	const value = config$1(row), base = defaults$1(), configured = row.getBool("enabled") || !!value.webhook.url || !!value.email.recipients.length || !!value.email.projectAdmins;
 	value.webhook = base.webhook;
@@ -7516,7 +7516,7 @@ const resetWebNotificationChannels = (appId, actorId, store) => {
 };
 const HandleWebNotificationsGet = (e) => {
 	const app = requireWebAppPermission(e, "notifications.manage").app;
-	return webJson(e, response(find$2(app.id), app.id));
+	return webJson(e, response(find$3(app.id), app.id));
 };
 const HandleWebNotificationsPut = (e) => {
 	const { user: actor, app: found } = requireWebAppPermission(e, "notifications.manage"), app = found, input = webInput(e);
@@ -7530,13 +7530,13 @@ const HandleWebNotificationsPut = (e) => {
 		"deploymentEmails"
 	].includes(key))) throw new BadRequestError("Options de notification invalides.");
 	$app.runInTransaction((tx) => {
-		const old = find$2(app.id, tx), value = config$1(old);
+		const old = find$3(app.id, tx), value = config$1(old);
 		if (input.revision !== (old?.getString("revision") || "")) throw new BadRequestError("Les canaux ont changé. Rechargez leur configuration.");
 		if (input.deploymentEmails !== void 0) {
 			if (!DEPLOYMENT_EMAIL_MODES.includes(input.deploymentEmails)) throw new BadRequestError("Choisissez tous les déploiements, les échecs uniquement ou aucun email.");
 			if (input.deploymentEmails !== value.deploymentEmails) {
-				value.deploymentEmailsActivatedAt = stamp$4();
-				if (input.deploymentEmails === "all") value.deploymentSuccessActivatedAt = stamp$4();
+				value.deploymentEmailsActivatedAt = stamp$6();
+				if (input.deploymentEmails === "all") value.deploymentSuccessActivatedAt = stamp$6();
 			}
 			value.deploymentEmails = input.deploymentEmails;
 		}
@@ -7546,10 +7546,10 @@ const HandleWebNotificationsPut = (e) => {
 		}, () => recipientsOf(value, app.id, tx).length > 0);
 		if (input.events !== void 0) {
 			if (!Array.isArray(input.events) || input.events.some((event) => !WEB_NOTIFICATION_EVENTS.includes(event))) throw new BadRequestError("Types d’alerte invalides.");
-			if (input.events.includes("deployment_succeeded") && !value.events.includes("deployment_succeeded")) value.deploymentSuccessActivatedAt = stamp$4();
+			if (input.events.includes("deployment_succeeded") && !value.events.includes("deployment_succeeded")) value.deploymentSuccessActivatedAt = stamp$6();
 			value.events = [...new Set(input.events)];
 		}
-		const row = old || new Record(tx.findCollectionByNameOrId(SETTINGS$3));
+		const row = old || new Record(tx.findCollectionByNameOrId(SETTINGS$4));
 		row.set("appId", app.id);
 		saveSettings(row, old, actor.id, value, tx);
 		result = row;
@@ -7562,7 +7562,7 @@ const HandleWebNotificationsPut = (e) => {
 const dashboardBase = () => ($os.getenv("APP_URL") || `https://${$os.getenv("APP_HOST") || "app." + ($os.getenv("APEX_DOMAIN") || "monappli.re")}`).trim().replace(/\/+$/, "");
 const dashboardLink = (appId, tab) => `${dashboardBase()}/applications/${appId}${tab ? "?tab=" + encodeURIComponent(tab) : ""}`;
 const platformLink = (event) => `${dashboardBase()}/applications${event.startsWith("recovery_") ? "/recovery" : ""}`;
-const enqueue$2 = (settings, app, event, eventKey, details, store, trigger = "auto", only = "", requestedBy = "", scope = "app") => {
+const enqueue$3 = (settings, app, event, eventKey, details, store, trigger = "auto", only = "", requestedBy = "", scope = "app") => {
 	const platform = scope === "platform", value = config$1(settings, platform), text = label(event), domain = app ? JSON.parse(app.getString("config") || "{}").generatedDomain || "" : "", payload = {
 		version: 2,
 		event,
@@ -7609,7 +7609,7 @@ const enqueue$2 = (settings, app, event, eventKey, details, store, trigger = "au
 				id: settings.id,
 				channel,
 				event,
-				since: stamp$4(since)
+				since: stamp$6(since)
 			}).length;
 			const cooled = sent(" && event={:event}", Date.now() - value.cooldownSeconds * 1e3, 1) > 0, full = sent("", Date.now() - HOUR, AUTO_PER_HOUR) >= AUTO_PER_HOUR;
 			rate = cooled || full && !(CRITICAL.includes(event) && !sent(" && event={:event}", Date.now() - HOUR, 1));
@@ -7630,7 +7630,7 @@ const enqueue$2 = (settings, app, event, eventKey, details, store, trigger = "au
 			requestedBy,
 			rateLimited: rate,
 			status: rate ? "suppressed" : "pending",
-			nextAttemptAt: stamp$4(),
+			nextAttemptAt: stamp$6(),
 			lastError: rate ? RATE_LIMITED : ""
 		})) row.set(name, item);
 		store.save(row);
@@ -7727,7 +7727,7 @@ const escape = (value) => value.replace(/[&<>"']/g, (char) => ({
 })[char]);
 const settingsOf = (row, store = $app) => {
 	if (row.getString("scope") === "platform") return platformCollection(store) ? platformRow(store) : null;
-	return find$2(row.getString("appId"), store);
+	return find$3(row.getString("appId"), store);
 };
 const deploymentTargetActive = (row, store = $app) => {
 	if (row.getString("trigger") === "test" || !DEPLOYMENT_RESULTS.includes(row.getString("event"))) return true;
@@ -7802,14 +7802,14 @@ const sendDeliveryEmail = (row) => {
 	} finally {
 		reader?.close();
 	}
-	row.set("emailSentAt", stamp$4());
+	row.set("emailSentAt", stamp$6());
 	$app.save(row);
 };
 /** Envoi synchrone d'un test (application ou plateforme) : résultat réel du canal, attendu 12 s au plus. */
 const runTest = (e, settings, app, scope, input, userId) => {
 	let row;
 	$app.runInTransaction((tx) => {
-		const since = stamp$4(Date.now() - HOUR), count = (filter, limit) => tx.findRecordsByFilter(DELIVERIES, filter + " && trigger=\"test\" && created>={:since}", "", limit, 0, {
+		const since = stamp$6(Date.now() - HOUR), count = (filter, limit) => tx.findRecordsByFilter(DELIVERIES, filter + " && trigger=\"test\" && created>={:since}", "", limit, 0, {
 			scope: scope === "platform" ? "platform" : "",
 			app: app?.id || "",
 			channel: input.channel,
@@ -7819,7 +7819,7 @@ const runTest = (e, settings, app, scope, input, userId) => {
 		if (count("scope={:scope} && appId={:app} && channel={:channel}", TESTS_PER_CHANNEL_HOUR) >= TESTS_PER_CHANNEL_HOUR) throw new TooManyRequestsError("Dix tests par heure et par canal au maximum. Réessayez plus tard.");
 		if (count("requestedBy={:user}", TESTS_PER_USER_HOUR) >= TESTS_PER_USER_HOUR) throw new TooManyRequestsError("Vingt tests d’alerte par heure et par compte au maximum. Réessayez plus tard.");
 		const event = input.event === void 0 ? "test" : input.event;
-		row = enqueue$2(settings, app, event, "test:" + $security.randomString(32), {
+		row = enqueue$3(settings, app, event, "test:" + $security.randomString(32), {
 			drill: true,
 			...sampleDetails(event)
 		}, tx, "test", input.channel, userId, scope)[0];
@@ -7827,7 +7827,7 @@ const runTest = (e, settings, app, scope, input, userId) => {
 		if (input.channel === "email") {
 			row.set("status", "sending");
 			row.set("attempts", 1);
-			row.set("leaseAt", stamp$4());
+			row.set("leaseAt", stamp$6());
 			tx.save(row);
 		}
 	});
@@ -7837,7 +7837,7 @@ const runTest = (e, settings, app, scope, input, userId) => {
 			sendDeliveryEmail(current);
 			current = $app.findRecordById(DELIVERIES, row.id);
 			current.set("status", "sent");
-			current.set("sentAt", stamp$4());
+			current.set("sentAt", stamp$6());
 			current.set("lastError", "");
 		} catch (error) {
 			current = $app.findRecordById(DELIVERIES, row.id);
@@ -7859,7 +7859,7 @@ const runTest = (e, settings, app, scope, input, userId) => {
 		"suppressed"
 	].includes(current.getString("status"));
 	return webJson(e, {
-		result: metadata$3(current),
+		result: metadata$4(current),
 		done
 	}, done ? 200 : 202);
 };
@@ -7870,7 +7870,7 @@ const testInput = (e, events) => {
 	return input;
 };
 const HandleWebNotificationTest = (e) => {
-	const { user, app: found } = requireWebAppPermission(e, "alerts.test"), app = found, input = testInput(e, WEB_NOTIFICATION_EVENTS), settings = find$2(app.id);
+	const { user, app: found } = requireWebAppPermission(e, "alerts.test"), app = found, input = testInput(e, WEB_NOTIFICATION_EVENTS), settings = find$3(app.id);
 	if (!settings || !["webhook", "email"].includes(input.channel)) throw new BadRequestError("Enregistrez d’abord le canal à tester.");
 	const value = config$1(settings);
 	if (input.channel === "webhook" ? !value.webhook.url : !recipientsOf(value, app.id).length || !smtpAvailable()) throw new BadRequestError(input.channel === "email" && value.email.recipients.length ? "Aucun destinataire enregistré n’est encore membre vérifié du projet." : "Ce canal n’est pas configuré.");
@@ -7883,14 +7883,14 @@ const HandleWebNotificationHistory = (e) => {
 	if (query.get("id")) return webJson(e, {
 		items: $app.findRecordsByFilter(DELIVERIES, "appId={:app} && id={:id} && scope!=\"platform\"", "", 1, 0, {
 			app: app.id,
-			id: id$3(query.get("id"))
-		}).map(metadata$3),
+			id: id$4(query.get("id"))
+		}).map(metadata$4),
 		page: 1,
 		hasMore: false
 	});
 	const page = Math.max(1, Math.min(1e5, Math.floor(Number(query.get("page")) || 1))), rows = $app.findRecordsByFilter(DELIVERIES, "appId={:id} && scope!=\"platform\"", "-created,-id", 21, (page - 1) * 20, { id: app.id });
 	return webJson(e, {
-		items: rows.slice(0, 20).map(metadata$3),
+		items: rows.slice(0, 20).map(metadata$4),
 		page,
 		hasMore: rows.length > 20
 	});
@@ -7914,17 +7914,17 @@ const takeRows = (store, cursors, start, collection, filter, timeField, params =
 };
 const scan = (settings, context, store) => {
 	if (!settingActive(settings.getString("actorId"), settings.getString("appId"), store)) {
-		settings.set("scanAfter", stamp$4());
+		settings.set("scanAfter", stamp$6());
 		store.save(settings);
 		return;
 	}
-	const app = store.findRecordById("web_apps", settings.getString("appId")), until = stamp$4();
+	const app = store.findRecordById("web_apps", settings.getString("appId")), until = stamp$6();
 	const cursors = JSON.parse(settings.getString("sourceCursors") || "{}");
 	const take = (collection, filter, timeField) => takeRows(store, cursors, settings.getString("activatedAt") || until, collection, `appId={:app} && ${filter}`, timeField, { app: app.id });
 	const local = config$1(settings), copy = context.platform?.getBool("enabled") ? config$1(context.platform, true) : null;
 	const emit = (event, key, details) => {
-		enqueue$2(settings, app, event, key, details, store);
-		if (copy?.copyAppEvents && COPIED.includes(event) && (event !== "deployment_succeeded" || details.finishedAt >= (copy.deploymentSuccessActivatedAt || context.platform.getString("activatedAt"))) && (!["deployment_failed", "deployment_succeeded"].includes(event) || details.finishedAt && details.finishedAt >= context.platform.getString("activatedAt") && deploymentEmailApplication(app.id, store))) enqueue$2(context.platform, ["deployment_failed", "deployment_succeeded"].includes(event) ? app : null, "app_" + event, "copy:" + app.id + ":" + key, {
+		enqueue$3(settings, app, event, key, details, store);
+		if (copy?.copyAppEvents && COPIED.includes(event) && (event !== "deployment_succeeded" || details.finishedAt >= (copy.deploymentSuccessActivatedAt || context.platform.getString("activatedAt"))) && (!["deployment_failed", "deployment_succeeded"].includes(event) || details.finishedAt && details.finishedAt >= context.platform.getString("activatedAt") && deploymentEmailApplication(app.id, store))) enqueue$3(context.platform, ["deployment_failed", "deployment_succeeded"].includes(event) ? app : null, "app_" + event, "copy:" + app.id + ":" + key, {
 			...details,
 			appId: app.id,
 			appName: safeName(app.getString("name"))
@@ -7968,7 +7968,7 @@ const scan = (settings, context, store) => {
 	});
 	for (const row of store.findRecordsByFilter("web_app_domains", "appId={:id} && status=\"active\" && certificateExpiresAt!=\"\" && certificateExpiresAt<={:expiry}", "certificateExpiresAt", 100, 0, {
 		id: app.id,
-		expiry: stamp$4(Date.now() + 30 * 864e5)
+		expiry: stamp$6(Date.now() + 30 * 864e5)
 	})) emit("certificate_expiring", "certificate:" + row.id + ":" + row.getString("certificateExpiresAt"), {
 		domain: row.getString("host"),
 		expiresAt: row.getString("certificateExpiresAt")
@@ -7990,13 +7990,13 @@ const digest = (settings, app, store, scope = "app") => {
 		const rows = store.findRecordsByFilter(DELIVERIES, "settingsId={:id} && channel={:channel} && rateLimited=true && created>={:from} && created<{:to}", "created", 500, 0, {
 			id: settings.id,
 			channel,
-			from: stamp$4(start),
-			to: stamp$4(end)
+			from: stamp$6(start),
+			to: stamp$6(end)
 		});
 		if (!rows.length) continue;
 		const events = {};
 		for (const row of rows) events[row.getString("event")] = (events[row.getString("event")] || 0) + 1;
-		enqueue$2(settings, app, "alerts_grouped", "digest:" + stamp$4(start), {
+		enqueue$3(settings, app, "alerts_grouped", "digest:" + stamp$6(start), {
 			count: rows.length,
 			events,
 			from: new Date(start).toISOString(),
@@ -8007,7 +8007,7 @@ const digest = (settings, app, store, scope = "app") => {
 /** Outbox plateforme → livraisons du canal plateforme (curseurs gardés sur la ligne plateforme). */
 const scanPlatformOutbox = (p, store) => {
 	if (!p.getBool("enabled") || !platformSettingActive(p, store)) return false;
-	const cursors = JSON.parse(p.getString("sourceCursors") || "{}"), start = p.getString("activatedAt") || stamp$4(), rows = takeRows(store, cursors, start, OUTBOX, "scope=\"platform\"", "created");
+	const cursors = JSON.parse(p.getString("sourceCursors") || "{}"), start = p.getString("activatedAt") || stamp$6(), rows = takeRows(store, cursors, start, OUTBOX, "scope=\"platform\"", "created");
 	let advanced = rows.length > 0;
 	const value = config$1(p, true);
 	if (value.copyAppEvents) {
@@ -8017,7 +8017,7 @@ const scanPlatformOutbox = (p, store) => {
 			if (job.getString("status") === "ready" && job.getString("finishedAt") < (value.deploymentSuccessActivatedAt || start)) continue;
 			const app = deploymentEmailApplication(job.getString("appId"), store);
 			if (!app) continue;
-			enqueue$2(p, app, job.getString("status") === "ready" ? "app_deployment_succeeded" : "app_deployment_failed", `copy:${app.id}:deployment:${job.id}`, {
+			enqueue$3(p, app, job.getString("status") === "ready" ? "app_deployment_succeeded" : "app_deployment_failed", `copy:${app.id}:deployment:${job.id}`, {
 				...deploymentFailureDetails(job),
 				appId: app.id,
 				appName: safeName(app.getString("name")),
@@ -8029,9 +8029,9 @@ const scanPlatformOutbox = (p, store) => {
 	}
 	digest(p, null, store, "platform");
 	if (!advanced) return false;
-	for (const row of rows) enqueue$2(p, null, row.getString("event"), "outbox:" + row.getString("eventKey"), JSON.parse(row.getString("details") || "{}"), store, "auto", "", "", "platform");
+	for (const row of rows) enqueue$3(p, null, row.getString("event"), "outbox:" + row.getString("eventKey"), JSON.parse(row.getString("details") || "{}"), store, "auto", "", "", "platform");
 	p.set("sourceCursors", cursors);
-	p.set("scanAfter", stamp$4());
+	p.set("scanAfter", stamp$6());
 	return true;
 };
 /** Battement du worker, état disque de l'hôte et outbox plateforme, dans la transaction de réclamation. */
@@ -8043,12 +8043,12 @@ const scanPlatform = (disk, store) => {
 	const p = platformRow(store);
 	let changed = false;
 	if (!p.getString("lastClaimAt") || Date.now() - Date.parse(p.getString("lastClaimAt")) > 3e4) {
-		p.set("lastClaimAt", stamp$4());
+		p.set("lastClaimAt", stamp$6());
 		changed = true;
 	}
 	if (p.getBool("workerDown")) {
 		p.set("workerDown", false);
-		emitWebAlert(store, "platform", "", "worker_recovered", "worker-up:" + stamp$4(), {});
+		emitWebAlert(store, "platform", "", "worker_recovered", "worker-up:" + stamp$6(), {});
 		changed = true;
 	}
 	if (disk !== void 0) {
@@ -8056,7 +8056,7 @@ const scanPlatform = (disk, store) => {
 		if (low !== p.getBool("diskLow") || !p.getString("diskChangedAt")) {
 			const transition = low !== p.getBool("diskLow");
 			p.set("diskLow", low);
-			p.set("diskChangedAt", stamp$4());
+			p.set("diskChangedAt", stamp$6());
 			if (transition) emitWebAlert(store, "platform", "", low ? "disk_low" : "disk_recovered", "disk:" + low + ":" + p.getString("diskChangedAt"), { freeBytes: disk });
 			changed = true;
 		}
@@ -8072,7 +8072,7 @@ const scanPlatform = (disk, store) => {
 	};
 };
 const lease$2 = (input, store = $app) => {
-	const row = store.findRecordById(DELIVERIES, id$3(input.id));
+	const row = store.findRecordById(DELIVERIES, id$4(input.id));
 	if (row.getString("status") !== "sending" || typeof input.proof !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.proof) || !$security.equal(row.getString("leaseHash"), $security.sha256(input.proof))) throw new UnauthorizedError("Envoi invalide.");
 	return row;
 };
@@ -8091,14 +8091,14 @@ const platformWebhook = (store) => {
 	};
 };
 const HandleWebNotificationClaim = (e) => {
-	requireWorker$3(e);
+	requireWorker$5(e);
 	const input = webInput(e);
 	if (input.diskFreeBytes !== void 0 && (!Number.isSafeInteger(input.diskFreeBytes) || input.diskFreeBytes < 0)) throw new BadRequestError("Mesure disque invalide.");
 	let result = null, hook = null;
 	$app.runInTransaction((tx) => {
-		for (const old of tx.findRecordsByFilter(DELIVERIES, "created<{:cutoff}", "created", 500, 0, { cutoff: stamp$4(Date.now() - 30 * 864e5) })) tx.delete(old);
+		for (const old of tx.findRecordsByFilter(DELIVERIES, "created<{:cutoff}", "created", 500, 0, { cutoff: stamp$6(Date.now() - 30 * 864e5) })) tx.delete(old);
 		try {
-			for (const old of tx.findRecordsByFilter(OUTBOX, "created<{:cutoff}", "created", 500, 0, { cutoff: stamp$4(Date.now() - 30 * 864e5) })) tx.delete(old);
+			for (const old of tx.findRecordsByFilter(OUTBOX, "created<{:cutoff}", "created", 500, 0, { cutoff: stamp$6(Date.now() - 30 * 864e5) })) tx.delete(old);
 		} catch {}
 		let context = {
 			host: null,
@@ -8107,17 +8107,17 @@ const HandleWebNotificationClaim = (e) => {
 		try {
 			context = scanPlatform(input.diskFreeBytes, tx);
 		} catch {}
-		for (const settings of tx.findRecordsByFilter(SETTINGS$3, "enabled=true && scanAfter<={:due}", "scanAfter", 200, 0, { due: stamp$4(Date.now() - SCAN_EVERY) })) try {
+		for (const settings of tx.findRecordsByFilter(SETTINGS$4, "enabled=true && scanAfter<={:due}", "scanAfter", 200, 0, { due: stamp$6(Date.now() - SCAN_EVERY) })) try {
 			scan(settings, context, tx);
 		} catch {}
-		for (const row of tx.findRecordsByFilter(DELIVERIES, "status=\"sending\" && leaseAt<{:stale}", "leaseAt", 100, 0, { stale: stamp$4(Date.now() - 6e4) })) {
+		for (const row of tx.findRecordsByFilter(DELIVERIES, "status=\"sending\" && leaseAt<{:stale}", "leaseAt", 100, 0, { stale: stamp$6(Date.now() - 6e4) })) {
 			row.set("status", row.getInt("attempts") >= 3 || row.getString("trigger") === "test" ? "failed" : "pending");
 			row.set("leaseHash", "");
-			row.set("nextAttemptAt", stamp$4(Date.now() + 3e4));
+			row.set("nextAttemptAt", stamp$6(Date.now() + 3e4));
 			row.set("lastError", "Le délai de confirmation de l’envoi a expiré.");
 			tx.save(row);
 		}
-		const rows = tx.findRecordsByFilter(DELIVERIES, "status=\"pending\" && nextAttemptAt<={:now}", "created,id", 100, 0, { now: stamp$4() });
+		const rows = tx.findRecordsByFilter(DELIVERIES, "status=\"pending\" && nextAttemptAt<={:now}", "created,id", 100, 0, { now: stamp$6() });
 		for (const row of rows) {
 			if (Date.parse(row.getString("created")) < Date.now() - 864e5) {
 				row.set("status", "suppressed");
@@ -8147,7 +8147,7 @@ const HandleWebNotificationClaim = (e) => {
 			const proof = $security.randomString(80);
 			row.set("status", "sending");
 			row.set("attempts", row.getInt("attempts") + 1);
-			row.set("leaseAt", stamp$4());
+			row.set("leaseAt", stamp$6());
 			row.set("leaseHash", $security.sha256(proof));
 			tx.save(row);
 			result = {
@@ -8214,7 +8214,7 @@ const CODE_MESSAGES = {
 	invalid_format: "Le format du webhook ne correspond pas à son URL (Slack/Discord officiels)."
 };
 const HandleWebNotificationReport = (e) => {
-	requireWorker$3(e);
+	requireWorker$5(e);
 	const input = webInput(e);
 	if (typeof input.success !== "boolean" || !Number.isInteger(input.httpStatus) || input.httpStatus < 0 || input.httpStatus > 599 || input.errorClass !== void 0 && !ERROR_CLASSES.includes(input.errorClass) || input.durationMs !== void 0 && (!Number.isInteger(input.durationMs) || input.durationMs < 0 || input.durationMs > 6e4) || input.final !== void 0 && typeof input.final !== "boolean") throw new BadRequestError("Compte rendu invalide.");
 	$app.runInTransaction((tx) => {
@@ -8223,12 +8223,12 @@ const HandleWebNotificationReport = (e) => {
 		row.set("leaseHash", "");
 		if (input.success) {
 			row.set("status", "sent");
-			row.set("sentAt", stamp$4());
+			row.set("sentAt", stamp$6());
 			row.set("lastError", "");
 		} else {
 			const permanent = input.final === true || row.getString("trigger") === "test" || row.getInt("attempts") >= 3 || ["ssrf", "invalid_format"].includes(input.errorCode);
 			row.set("status", permanent ? "failed" : "pending");
-			row.set("nextAttemptAt", stamp$4(Date.now() + 3e4 * 2 ** (row.getInt("attempts") - 1)));
+			row.set("nextAttemptAt", stamp$6(Date.now() + 3e4 * 2 ** (row.getInt("attempts") - 1)));
 			row.set("lastError", CODE_MESSAGES[input.errorCode === "invalid_format" || input.errorCode === "ssrf" ? input.errorCode : ""] || CLASS_MESSAGES[input.errorClass] || CODE_MESSAGES[input.errorCode] || "Le canal a refusé la notification ou ne répond pas.");
 		}
 		tx.save(row);
@@ -8236,7 +8236,7 @@ const HandleWebNotificationReport = (e) => {
 	return webJson(e, { ok: true });
 };
 const HandleWebNotificationEmail = (e) => {
-	requireWorker$3(e);
+	requireWorker$5(e);
 	sendDeliveryEmail(lease$2(webInput(e)));
 	return webJson(e, { sent: true });
 };
@@ -8254,28 +8254,28 @@ const HandleWebAlertWatchdog = () => {
 		if (workerDown) scanPlatformOutbox(p, tx);
 		const checked = Date.parse(p.getString("recoveryCheckedAt") || "");
 		if (!checked || Date.now() - checked > 15 * 6e4) {
-			p.set("recoveryCheckedAt", stamp$4());
+			p.set("recoveryCheckedAt", stamp$6());
 			checkRecovery = true;
 		}
 		activatedAt = p.getString("activatedAt");
 		tx.save(p);
 	});
-	if (workerDown) for (const row of $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\" && channel=\"email\" && status=\"pending\" && nextAttemptAt<={:now}", "created", 5, 0, { now: stamp$4() })) {
+	if (workerDown) for (const row of $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\" && channel=\"email\" && status=\"pending\" && nextAttemptAt<={:now}", "created", 5, 0, { now: stamp$6() })) {
 		row.set("status", "sending");
 		row.set("attempts", row.getInt("attempts") + 1);
-		row.set("leaseAt", stamp$4());
+		row.set("leaseAt", stamp$6());
 		$app.save(row);
 		try {
 			sendDeliveryEmail(row);
 			const sent = $app.findRecordById(DELIVERIES, row.id);
 			sent.set("status", "sent");
-			sent.set("sentAt", stamp$4());
+			sent.set("sentAt", stamp$6());
 			sent.set("lastError", "");
 			$app.save(sent);
 		} catch (error) {
 			const failed = $app.findRecordById(DELIVERIES, row.id);
 			failed.set("status", failed.getInt("attempts") >= 3 ? "failed" : "pending");
-			failed.set("nextAttemptAt", stamp$4(Date.now() + 6e4 * 2 ** (failed.getInt("attempts") - 1)));
+			failed.set("nextAttemptAt", stamp$6(Date.now() + 6e4 * 2 ** (failed.getInt("attempts") - 1)));
 			failed.set("lastError", CLASS_MESSAGES.smtp);
 			$app.save(failed);
 		}
@@ -8317,7 +8317,7 @@ const RECOVERY_ERRORS = [
 ];
 /** Poussée du service de reprise (X-Web-Worker, boucle locale) : un échec de capture ou de test. Idempotente. */
 const HandleWebPlatformRecoveryEvent = (e) => {
-	requireWorker$3(e);
+	requireWorker$5(e);
 	const input = webInput(e);
 	if (!(input.version === 1 && input.event === "recovery_failed" && typeof input.runId === "string" && /^platform-recovery:[a-f0-9]{32}$/.test(input.eventKey || "") && input.eventKey === "platform-recovery:" + input.runId && typeof input.platform === "string" && /^[a-z0-9][a-z0-9-]{0,40}$/.test(input.platform) && ["capture", "drill"].includes(input.operation) && [
 		"manual",
@@ -8394,7 +8394,7 @@ const HandleWebPlatformNotificationsPut = (e) => {
 		generatedSecret = applyChannels(input, value, () => {}, () => value.email.recipients.length > 0);
 		if (input.events !== void 0) {
 			if (!Array.isArray(input.events) || input.events.some((event) => !PLATFORM_EVENTS.includes(event))) throw new BadRequestError("Types d’alerte invalides.");
-			if (input.events.includes("app_deployment_succeeded") && !value.events.includes("app_deployment_succeeded")) value.deploymentSuccessActivatedAt = stamp$4();
+			if (input.events.includes("app_deployment_succeeded") && !value.events.includes("app_deployment_succeeded")) value.deploymentSuccessActivatedAt = stamp$6();
 			value.events = [...new Set(input.events)];
 		}
 		if (input.copyAppEvents !== void 0) {
@@ -8421,13 +8421,13 @@ const HandleWebPlatformNotificationHistory = (e) => {
 	requirePlatformChannel(e);
 	const query = e.request.url.query();
 	if (query.get("id")) return webJson(e, {
-		items: $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\" && id={:id}", "", 1, 0, { id: id$3(query.get("id")) }).map(metadata$3),
+		items: $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\" && id={:id}", "", 1, 0, { id: id$4(query.get("id")) }).map(metadata$4),
 		page: 1,
 		hasMore: false
 	});
 	const page = Math.max(1, Math.min(1e5, Math.floor(Number(query.get("page")) || 1))), rows = $app.findRecordsByFilter(DELIVERIES, "scope=\"platform\"", "-created,-id", 21, (page - 1) * 20);
 	return webJson(e, {
-		items: rows.slice(0, 20).map(metadata$3),
+		items: rows.slice(0, 20).map(metadata$4),
 		page,
 		hasMore: rows.length > 20
 	});
@@ -8688,7 +8688,7 @@ const HandleWebEnvironmentClone = (e) => {
 	return webJson(e, { app }, 201);
 };
 const normalized = (value) => Array.isArray(value) ? value.map(normalized) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalized(value[key])])) : value === void 0 ? null : value;
-const canonical = (value) => JSON.stringify(normalized(value));
+const canonical$1 = (value) => JSON.stringify(normalized(value));
 const buildFingerprint = (config, env) => {
 	const c = { ...config };
 	for (const key of [
@@ -8699,7 +8699,7 @@ const buildFingerprint = (config, env) => {
 		"repositoryId",
 		"githubConnectionId"
 	]) delete c[key];
-	return $security.sha256(canonical([c, Object.fromEntries(Object.keys(env).filter((name) => env[name].build).sort().map((name) => [name, env[name].value]))]));
+	return $security.sha256(canonical$1([c, Object.fromEntries(Object.keys(env).filter((name) => env[name].build).sort().map((name) => [name, env[name].value]))]));
 };
 const promotionPlan = (source, target, store) => {
 	const a = webMembership(source.id, store), b = webMembership(target.id, store);
@@ -8716,7 +8716,7 @@ const promotionPlan = (source, target, store) => {
 	assertWebDeploymentInScope(source, published, store);
 	const image = /^sha256:[a-f0-9]{64}$/.test(result.imageId || "") ? result.imageId : /^sha256:[a-f0-9]{64}$/.test(result.image || "") ? result.image : "";
 	const { registry: _registry, ...publicSourceRuntime } = snapshot.runtime || {}, sourceRuntime = validateRuntimeProfile(publicSourceRuntime), targetResources = webEnvironmentResources(target, store);
-	const reusableRuntime = sourceRuntime.kind !== "compose" && targetResources.profile.kind !== "compose" && canonical(sourceRuntime) === canonical(targetResources.profile) && canonical(snapshot.storage || []) === canonical(targetResources.volumes);
+	const reusableRuntime = sourceRuntime.kind !== "compose" && targetResources.profile.kind !== "compose" && canonical$1(sourceRuntime) === canonical$1(targetResources.profile) && canonical$1(snapshot.storage || []) === canonical$1(targetResources.volumes);
 	return {
 		sourceDeploymentId: published.id,
 		commit: published.getString("commit"),
@@ -9128,7 +9128,7 @@ const GITHUB_CONNECTION_ID = /^(default|[a-z0-9]{15})$/;
 const GITHUB_EXTRA_CONNECTION_ID = /^[a-z0-9]{15}$/;
 const GITHUB_CONNECTION_MAX = 10;
 const GITHUB_PRINCIPAL_LABEL = "Connexion principale";
-const SETTINGS$2 = "web_app_settings";
+const SETTINGS$3 = "web_app_settings";
 const SESSIONS = "web_github_setup_sessions";
 const KEY = /^github(:[a-z0-9]{15})?$/;
 const UNAVAILABLE$1 = "Connexion GitHub introuvable ou désactivée.";
@@ -9201,13 +9201,13 @@ const connectionOf = (row) => {
 const githubConnectionRow = (id, store = $app) => {
 	if (!GITHUB_CONNECTION_ID.test(`${id}`)) return null;
 	try {
-		return store.findFirstRecordByFilter(SETTINGS$2, "key = {:key}", { key: githubSettingsKey(id) });
+		return store.findFirstRecordByFilter(SETTINGS$3, "key = {:key}", { key: githubSettingsKey(id) });
 	} catch {
 		return null;
 	}
 };
 /** Toutes les connexions, déchiffrées, dans l'ordre de création. */
-const listWebGithubConnections = (store = $app) => store.findRecordsByFilter(SETTINGS$2, "", "created", 50, 0).filter((row) => KEY.test(row.getString("key"))).map(connectionOf);
+const listWebGithubConnections = (store = $app) => store.findRecordsByFilter(SETTINGS$3, "", "created", 50, 0).filter((row) => KEY.test(row.getString("key"))).map(connectionOf);
 /**
 * Connexion demandée. `allowMissing` : la principale absente donne une configuration vide (le lecteur répond
 * `configured:false`, comme avant). Id explicite inconnu, ou connexion désactivée sans `allowDisabled` : 400.
@@ -9294,7 +9294,7 @@ const newGithubConnectionId = (existing = []) => {
 	throw new BadRequestError("Identifiant de connexion indisponible. Réessayez.");
 };
 const writeWebGithubConnection = (store, id, value) => {
-	const row = githubConnectionRow(id, store) || new Record(store.findCollectionByNameOrId(SETTINGS$2));
+	const row = githubConnectionRow(id, store) || new Record(store.findCollectionByNameOrId(SETTINGS$3));
 	row.set("key", githubSettingsKey(id));
 	row.set("valueEncrypted", encryptWebValue(value));
 	store.save(row);
@@ -9637,10 +9637,10 @@ const applyWebGithubConnectionConfig = (config, input, existing = {}, git = fals
 
 //#endregion
 //#region src/lib/handlers/webApps/storage.ts
-const SETTINGS$1 = "web_storage_settings", JOBS$1 = "web_storage_jobs";
-const name = /^[a-z][a-z0-9-]{0,30}$/, id$2 = /^[a-z0-9]{15}$/;
+const SETTINGS$2 = "web_storage_settings", JOBS$1 = "web_storage_jobs";
+const name = /^[a-z][a-z0-9-]{0,30}$/, id$3 = /^[a-z0-9]{15}$/;
 const timestamp = () => (/* @__PURE__ */ new Date()).toISOString();
-const setting$1 = (appId, store = $app) => store.findRecordsByFilter(SETTINGS$1, "appId={:id}", "", 1, 0, { id: appId })[0];
+const setting$1 = (appId, store = $app) => store.findRecordsByFilter(SETTINGS$2, "appId={:id}", "", 1, 0, { id: appId })[0];
 const storageWorkerSnapshot = (app, store = $app) => {
 	const row = setting$1(app.id, store);
 	return row ? JSON.parse(row.getString("volumes") || "[]") : [];
@@ -9681,7 +9681,7 @@ const runtime = (appId) => {
 		volumes: []
 	};
 };
-const view = (app) => {
+const view$1 = (app) => {
 	const row = setting$1(app.id);
 	return {
 		volumes: volumesOf(row),
@@ -9724,7 +9724,7 @@ const currentVolume = (app, volumeName, store = $app) => {
 	};
 };
 const busy$1 = (appId, store = $app) => store.findRecordsByFilter(JOBS$1, "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: appId }).length > 0;
-const HandleWebStorageGet = (e) => webJson(e, view(requireWebAppPermission(e, "app.read").app));
+const HandleWebStorageGet = (e) => webJson(e, view$1(requireWebAppPermission(e, "app.read").app));
 const HandleWebStorageUpdate = (e) => {
 	const app = requireWebAppPermission(e, "storage.manage").app, input = webInput(e), volumes = validate$1(input.volumes), retention = input.retention ?? 7;
 	if (!Number.isInteger(retention) || retention < 1 || retention > 14) throw new BadRequestError("Rétention attendue de 1 à 14 snapshots.");
@@ -9735,7 +9735,7 @@ const HandleWebStorageUpdate = (e) => {
 		const status = runtime(app.id);
 		for (const item of volumes) if ((status.volumes?.find((value) => value.name === item.name))?.usedBytes > item.sizeMiB * 1024 ** 2) throw new BadRequestError("La limite choisie est inférieure aux données déjà présentes.");
 		if (!row) {
-			row = new Record(tx.findCollectionByNameOrId(SETTINGS$1));
+			row = new Record(tx.findCollectionByNameOrId(SETTINGS$2));
 			row.set("appId", app.id);
 		}
 		row.set("volumes", volumes);
@@ -9743,11 +9743,11 @@ const HandleWebStorageUpdate = (e) => {
 		row.set("revision", $security.randomString(24));
 		tx.save(row);
 	});
-	return webJson(e, view(app));
+	return webJson(e, view$1(app));
 };
 const HandleWebStorageRestorePreview = (e) => {
 	const access = requireWebAppPermission(e, "storage.manage"), actor = access.user, app = access.app, volumeName = e.request.pathValue("name"), input = webInput(e), current = currentVolume(app, volumeName);
-	if (!id$2.test(input.backupId || "")) throw new BadRequestError("Snapshot invalide.");
+	if (!id$3.test(input.backupId || "")) throw new BadRequestError("Snapshot invalide.");
 	const source = $app.findRecordById(JOBS$1, input.backupId);
 	if (source.getString("appId") !== app.id || source.getString("name") !== volumeName || source.getString("operation") !== "backup" || source.getString("status") !== "ready") throw new BadRequestError("Snapshot indisponible pour ce volume.");
 	const result = JSON.parse(source.getString("result") || "{}"), token = $security.randomString(64), expiresAt = new Date(Date.now() + 10 * 6e4).toISOString(), row = new Record($app.findCollectionByNameOrId(JOBS$1));
@@ -9787,7 +9787,7 @@ const HandleWebStorageAction = (e) => {
 		if (busy$1(app.id, tx)) throw new BadRequestError("Une opération de stockage est déjà en cours sur ce site.");
 		let row;
 		if (operation === "restore") {
-			if (!id$2.test(input.previewId || "") || typeof input.previewToken !== "string" || !/^[A-Za-z0-9]{64}$/.test(input.previewToken)) throw new BadRequestError("Prévisualisez la restauration avant de la confirmer.");
+			if (!id$3.test(input.previewId || "") || typeof input.previewToken !== "string" || !/^[A-Za-z0-9]{64}$/.test(input.previewToken)) throw new BadRequestError("Prévisualisez la restauration avant de la confirmer.");
 			row = tx.findRecordById(JOBS$1, input.previewId);
 			const snapshot = decryptWebValue(row.getString("snapshotEncrypted"));
 			if (row.getString("status") !== "preview" || row.getString("actorId") !== actor.id || row.getString("appId") !== app.id || row.getString("name") !== volumeName || snapshot.backup?.backupId !== input.backupId || snapshot.revision !== current.row.getString("revision") || snapshot.deploymentId !== app.getString("activeDeployment") || Date.parse(snapshot.expiresAt) < Date.now() || !$security.equal(snapshot.previewHash, $security.sha256(input.previewToken))) throw new BadRequestError("Aperçu expiré ou configuration modifiée.");
@@ -9856,7 +9856,7 @@ const HandleWebStorageReport = (e) => {
 	let state = null;
 	worker$2(e);
 	const input = webInput(e);
-	if (!id$2.test(input.id || "") || typeof input.lease !== "string") throw new BadRequestError("Opération invalide.");
+	if (!id$3.test(input.id || "") || typeof input.lease !== "string") throw new BadRequestError("Opération invalide.");
 	$app.runInTransaction((tx) => {
 		const row = tx.findRecordById(JOBS$1, input.id);
 		if (!row.getString("leaseHash") || !$security.equal(row.getString("leaseHash"), $security.sha256(input.lease))) throw new UnauthorizedError();
@@ -9901,7 +9901,7 @@ const HandleWebStorageReport = (e) => {
 			} else if (row.getString("operation") === "restore") {
 				if (result.activeVolume !== prefix + "r" + row.id || typeof result.previousVolume !== "string" || !result.previousVolume.startsWith(prefix) || !Array.isArray(result.previousContainers) || result.previousContainers.length > 4 || result.previousContainers.some((value) => typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value))) throw new BadRequestError("Résultat de restauration invalide.");
 				const prepared = decryptWebValue(row.getString("snapshotEncrypted")), activeId = app.getString("activeDeployment");
-				if (!id$2.test(activeId) || activeId !== prepared.deploymentId) throw new BadRequestError("La publication a changé depuis l’aperçu de restauration.");
+				if (!id$3.test(activeId) || activeId !== prepared.deploymentId) throw new BadRequestError("La publication a changé depuis l’aperçu de restauration.");
 				const active = tx.findRecordById("web_deployments", activeId), activeResult = JSON.parse(active.getString("result") || "{}"), published = decryptWebValue(active.getString("snapshotEncrypted"));
 				if (active.getString("appId") !== app.id || active.getString("status") !== "ready" || !activeResult || typeof activeResult.image !== "string" || !activeResult.image || activeResult.available === false || !published?.config || !published?.env) throw new BadRequestError("La publication active ne permet plus le redémarrage après restauration.");
 				if (tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Un autre déploiement est en attente. Recommencez la restauration après sa fin.");
@@ -9970,7 +9970,7 @@ const restoreWebStorageBackup = (app, value, store = $app) => {
 	const volumes = validate$1(value || []);
 	let row = setting$1(app.id, store);
 	if (!row) {
-		row = new Record(store.findCollectionByNameOrId(SETTINGS$1));
+		row = new Record(store.findCollectionByNameOrId(SETTINGS$2));
 		row.set("appId", app.id);
 		row.set("retention", 7);
 	}
@@ -9981,7 +9981,7 @@ const restoreWebStorageBackup = (app, value, store = $app) => {
 
 //#endregion
 //#region src/lib/handlers/webApps/backups.ts
-const BACKUPS = "web_app_backups", SETTINGS = "web_app_backup_settings";
+const BACKUPS = "web_app_backups", SETTINGS$1 = "web_app_backup_settings";
 /** Baux interrompus (crash, OOM, redémarrage) avant l'abandon : la sauvegarde passe alors en échec et alerte. */
 const MAX_LEASES = 3;
 /** Suppression abandonnée après une boucle de crash : retentée automatiquement une fois par jour. */
@@ -10025,8 +10025,8 @@ if root.resolve()==root:
   except OSError:pass
 print(json.dumps(result))
 `;
-const now$2 = () => (/* @__PURE__ */ new Date()).toISOString();
-const id$1 = (value) => {
+const now$3 = () => (/* @__PURE__ */ new Date()).toISOString();
+const id$2 = (value) => {
 	if (!/^[a-z0-9]{15}$/.test(value || "")) throw new BadRequestError("Sauvegarde invalide.");
 	return value;
 };
@@ -10094,13 +10094,13 @@ const assertRestoreScope = (access, app, payload) => {
 	if (!payload.projectState) throw new ForbiddenError("Cette sauvegarde a été prise hors projet. Sa restauration est réservée aux administrateurs de la plateforme.");
 };
 const backupOf = (e, appId, store = $app) => {
-	const row = store.findRecordById(BACKUPS, id$1(e.request.pathValue("backupId")));
+	const row = store.findRecordById(BACKUPS, id$2(e.request.pathValue("backupId")));
 	if (row.getString("appId") !== appId) throw new NotFoundError("Sauvegarde introuvable.");
 	return row;
 };
 const settingOf = (appId, store = $app) => {
 	try {
-		return store.findFirstRecordByFilter(SETTINGS, "appId={:id}", { id: appId });
+		return store.findFirstRecordByFilter(SETTINGS$1, "appId={:id}", { id: appId });
 	} catch {
 		return null;
 	}
@@ -10120,7 +10120,7 @@ const nextRun = (hour, minute, date = /* @__PURE__ */ new Date()) => {
 	return candidate.toISOString();
 };
 const locallyReady = (row) => ["ready", "running"].includes(row.getString("status")) && row.getFloat("archiveBytes") > 0 && /^[a-f0-9]{64}$/.test(row.getString("checksum"));
-const metadata$2 = (row, localAvailable = locallyReady(row)) => ({
+const metadata$3 = (row, localAvailable = locallyReady(row)) => ({
 	id: row.id,
 	status: row.getString("status"),
 	trigger: row.getString("trigger"),
@@ -10215,7 +10215,7 @@ const HandleWebBackupsList = (e) => {
 		})))).output()));
 	} catch {}
 	return webJson(e, {
-		items: items.map((row) => metadata$2(row, available[row.id] === true)),
+		items: items.map((row) => metadata$3(row, available[row.id] === true)),
 		page,
 		perPage,
 		totalItems,
@@ -10238,7 +10238,7 @@ const HandleWebBackupCreate = (e) => {
 	if (input.trigger === "platform" && user.getBool("superAdmin") !== true) throw new ForbiddenError("Réservé à la plateforme.");
 	let backup;
 	$app.runInTransaction((tx) => {
-		backup = metadata$2(queueBackup(tx.findRecordById("web_apps", app.id), user.id, input.trigger === "platform" ? "platform" : "manual", tx));
+		backup = metadata$3(queueBackup(tx.findRecordById("web_apps", app.id), user.id, input.trigger === "platform" ? "platform" : "manual", tx));
 	});
 	return webJson(e, { backup }, 202);
 };
@@ -10248,7 +10248,7 @@ const HandleWebBackupSettings = (e) => {
 	if (typeof input.enabled !== "boolean" || !Number.isInteger(input.hourUTC) || input.hourUTC < 0 || input.hourUTC > 23 || !Number.isInteger(input.minuteUTC) || input.minuteUTC < 0 || input.minuteUTC > 59 || !Number.isInteger(input.retention) || input.retention < 1 || input.retention > 14) throw new BadRequestError("Horaire UTC invalide ou rétention hors de la plage 1 à 14 sauvegardes.");
 	let settings;
 	$app.runInTransaction((tx) => {
-		const row = settingOf(app.id, tx) || new Record(tx.findCollectionByNameOrId(SETTINGS));
+		const row = settingOf(app.id, tx) || new Record(tx.findCollectionByNameOrId(SETTINGS$1));
 		row.set("appId", app.id);
 		for (const name of [
 			"enabled",
@@ -10277,7 +10277,7 @@ const HandleWebBackupDelete = (e) => {
 		row.set("leaseAttempts", 0);
 		row.set("error", "");
 		tx.save(row);
-		backup = metadata$2(row);
+		backup = metadata$3(row);
 	});
 	return webJson(e, { backup }, 202);
 };
@@ -10294,14 +10294,14 @@ const HandleWebBackupRecover = (e) => {
 		row.set("leaseAttempts", 0);
 		row.set("error", "");
 		tx.save(row);
-		backup = metadata$2(row, false);
+		backup = metadata$3(row, false);
 	});
 	return webJson(e, { backup }, 202);
 };
 const readArchive = (app, row) => {
 	if (!locallyReady(row)) throw new BadRequestError("Archive indisponible.");
 	try {
-		const raw = toString($os.cmd("python3", "-c", ARCHIVE_READ, webRoot(), id$1(app.id), id$1(row.id)).output());
+		const raw = toString($os.cmd("python3", "-c", ARCHIVE_READ, webRoot(), id$2(app.id), id$2(row.id)).output());
 		if (!$security.equal($security.sha256(raw), row.getString("checksum"))) throw new Error();
 		const archive = JSON.parse(raw);
 		if (archive.format !== "pockethost-web-backup" || archive.version !== 1 || archive.appId !== app.id || archive.id !== row.id || archive.imageId !== row.getString("imageId") || !$security.equal(archive.payloadEncrypted, row.getString("payloadEncrypted")) || $security.sha256(archive.payloadEncrypted) !== archive.payloadSha256) throw new Error();
@@ -10354,7 +10354,7 @@ const HandleWebBackupRestorePreview = (e) => {
 		revision,
 		expiresAt,
 		previewToken: token$1(user.id, app.id, row, revision, expiresAt),
-		backup: metadata$2(row),
+		backup: metadata$3(row),
 		appName: payload.app.name,
 		configurationFields: Object.keys(payload.app.config).filter((name) => JSON.stringify(payload.app.config[name]) !== JSON.stringify(webConfig(app)[name])),
 		environmentChanges: environmentChanges(decryptWebValue(app.getString("envEncrypted")), payload.app.env),
@@ -10409,7 +10409,7 @@ const worker$1 = (e) => {
 const HandleWebBackupPins = (e) => {
 	worker$1(e);
 	const input = webInput(e), filter = "(status=\"queued\" || status=\"running\" || status=\"ready\" || status=\"deleting\" || (status=\"failed\" && archiveBytes>0))" + (input.appId ? " && appId={:appId}" : "");
-	if (input.appId) id$1(input.appId);
+	if (input.appId) id$2(input.appId);
 	const rows = $app.findRecordsByFilter(BACKUPS, filter, "", 10001, 0, { appId: input.appId || "" });
 	if (rows.length > 1e4) throw new BadRequestError("Trop de sauvegardes pour confirmer le nettoyage des images.");
 	return webJson(e, { items: rows.map((row) => ({
@@ -10427,7 +10427,7 @@ const HandleWebBackupPins = (e) => {
 	})) });
 };
 const maintenance = (store) => {
-	const timestamp = now$2(), due = store.findRecordsByFilter(SETTINGS, "enabled=true && nextRunAt!=\"\" && nextRunAt<={:now}", "nextRunAt", 50, 0, { now: timestamp.replace("T", " ") });
+	const timestamp = now$3(), due = store.findRecordsByFilter(SETTINGS$1, "enabled=true && nextRunAt!=\"\" && nextRunAt<={:now}", "nextRunAt", 50, 0, { now: timestamp.replace("T", " ") });
 	for (const setting of due) {
 		try {
 			queueBackup(store.findRecordById("web_apps", setting.getString("appId")), "", "scheduled", store);
@@ -10452,7 +10452,7 @@ const maintenance = (store) => {
 		row.set("leaseAttempts", 0);
 		store.save(row);
 	}
-	const settings = store.findRecordsByFilter(SETTINGS, "", "", 1e3, 0);
+	const settings = store.findRecordsByFilter(SETTINGS$1, "", "", 1e3, 0);
 	const appIds = new Set(settings.map((row) => row.getString("appId")));
 	for (const row of store.findRecordsByFilter(BACKUPS, "status=\"ready\"", "-created", 1e4, 0)) appIds.add(row.getString("appId"));
 	for (const appId of appIds) {
@@ -10479,7 +10479,7 @@ const HandleWebBackupClaim = (e) => {
 			row.set("leaseHash", "");
 			if (row.getInt("leaseAttempts") >= MAX_LEASES) {
 				row.set("status", "failed");
-				row.set("finishedAt", now$2());
+				row.set("finishedAt", now$3());
 				row.set("error", "La sauvegarde a été interrompue trois fois sans compte rendu du worker (redémarrage ou ressources insuffisantes).");
 			} else row.set("status", "queued");
 			tx.save(row);
@@ -10489,10 +10489,10 @@ const HandleWebBackupClaim = (e) => {
 		if (!rows.length) return;
 		const row = rows[0], operation = row.getString("status") === "deleting" ? "delete" : row.getString("operation") === "recover" ? "recover" : "create", lease = $security.randomString(40);
 		row.set("status", operation === "delete" ? "deleting" : "running");
-		row.set("leaseAt", now$2());
+		row.set("leaseAt", now$3());
 		row.set("leaseHash", $security.sha256(lease));
 		row.set("leaseAttempts", Math.min(100, row.getInt("leaseAttempts") + 1));
-		row.set("startedAt", row.getString("startedAt") || now$2());
+		row.set("startedAt", row.getString("startedAt") || now$3());
 		tx.save(row);
 		job = {
 			id: row.id,
@@ -10523,7 +10523,7 @@ const HandleWebBackupReport = (e) => {
 	worker$1(e);
 	const input = webInput(e);
 	$app.runInTransaction((tx) => {
-		const row = tx.findRecordById(BACKUPS, id$1(input.id));
+		const row = tx.findRecordById(BACKUPS, id$2(input.id));
 		if (typeof input.lease !== "string" || !$security.equal($security.sha256(input.lease), row.getString("leaseHash")) || !["running", "deleting"].includes(row.getString("status"))) throw new BadRequestError("Traitement de sauvegarde non actif.");
 		const deleting = row.getString("status") === "deleting";
 		if (input.images !== void 0) {
@@ -10589,7 +10589,7 @@ const HandleWebBackupReport = (e) => {
 					"checksum"
 				]) row.set(name, input[name]);
 			}
-			row.set("leaseAt", now$2());
+			row.set("leaseAt", now$3());
 			tx.save(row);
 			return;
 		}
@@ -10603,13 +10603,13 @@ const HandleWebBackupReport = (e) => {
 			]) row.set(name, input[name]);
 			row.set("status", "ready");
 			row.set("error", "");
-			row.set("finishedAt", now$2());
+			row.set("finishedAt", now$3());
 		} else if (input.status === "deleted" && deleting) {
 			row.set("status", "deleted");
 			row.set("payloadEncrypted", "");
 			row.set("archiveBytes", 0);
 			row.set("error", "");
-			row.set("finishedAt", now$2());
+			row.set("finishedAt", now$3());
 		} else if (input.status === "failed") {
 			if (input.failureCode !== void 0 && !FAILURE_CODES.includes(input.failureCode)) throw new BadRequestError("Code d’échec de sauvegarde invalide.");
 			if (input.attempts !== void 0 && (!Number.isInteger(input.attempts) || input.attempts < 0 || input.attempts > 1e3)) throw new BadRequestError("Nombre de tentatives invalide.");
@@ -10621,7 +10621,7 @@ const HandleWebBackupReport = (e) => {
 			} else if (deleting) {
 				row.set("status", "failed");
 				row.set("error", "La suppression de cette sauvegarde a été interrompue plusieurs fois sans compte rendu du worker. Elle sera retentée automatiquement.");
-				emitWebAlert(tx, "platform", row.getString("appId"), "backup_cleanup_failed", "backup-delete:" + row.id + ":" + now$2().slice(0, 10), {
+				emitWebAlert(tx, "platform", row.getString("appId"), "backup_cleanup_failed", "backup-delete:" + row.id + ":" + now$3().slice(0, 10), {
 					appId: row.getString("appId"),
 					backupId: row.id,
 					attempts: Number.isInteger(input.attempts) ? input.attempts : MAX_LEASES
@@ -10631,7 +10631,7 @@ const HandleWebBackupReport = (e) => {
 				row.set("error", (exhausted && !/tentatives/.test(message) ? `Sauvegarde abandonnée après ${Number.isInteger(input.attempts) ? input.attempts : MAX_LEASES} tentatives interrompues. ` : "") + message);
 				row.set("error", row.getString("error").slice(0, 500));
 			}
-			row.set("finishedAt", now$2());
+			row.set("finishedAt", now$3());
 		} else throw new BadRequestError("État de sauvegarde invalide.");
 		if (!deleting || input.status === "deleted" || row.getString("status") === "failed") row.set("leaseHash", "");
 		tx.save(row);
@@ -10640,14 +10640,405 @@ const HandleWebBackupReport = (e) => {
 };
 
 //#endregion
+//#region ../common/webChecks.ts
+const id$1 = /^[a-z0-9]{15}$/;
+const variable = /^[A-Za-z_][A-Za-z0-9_]{0,119}$/;
+const failure = () => {
+	throw new Error("Configuration de contrôles invalide. Vérifiez les champs et les limites indiquées.");
+};
+const keys = (value, allowed) => {
+	if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !allowed.includes(key))) failure();
+};
+const text$2 = (value, max, empty = false) => typeof value === "string" && value.length <= max && (empty || !!value.trim()) && !/[\x00-\x1f\x7f]/.test(value);
+const safeCheckPath = (value) => text$2(value, 1e3) && value.startsWith("/") && !value.startsWith("//") && !value.includes("\\") && !value.includes("#");
+const safeCheckAuthPath = (value) => typeof value === "string" && /^\/(?:api\/auth\/login|api\/client-space\/auth\/login|api\/login|login|api\/collections\/[_a-zA-Z][_a-zA-Z0-9]{0,99}\/auth-with-password)$/.test(value);
+const field = (value) => typeof value === "string" && /^[a-zA-Z_][a-zA-Z_0-9]*(?:\.[a-zA-Z_][a-zA-Z_0-9]*){0,3}$/.test(value) && !value.split(".").some((part) => [
+	"__proto__",
+	"prototype",
+	"constructor"
+].includes(part));
+const list = (value, max) => {
+	if (!Array.isArray(value) || value.length > max) failure();
+	return value;
+};
+const emptyApplicationChecks = () => ({
+	version: 1,
+	preflight: {
+		enabled: false,
+		requiredEnvironment: [],
+		privateDatabases: false,
+		publicUrls: [],
+		authentication: []
+	},
+	journeys: []
+});
+const validateApplicationChecks = (value) => {
+	const input = value;
+	keys(input, [
+		"version",
+		"preflight",
+		"journeys"
+	]);
+	if (input.version !== 1) failure();
+	const preflight = input.preflight;
+	keys(preflight, [
+		"enabled",
+		"requiredEnvironment",
+		"privateDatabases",
+		"publicUrls",
+		"authentication"
+	]);
+	if (typeof preflight.enabled !== "boolean" || typeof preflight.privateDatabases !== "boolean") failure();
+	const names = /* @__PURE__ */ new Set();
+	for (const row of list(preflight.requiredEnvironment, 100)) {
+		keys(row, ["name", "scope"]);
+		if (typeof row.name !== "string" || !variable.test(row.name) || ![
+			"build",
+			"runtime",
+			"both"
+		].includes(row.scope) || names.has(row.name)) failure();
+		names.add(row.name);
+	}
+	for (const row of list(preflight.publicUrls, 20)) {
+		keys(row, [
+			"name",
+			"target",
+			"bindingId"
+		]);
+		if (typeof row.name !== "string" || !variable.test(row.name) || !["application", "privateDatabase"].includes(row.target) || row.target === "privateDatabase" && (!id$1.test(row.bindingId) || typeof row.bindingId !== "string") || row.target === "application" && row.bindingId !== void 0) failure();
+	}
+	for (const row of list(preflight.authentication, 4)) {
+		keys(row, [
+			"bindingId",
+			"collection",
+			"identityEnv",
+			"passwordEnv"
+		]);
+		if (typeof row.bindingId !== "string" || !id$1.test(row.bindingId) || typeof row.collection !== "string" || !/^[_a-zA-Z][_a-zA-Z0-9]{0,99}$/.test(row.collection) || typeof row.identityEnv !== "string" || !variable.test(row.identityEnv) || typeof row.passwordEnv !== "string" || !variable.test(row.passwordEnv) || /^(NEXT_PUBLIC_|PUBLIC_|VITE_)/.test(row.passwordEnv)) failure();
+	}
+	const identifiers = /* @__PURE__ */ new Set();
+	for (const journey of list(input.journeys, 6)) {
+		keys(journey, [
+			"id",
+			"name",
+			"enabled",
+			"intervalMinutes",
+			"domain",
+			"auth",
+			"steps"
+		]);
+		if (typeof journey.id !== "string" || !id$1.test(journey.id) || identifiers.has(journey.id) || !text$2(journey.name, 80) || typeof journey.enabled !== "boolean" || !Number.isInteger(journey.intervalMinutes) || journey.intervalMinutes < 1 || journey.intervalMinutes > 1440 || journey.domain !== "generated" && (typeof journey.domain !== "string" || !id$1.test(journey.domain))) failure();
+		identifiers.add(journey.id);
+		const auth = journey.auth;
+		keys(auth, [
+			"kind",
+			"path",
+			"identityField",
+			"passwordField",
+			"identity",
+			"tokenField"
+		]);
+		if (!["none", "json"].includes(auth.kind)) failure();
+		if (auth.kind === "json" && (!safeCheckAuthPath(auth.path) || !field(auth.identityField) || auth.identityField.includes(".") || !field(auth.passwordField) || auth.passwordField.includes(".") || auth.identityField === auth.passwordField || !text$2(auth.identity, 254) || auth.tokenField !== "" && !field(auth.tokenField))) failure();
+		const steps = list(journey.steps, 10);
+		if (!steps.length) failure();
+		for (const step of steps) {
+			keys(step, [
+				"name",
+				"path",
+				"status",
+				"jsonField",
+				"expected"
+			]);
+			if (!text$2(step.name, 80) || !safeCheckPath(step.path) || !Number.isInteger(step.status) || step.status < 200 || step.status > 499 || step.jsonField !== "" && !field(step.jsonField) || step.expected !== null && !text$2(step.expected, 256, true)) failure();
+		}
+	}
+	return JSON.parse(JSON.stringify(input));
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/checks.ts
+const SETTINGS = "web_app_checks", RUNS$2 = "web_app_check_runs", ID$5 = /^[a-z0-9]{15}$/;
+const stamp$5 = (at = Date.now()) => new Date(at).toISOString().replace("T", " ");
+const settings$1 = (appId, store = $app) => store.findRecordsByFilter(SETTINGS, "appId={:id}", "", 1, 0, { id: appId })[0] || null;
+const checksActive = (appId, actorId, store) => webAppSettingActive(appId, actorId, store) && webActorCan(actorId, { appId }, "app.configure", store);
+const configOf = (row) => row ? validateApplicationChecks(JSON.parse(row.getString("config"))) : emptyApplicationChecks();
+const webChecksSnapshot = (appId, store = $app) => ({ preflight: configOf(settings$1(appId, store)).preflight });
+const runMetadata$1 = (row) => ({
+	id: row.id,
+	journeyId: row.getString("journeyId"),
+	journeyName: row.getString("journeyName"),
+	status: row.getString("status"),
+	trigger: row.getString("trigger"),
+	scheduledAt: row.getString("scheduledAt"),
+	startedAt: row.getString("startedAt"),
+	finishedAt: row.getString("finishedAt"),
+	result: JSON.parse(row.getString("result") || "null")
+});
+const hostOf = (app, journey, store) => {
+	let host = "";
+	if (journey.domain === "generated") host = webConfig(app).generatedDomain || "";
+	else {
+		const domain = store.findRecordById("web_app_domains", journey.domain);
+		if (domain.getString("appId") !== app.id || domain.getString("status") !== "active") throw new BadRequestError("Le domaine du parcours doit être actif dans cette application.");
+		host = domain.getString("host");
+	}
+	if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)) throw new BadRequestError("Le parcours nécessite un domaine HTTPS public valide.");
+	return host;
+};
+const overlap$1 = (appId, id, store) => store.findRecordsByFilter(RUNS$2, "appId={:appId} && journeyId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, {
+	appId,
+	id
+}).length > 0;
+const enqueue$2 = (row, app, journey, trigger, store) => {
+	if (overlap$1(app.id, journey.id, store)) return null;
+	if (app.getString("status") !== "running" || !ID$5.test(app.getString("activeDeployment"))) throw new BadRequestError("Publiez et démarrez le site avant de lancer un parcours.");
+	const password = (decryptWebValue(row.getString("secretsEncrypted") || "") || {})[journey.id]?.password || "";
+	if (journey.auth.kind === "json" && !password) throw new BadRequestError("Enregistrez le mot de passe du compte de test avant de lancer ce parcours.");
+	const run = new Record(store.findCollectionByNameOrId(RUNS$2));
+	for (const [key, value] of Object.entries({
+		appId: app.id,
+		settingsId: row.id,
+		journeyId: journey.id,
+		journeyName: journey.name,
+		actorId: row.getString("actorId"),
+		trigger,
+		status: "queued",
+		scheduledAt: stamp$5(),
+		snapshotEncrypted: encryptWebValue({
+			host: hostOf(app, journey, store),
+			journey,
+			password,
+			revision: row.getString("revision")
+		})
+	})) run.set(key, value);
+	store.save(run);
+	return run;
+};
+const HandleWebChecksGet = (e) => {
+	const { app: found, role } = requireWebAppPermission(e, "app.read"), app = found, row = settings$1(app.id), canManage = webRoleAllows(role, "app.configure");
+	const secrets = canManage && row ? decryptWebValue(row.getString("secretsEncrypted") || "") || {} : {};
+	const history = webRoleAllows(role, "logs.read") ? $app.findRecordsByFilter(RUNS$2, "appId={:id}", "-created,-id", 30, 0, { id: app.id }).map(runMetadata$1) : [];
+	return webJson(e, {
+		journeysActive: !!row && checksActive(app.id, row.getString("actorId"), $app),
+		settings: canManage ? {
+			revision: row?.getString("revision") || "",
+			config: configOf(row),
+			hasSecret: Object.fromEntries(Object.keys(secrets).map((id) => [id, !!secrets[id]?.password]))
+		} : null,
+		history,
+		summary: row ? JSON.parse(row.getString("summary") || "{}") : {}
+	});
+};
+const HandleWebChecksPut = (e) => {
+	const { user: actor, app: found } = requireWebAppPermission(e, "app.configure"), app = found, body = webInput(e);
+	if (Object.keys(body).sort().join(",") !== "config,revision,secrets" || typeof body.revision !== "string" || body.revision.length > 32 || JSON.stringify(body).length > 15e4 || !body.secrets || typeof body.secrets !== "object" || Array.isArray(body.secrets)) throw new BadRequestError("Configuration et révision attendues.");
+	let config;
+	try {
+		config = validateApplicationChecks(body.config);
+	} catch {
+		throw new BadRequestError("Configuration de contrôles invalide : six parcours et dix lectures au maximum par parcours.");
+	}
+	const ids = new Set(config.journeys.map((row) => row.id));
+	for (const [id, secret] of Object.entries(body.secrets)) if (!ids.has(id) || !secret || Object.keys(secret).join(",") !== "password" || secret.password !== null && (typeof secret.password !== "string" || secret.password.length > 4096)) throw new BadRequestError("Mot de passe de test invalide.");
+	let result = null;
+	$app.runInTransaction((tx) => {
+		const old = settings$1(app.id, tx);
+		if ((old?.getString("revision") || "") !== body.revision) throw new ApiError(409, "Ces contrôles ont changé. Rechargez avant d’enregistrer.");
+		for (const item of [...config.preflight.authentication, ...config.preflight.publicUrls.filter((row) => row.target === "privateDatabase")]) {
+			const binding = tx.findRecordById("web_private_db_bindings", item.bindingId);
+			if (binding.getString("appId") !== app.id || !binding.getBool("enabled")) throw new BadRequestError("Sélectionnez une liaison privée active de cette application.");
+		}
+		const previous = old ? decryptWebValue(old.getString("secretsEncrypted") || "") || {} : {}, secrets = {};
+		for (const journey of config.journeys) {
+			hostOf(app, journey, tx);
+			if (journey.auth.kind === "none") continue;
+			const supplied = body.secrets[journey.id];
+			const password = supplied === void 0 ? previous[journey.id]?.password || "" : supplied.password || "";
+			if (journey.enabled && !password) throw new BadRequestError("Un mot de passe dédié est requis pour activer ce parcours.");
+			if (password) secrets[journey.id] = { password };
+		}
+		const row = old || new Record(tx.findCollectionByNameOrId(SETTINGS));
+		row.set("appId", app.id);
+		row.set("actorId", actor.id);
+		row.set("config", config);
+		row.set("summary", {});
+		row.set("secretsEncrypted", encryptWebValue(secrets));
+		row.set("revision", $security.randomString(24));
+		row.set("nextRunAt", config.journeys.some((row) => row.enabled) ? stamp$5(Date.now() + 6e4) : "");
+		tx.save(row);
+		result = row;
+	});
+	$app.logger().info("Application read-only checks updated", "appId", app.id, "actor", actor.id);
+	return webJson(e, {
+		revision: result.getString("revision"),
+		saved: true
+	});
+};
+const HandleWebChecksRun = (e) => {
+	const { app: found } = requireWebAppPermission(e, "health.manage"), app = found, body = webInput(e);
+	if (Object.keys(body).some((key) => key !== "journeyId") || body.journeyId !== void 0 && (typeof body.journeyId !== "string" || !ID$5.test(body.journeyId))) throw new BadRequestError("Parcours invalide.");
+	const runs = [];
+	$app.runInTransaction((tx) => {
+		const row = settings$1(app.id, tx);
+		if (!row) throw new BadRequestError("Enregistrez un parcours avant de le lancer.");
+		const selected = configOf(row).journeys.filter((item) => body.journeyId ? item.id === body.journeyId : item.enabled);
+		if (!selected.length) throw new BadRequestError("Aucun parcours sélectionné.");
+		for (const journey of selected) {
+			const run = enqueue$2(row, app, journey, "manual", tx);
+			if (run) runs.push(runMetadata$1(run));
+		}
+	});
+	return webJson(e, { runs }, 202);
+};
+const requireWorker$4 = (e) => {
+	if (!webEnabled()) throw new NotFoundError();
+	const expected = $os.getenv("WEB_APPS_WORKER_SECRET"), received = e.request.header.get("X-Web-Worker") || "";
+	if (expected.length < 32 || !$security.equal(expected, received) || !webDirectLoopback(e)) throw new ForbiddenError("Worker local requis.");
+};
+const finish$1 = (run, result, store) => {
+	let snapshot = {};
+	try {
+		snapshot = decryptWebValue(run.getString("snapshotEncrypted"));
+	} catch {}
+	run.set("status", result.status);
+	run.set("result", result);
+	run.set("finishedAt", stamp$5());
+	run.set("leaseHash", "");
+	run.set("snapshotEncrypted", "");
+	store.save(run);
+	try {
+		const row = store.findRecordById(SETTINGS, run.getString("settingsId")), summary = JSON.parse(row.getString("summary") || "{}");
+		if (row.getString("revision") === snapshot.revision && configOf(row).journeys.some((item) => item.id === run.getString("journeyId"))) {
+			summary[run.getString("journeyId")] = {
+				...runMetadata$1(run),
+				scheduledAt: run.getString("scheduledAt")
+			};
+			row.set("summary", summary);
+			store.save(row);
+		}
+	} catch {}
+	for (const old of store.findRecordsByFilter(RUNS$2, "appId={:id} && status!=\"queued\" && status!=\"running\"", "-created,-id", 100, 1e3, { id: run.getString("appId") })) store.delete(old);
+};
+const HandleWebChecksClaim = (e) => {
+	requireWorker$4(e);
+	const body = webInput(e);
+	let job = null;
+	if (Object.keys(body).some((key) => key !== "cleanupOnly") || body.cleanupOnly !== void 0 && typeof body.cleanupOnly !== "boolean") throw new BadRequestError("Réclamation invalide.");
+	$app.runInTransaction((tx) => {
+		const now = Date.now();
+		for (const run of tx.findRecordsByFilter(RUNS$2, "status=\"running\"", "startedAt", 100, 0)) {
+			if (Date.parse(run.getString("deadline")) > now) return;
+			finish$1(run, {
+				status: "failed",
+				errorCode: "worker_lost",
+				steps: []
+			}, tx);
+		}
+		if (body.cleanupOnly === true) return;
+		for (const row of tx.findRecordsByFilter(SETTINGS, "nextRunAt!=\"\" && nextRunAt<={:now}", "nextRunAt", 100, 0, { now: stamp$5(now) })) {
+			const config = configOf(row), summary = JSON.parse(row.getString("summary") || "{}"), app = tx.findRecordById("web_apps", row.getString("appId"));
+			const allowed = checksActive(app.id, row.getString("actorId"), tx);
+			for (const journey of config.journeys) {
+				if (!journey.enabled || !allowed) continue;
+				const previous = Date.parse(summary[journey.id]?.scheduledAt || row.getString("created"));
+				if (Number.isFinite(previous) && previous + journey.intervalMinutes * 6e4 > now) continue;
+				try {
+					enqueue$2(row, app, journey, "scheduled", tx);
+				} catch {}
+			}
+			row.set("nextRunAt", allowed && config.journeys.some((row) => row.enabled) ? stamp$5(now + 6e4) : "");
+			tx.save(row);
+		}
+		for (const run of tx.findRecordsByFilter(RUNS$2, "status=\"queued\"", "created,id", 100, 0)) try {
+			const row = tx.findRecordById(SETTINGS, run.getString("settingsId")), snapshot = decryptWebValue(run.getString("snapshotEncrypted")), app = tx.findRecordById("web_apps", run.getString("appId"));
+			if (row.getString("revision") !== snapshot.revision || !checksActive(app.id, run.getString("actorId"), tx) || app.getString("status") !== "running" || hostOf(app, snapshot.journey, tx) !== snapshot.host) throw Error("Changed");
+			const proof = $security.randomString(80);
+			run.set("status", "running");
+			run.set("startedAt", stamp$5(now));
+			run.set("deadline", stamp$5(now + 75e3));
+			run.set("leaseHash", $security.sha256(proof));
+			tx.save(run);
+			job = {
+				id: run.id,
+				proof,
+				appId: app.id,
+				deadline: run.getString("deadline"),
+				input: {
+					host: snapshot.host,
+					journey: snapshot.journey,
+					password: snapshot.password
+				}
+			};
+			break;
+		} catch {
+			finish$1(run, {
+				status: "cancelled",
+				errorCode: "configuration_changed",
+				steps: []
+			}, tx);
+		}
+	});
+	return webJson(e, { job });
+};
+const HandleWebChecksReport = (e) => {
+	requireWorker$4(e);
+	const body = webInput(e);
+	if (typeof body.id !== "string" || !ID$5.test(body.id) || typeof body.proof !== "string" || !/^[A-Za-z0-9]{80}$/.test(body.proof) || !body.result || !["passed", "failed"].includes(body.result.status) || JSON.stringify(body.result).length > 3e4) throw new BadRequestError("Compte rendu invalide.");
+	$app.runInTransaction((tx) => {
+		const run = tx.findRecordById(RUNS$2, body.id);
+		if (run.getString("status") !== "running" || !(Date.parse(run.getString("deadline")) > Date.now()) || !$security.equal(run.getString("leaseHash"), $security.sha256(body.proof))) throw new UnauthorizedError();
+		const snapshot = decryptWebValue(run.getString("snapshotEncrypted"));
+		if (!new Set([
+			"",
+			"origin_unavailable",
+			"authentication_failed",
+			"journey_failed",
+			"configuration",
+			"timeout",
+			"network",
+			"worker_lost"
+		]).has(body.result.errorCode) || !Array.isArray(body.result.steps) || body.result.steps.length > 11) throw new BadRequestError("Résultat invalide.");
+		const expected = [...snapshot.journey.auth.kind === "json" ? [{
+			name: "Connexion du compte de test",
+			status: 0
+		}] : [], ...snapshot.journey.steps];
+		if (body.result.steps.length > expected.length || body.result.status === "passed" && (body.result.errorCode !== "" || body.result.steps.length !== expected.length || body.result.steps.some((row) => row.status !== "passed")) || body.result.status === "failed" && body.result.errorCode === "") throw new BadRequestError("Un parcours incomplet ne peut pas être déclaré réussi.");
+		const steps = body.result.steps.map((step, index) => {
+			if (expected[index]?.name !== step.name || !["passed", "failed"].includes(step.status) || !Number.isInteger(step.httpStatus) || step.httpStatus < 0 || step.httpStatus > 599 || ![
+				"",
+				"authentication_failed",
+				"http_status",
+				"json_assertion",
+				"network"
+			].includes(step.code) || step.status === "passed" && (step.code !== "" || (expected[index].status ? step.httpStatus !== expected[index].status : step.httpStatus < 200 || step.httpStatus >= 300))) throw new BadRequestError("Étape invalide.");
+			return {
+				name: step.name,
+				status: step.status,
+				httpStatus: step.httpStatus,
+				code: step.code,
+				durationMs: Math.max(0, Math.min(6e4, Number(step.durationMs) || 0))
+			};
+		});
+		finish$1(run, {
+			status: body.result.status,
+			errorCode: body.result.errorCode,
+			steps,
+			durationMs: Math.max(0, Math.min(6e4, Number(body.result.durationMs) || 0))
+		}, tx);
+	});
+	return webJson(e, { saved: true });
+};
+
+//#endregion
 //#region src/lib/handlers/webApps/ci.ts
 const TOKEN$1 = "web_ci_tokens", DELIVERY = "web_ci_deliveries";
-const date$1 = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const date$2 = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
 const repository = (value) => {
 	if (typeof value !== "string" || value.length > 250 || !/^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,})(?::[1-9][0-9]{0,4})?\/[a-z0-9][a-z0-9._/-]*$/.test(value) || !webRegistryHostAllowed(value.split("/")[0]) || value.includes("..") || value.includes("//") || value.endsWith("/")) throw new BadRequestError("Indiquez un dépôt d’images complet, par exemple ghcr.io/organisation/site.");
 	return value;
 };
-const metadata$1 = (row) => ({
+const metadata$2 = (row) => ({
 	id: row.id,
 	name: row.getString("name"),
 	imageRepository: row.getString("imageRepository"),
@@ -10684,7 +11075,7 @@ const authenticate = (e, store = $app) => {
 const HandleWebCiTokensList = (e) => {
 	const app = requireWebAppPermission(e, "ci.manage").app;
 	return webJson(e, {
-		items: $app.findRecordsByFilter(TOKEN$1, "appId={:id}", "-created", 100, 0, { id: app.id }).map(metadata$1),
+		items: $app.findRecordsByFilter(TOKEN$1, "appId={:id}", "-created", 100, 0, { id: app.id }).map(metadata$2),
 		deployUrl: `${origin$1()}/api/web-apps/ci/deploy`
 	});
 };
@@ -10702,7 +11093,7 @@ const HandleWebCiTokensCreate = (e) => {
 	$app.runInTransaction((tx) => {
 		if (tx.findRecordsByFilter(TOKEN$1, "appId={:id} && revokedAt=\"\" && expiresAt>{:now}", "", 10, 0, {
 			id: app.id,
-			now: date$1()
+			now: date$2()
 		}).length >= 10) throw new BadRequestError("Dix jetons actifs maximum par application.");
 		const row = new Record(tx.findCollectionByNameOrId(TOKEN$1));
 		row.set("appId", app.id);
@@ -10717,7 +11108,7 @@ const HandleWebCiTokensCreate = (e) => {
 	e.response.header().set("Pragma", "no-cache");
 	return webJson(e, {
 		token: `phci.${id}.${secret}`,
-		item: metadata$1($app.findRecordById(TOKEN$1, id)),
+		item: metadata$2($app.findRecordById(TOKEN$1, id)),
 		deployUrl: `${origin$1()}/api/web-apps/ci/deploy`
 	}, 201);
 };
@@ -10726,9 +11117,9 @@ const HandleWebCiTokenRevoke = (e) => {
 	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Jeton invalide.");
 	const row = $app.findRecordById(TOKEN$1, id);
 	if (row.getString("appId") !== app.id) throw new NotFoundError();
-	row.set("revokedAt", date$1());
+	row.set("revokedAt", date$2());
 	$app.save(row);
-	return webJson(e, { item: metadata$1(row) });
+	return webJson(e, { item: metadata$2(row) });
 };
 const HandleWebCiDeploy = (e) => {
 	const { token, actor } = authenticate(e), input = webInput(e);
@@ -10805,7 +11196,7 @@ const HandleWebCiDeploy = (e) => {
 		for (const pending of tx.findRecordsByFilter("web_deployments", "appId={:id} && status=\"queued\" && action=\"ci-deploy\"", "", 100, 0, { id: app.id })) {
 			pending.set("status", "cancelled");
 			pending.set("stage", "Remplacé par une construction CI plus récente");
-			pending.set("finishedAt", date$1());
+			pending.set("finishedAt", date$2());
 			scrubWebCiCredentials(pending);
 			tx.save(pending);
 		}
@@ -10829,7 +11220,7 @@ const HandleWebCiDeploy = (e) => {
 		seen.set("deploymentId", job.id);
 		tx.save(seen);
 		const used = tx.findRecordById(TOKEN$1, token.id);
-		used.set("lastUsedAt", date$1());
+		used.set("lastUsedAt", date$2());
 		tx.save(used);
 		result = {
 			deployment: serializeWebDeployment(job),
@@ -11463,6 +11854,7 @@ const enqueueWebDeployment = (app, action, actorId, extra, resolvedCommit, store
 	row.set("commit", commit || "");
 	row.set("status", "queued");
 	row.set("stage", "En attente");
+	if (action === "deploy" || action === "ci-deploy") snapshot.checks = webChecksSnapshot(app.id, store);
 	row.set("snapshotEncrypted", encrypt(snapshot));
 	store.save(row);
 	return row;
@@ -11952,7 +12344,7 @@ const HandleWebWorkerProjectLimits = (e) => {
 };
 const HandleWebWorkerClaim = (e) => {
 	requireWorker(e);
-	let job = null;
+	let job = null, retryClaim = false;
 	$app.runInTransaction((tx) => {
 		const running = tx.findRecordsByFilter("web_deployments", "status=\"running\"", "", 1, 0);
 		if (running.length) {
@@ -11986,12 +12378,14 @@ const HandleWebWorkerClaim = (e) => {
 			limits: webProjectLimits(webProject(policyMember.getString("projectId"), tx)),
 			appIds: tx.findRecordsByFilter("web_app_environments", "projectId={:id}", "", 1e4, 0, { id: policyMember.getString("projectId") }).map((row) => row.getString("appId")).filter(Boolean)
 		} : null;
-		if (r.getString("action") === "ci-deploy" && Date.parse(claimedSnapshot.ci?.expiresAt || "") <= Date.now()) {
+		const ciExpiresAt = Date.parse(claimedSnapshot.ci?.expiresAt || "");
+		if (r.getString("action") === "ci-deploy" && (!Number.isFinite(ciExpiresAt) || ciExpiresAt <= Date.now())) {
 			r.set("status", "failed");
 			r.set("error", "Les identifiants CI éphémères ont expiré. Relancez le workflow GitHub.");
 			r.set("finishedAt", (/* @__PURE__ */ new Date()).toISOString());
 			scrubWebCiCredentials(r);
 			tx.save(r);
+			retryClaim = true;
 			return;
 		}
 		const claimedConfig = claimedSnapshot.config || {};
@@ -12008,6 +12402,7 @@ const HandleWebWorkerClaim = (e) => {
 			owner.set("lastError", message);
 			if (!owner.getString("activeDeployment")) owner.set("status", "failed");
 			tx.save(owner);
+			retryClaim = true;
 			return;
 		}
 		let github = null;
@@ -12029,6 +12424,7 @@ const HandleWebWorkerClaim = (e) => {
 				owner.set("lastError", message);
 				if (!owner.getString("activeDeployment")) owner.set("status", "failed");
 				tx.save(owner);
+				retryClaim = true;
 				return;
 			}
 			github = {
@@ -12056,7 +12452,10 @@ const HandleWebWorkerClaim = (e) => {
 		};
 	});
 	if (job) job.currentDesiredCommit = findWebApp(job.appId).getString("desiredCommit");
-	return webJson(e, { job });
+	return webJson(e, {
+		job,
+		retryClaim
+	});
 };
 const HandleWebWorkerReport = (e) => {
 	requireWorker(e);
@@ -12119,6 +12518,11 @@ const HandleWebWorkerReport = (e) => {
 		if (job.getString("status") !== "running") throw new BadRequestError("Déploiement non actif.");
 		const now = (/* @__PURE__ */ new Date()).toISOString();
 		job.set("heartbeatAt", now);
+		const superseded = !input.status && cancellable(job) && !job.getBool("cancelRequested") && tx.findRecordsByFilter("web_deployments", "appId={:app} && status=\"queued\" && (action=\"deploy\" || action=\"ci-deploy\")", "", 1, 0, { app: app.id }).length > 0;
+		if (superseded) {
+			job.set("cancelRequested", true);
+			job.set("cancelRequestedAt", now);
+		}
 		let phaseKey = typeof input.stageKey === "string" && phaseKeys[input.stageKey] ? input.stageKey : Object.keys(phaseKeys).find((k) => phaseKeys[k] === input.stage) || "";
 		if (input.stage === "Publication vérifiée") phaseKey = "publish";
 		if (phaseKey === "publish" || input.status === "ready") {
@@ -12196,6 +12600,7 @@ const HandleWebWorkerReport = (e) => {
 		tx.save(job);
 		response = {
 			ok: true,
+			superseded,
 			status: job.getString("status"),
 			desiredCommit: app.getString("desiredCommit"),
 			cancelRequested: job.getBool("cancelRequested"),
@@ -12472,7 +12877,7 @@ const HandleWebCloudflareMaintenance = () => {
 
 //#endregion
 //#region src/lib/handlers/webApps/domains.ts
-const COLLECTION$4 = "web_app_domains";
+const COLLECTION$5 = "web_app_domains";
 /** Message unique : ni le détenteur d'un nom (plateforme, instance, autre équipe), ni son existence ne se déduisent. */
 const UNAVAILABLE = "Ce domaine n’est pas disponible.";
 /** Vérifications DNS par minute et par application : chacune bloque une VM du pool de hooks jusqu'à ~18 s. */
@@ -12489,7 +12894,7 @@ const appId = (e) => e.request.pathValue("id");
 * (index unique partiel, migration 1793271000). Les lignes pending_dns expirent après 7 jours (maintenance).
 */
 const CLAIMED = "status != \"pending_dns\"";
-const rows$2 = (id) => $app.findRecordsByFilter(COLLECTION$4, "appId = {:id}", "host", 100, 0, { id });
+const rows$2 = (id) => $app.findRecordsByFilter(COLLECTION$5, "appId = {:id}", "host", 100, 0, { id });
 const publicIp = () => $os.getenv("WEB_APPS_PUBLIC_IP") || "";
 const platformAlias = (host) => {
 	const apex = $os.getenv("APEX_DOMAIN") || "monappli.re", label = host.endsWith("." + apex) ? host.slice(0, -(apex.length + 1)) : "";
@@ -12547,7 +12952,7 @@ const serialize$2 = (row) => ({
 const findDomain = (e) => {
 	const id = e.request.pathValue("domainId");
 	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Domaine invalide.");
-	const row = $app.findRecordById(COLLECTION$4, id);
+	const row = $app.findRecordById(COLLECTION$5, id);
 	if (row.getString("appId") !== appId(e)) throw new ForbiddenError("Accès refusé.");
 	return row;
 };
@@ -12566,11 +12971,11 @@ const assertWebDomainDnsAccess = (e) => {
 const assertNoWebDomainConflict = (hostname) => {
 	if ($os.getenv("WEB_APPS_ENABLED") !== "true" || !hostname) return;
 	try {
-		$app.findCollectionByNameOrId(COLLECTION$4);
+		$app.findCollectionByNameOrId(COLLECTION$5);
 	} catch {
 		return;
 	}
-	if ($app.findRecordsByFilter(COLLECTION$4, `host = {:host} && ${CLAIMED}`, "", 1, 0, { host: hostname.trim().replace(/\.$/, "").toLowerCase() }).length) throw new BadRequestError("Ce domaine est réservé à une application web.");
+	if ($app.findRecordsByFilter(COLLECTION$5, `host = {:host} && ${CLAIMED}`, "", 1, 0, { host: hostname.trim().replace(/\.$/, "").toLowerCase() }).length) throw new BadRequestError("Ce domaine est réservé à une application web.");
 };
 /** Conflits revérifiés à la création ET à la vérification (une ligne en attente ne réserve plus rien). */
 const assertFree = (host, appId, exceptId = "") => {
@@ -12583,7 +12988,7 @@ const assertFree = (host, appId, exceptId = "") => {
 		domainCollection = $app.findCollectionByNameOrId("domains");
 	} catch {}
 	if (domainCollection && $app.findRecordsByFilter("domains", "domain = {:host}", "", 1, 0, { host }).length) throw new BadRequestError(UNAVAILABLE);
-	if ($app.findRecordsByFilter(COLLECTION$4, `host = {:host} && id != {:except} && (appId = {:appId} || ${CLAIMED})`, "", 1, 0, {
+	if ($app.findRecordsByFilter(COLLECTION$5, `host = {:host} && id != {:except} && (appId = {:appId} || ${CLAIMED})`, "", 1, 0, {
 		host,
 		appId,
 		except: exceptId
@@ -12605,7 +13010,7 @@ const getVerifiedWebDomains = (id) => rows$2(id).filter((row) => [
 const getWebDomainRouteSnapshot = getVerifiedWebDomains;
 const getAllWebDomainRoutesSnapshot = () => {
 	try {
-		return $app.findRecordsByFilter(COLLECTION$4, "status = \"verified\" || status = \"pending_certificate\" || status = \"active\"", "host", 1e3, 0).map((row) => ({
+		return $app.findRecordsByFilter(COLLECTION$5, "status = \"verified\" || status = \"pending_certificate\" || status = \"active\"", "host", 1e3, 0).map((row) => ({
 			id: row.id,
 			appId: row.getString("appId"),
 			host: row.getString("host"),
@@ -12625,7 +13030,7 @@ const HandleWebDomainCreate = (e) => {
 	const host = normalize(webInput(e).hostname);
 	assertAliasAllowed(e, host);
 	assertFree(host, appId(e));
-	const row = new Record($app.findCollectionByNameOrId(COLLECTION$4));
+	const row = new Record($app.findCollectionByNameOrId(COLLECTION$5));
 	row.set("appId", appId(e));
 	row.set("host", host);
 	row.set("status", "pending_dns");
@@ -12697,7 +13102,7 @@ const verifyAndQueueWebDomain = (row, app, actorId) => {
 const HandleWebDomainDelete = (e) => {
 	const { user, app: found } = requireWebAppPermission(e, "domains.manage"), app = found, row = findDomain(e);
 	$app.runInTransaction((tx) => {
-		const current = tx.findRecordById(COLLECTION$4, row.id);
+		const current = tx.findRecordById(COLLECTION$5, row.id);
 		if (current.getString("appId") !== app.id) throw new ForbiddenError("Accès refusé.");
 		if (tx.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Attendez la fin du déploiement avant de supprimer ce domaine.");
 		assertCloudflareIdle(current.id, tx);
@@ -14359,10 +14764,10 @@ const validateTransferMetadata = (value, id, maxBytes) => {
 
 //#endregion
 //#region src/lib/handlers/instance/api/HandleInstanceTransfers.ts
-const COLLECTION$3 = "instance_transfers";
+const COLLECTION$4 = "instance_transfers";
 const ACTIVE_EXPORT = "direction = \"export\" && (status = \"queued\" || status = \"preparing\" || status = \"ready\")";
-const now$1 = () => (/* @__PURE__ */ new Date()).toISOString();
-const object$1 = (raw) => typeof raw === "string" ? JSON.parse(raw || "{}") : raw ? JSON.parse(JSON.stringify(raw)) : {};
+const now$2 = () => (/* @__PURE__ */ new Date()).toISOString();
+const object$2 = (raw) => typeof raw === "string" ? JSON.parse(raw || "{}") : raw ? JSON.parse(JSON.stringify(raw)) : {};
 const root = () => `${instanceTransferBackupTools.dataRoot()}/transfers`;
 const directory = (id) => `${root()}/${id}`;
 const credentialsPath = (id) => `${directory(id)}/curl-auth.conf`;
@@ -14393,15 +14798,15 @@ const removeCredentials = (id) => {
 	} catch {}
 };
 const command$1 = (name, ...args) => toString($os.cmd(name, ...args).combinedOutput()).trim();
-const find$1 = (id, app = $app) => {
+const find$2 = (id, app = $app) => {
 	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Transfert introuvable.");
-	return app.findRecordById(COLLECTION$3, id);
+	return app.findRecordById(COLLECTION$4, id);
 };
 const requireAdmin = (e) => {
 	if (!e.auth?.getBool("superAdmin")) throw new ForbiddenError("Le transfert de serveur est réservé au superadmin.");
 	return e.auth;
 };
-const body = (e) => object$1(e.requestInfo().body);
+const body = (e) => object$2(e.requestInfo().body);
 const pathId = (e) => e.request.pathValue("transferId");
 const saveStatus = (record, status, error = "") => {
 	record.set("status", status);
@@ -14409,7 +14814,7 @@ const saveStatus = (record, status, error = "") => {
 	$app.save(record);
 };
 const serialize$1 = (record) => {
-	const metadata = object$1(record.getString("metadata"));
+	const metadata = object$2(record.getString("metadata"));
 	const status = record.getString("status");
 	const exporting = record.getString("direction") === "export";
 	const totalBytes = Number(metadata.peer?.archive?.compressedBytes || metadata.compressedBytes || 0);
@@ -14459,7 +14864,7 @@ const assertFresh = (record) => {
 	if (Date.parse(record.getString("expiresAt")) <= Date.now()) throw new BadRequestError("Le lien de transfert a expiré.");
 };
 const peerRecord = (e, allowComplete = false) => {
-	const record = find$1(pathId(e));
+	const record = find$2(pathId(e));
 	const code = e.request.header.get("X-PocketHost-Transfer") || "";
 	if (record.getString("direction") !== "export" || !/^[A-Za-z0-9]{48}$/.test(code) || !$security.equal($security.sha256(code), record.getString("codeHash"))) throw new ForbiddenError("Code de transfert invalide.");
 	if (record.getString("status") === "revoked" || !allowComplete && record.getString("status") === "complete") throw new BadRequestError("Ce lien a été révoqué ou déjà utilisé.");
@@ -14472,7 +14877,7 @@ const assertClaim = (e, record) => {
 };
 const metadataForPeer = (record) => {
 	const instance = $app.findRecordById("instances", record.getString("instance"));
-	const frozen = object$1(record.getString("metadata")).instance;
+	const frozen = object$2(record.getString("metadata")).instance;
 	const result = {
 		protocol: INSTANCE_TRANSFER_PROTOCOL,
 		id: record.id,
@@ -14568,12 +14973,12 @@ exit "$transfer_status"
 `;
 const downloadArchive = (record, origin, id, total) => command$1("bash", "-c", DOWNLOAD_SCRIPT, "pockethost-transfer", credentialsPath(record.id), partialPath(record.id), `${origin}/api/instance-transfers/${id}/archive`, `${total}`, `${origin}/api/instance-transfers/${id}/progress`, $os.getenv("INSTANCE_TRANSFER_ALLOW_HTTP") === "1" ? "=http,https" : "=https");
 const reportImportProgress = (record, phase) => {
-	const metadata = object$1(record.getString("metadata"));
+	const metadata = object$2(record.getString("metadata"));
 	const total = Number(metadata.peer?.archive?.compressedBytes || 0);
 	const progress = {
 		phase,
 		downloadedBytes: record.getString("backup") ? total : Math.min(total, fileSize(partialPath(record.id))),
-		updatedAt: now$1()
+		updatedAt: now$2()
 	};
 	record.set("metadata", {
 		...metadata,
@@ -14603,7 +15008,7 @@ const HandleInstanceTransferCreate = (e) => {
 	instanceTransferBackupTools.assertNoRunningOperation(instance.id);
 	const base = ($os.getenv("APP_URL") || "").replace(/\/+$/, "");
 	const code = $security.randomString(48);
-	const record = new Record($app.findCollectionByNameOrId(COLLECTION$3));
+	const record = new Record($app.findCollectionByNameOrId(COLLECTION$4));
 	record.set("direction", "export");
 	record.set("status", "queued");
 	record.set("user", auth.id);
@@ -14615,7 +15020,7 @@ const HandleInstanceTransferCreate = (e) => {
 		subdomain: instance.getString("subdomain")
 	});
 	$app.runInTransaction((app) => {
-		if (app.findRecordsByFilter(COLLECTION$3, `${ACTIVE_EXPORT} && instance = {:id}`, "", 1, 0, { id: instance.id }).length) throw new BadRequestError("Un transfert est déjà en cours pour cette instance.");
+		if (app.findRecordsByFilter(COLLECTION$4, `${ACTIVE_EXPORT} && instance = {:id}`, "", 1, 0, { id: instance.id }).length) throw new BadRequestError("Un transfert est déjà en cours pour cette instance.");
 		app.save(record);
 		parseInstanceTransferLink(`${base}/api/instance-transfers/${record.id}#${code}`);
 		const current = app.findRecordById("instances", instance.id);
@@ -14632,7 +15037,7 @@ const HandleInstanceTransferCreate = (e) => {
 const HandleInstanceTransfersList = (e) => {
 	const auth = requireAdmin(e);
 	const instanceId = e.request.url.query().get("instance") || "";
-	const records = $app.findRecordsByFilter(COLLECTION$3, "user = {:user}" + (instanceId ? " && instance = {:instance}" : ""), "-created", 100, 0, {
+	const records = $app.findRecordsByFilter(COLLECTION$4, "user = {:user}" + (instanceId ? " && instance = {:instance}" : ""), "-created", 100, 0, {
 		user: auth.id,
 		instance: instanceId
 	});
@@ -14647,10 +15052,10 @@ const HandleInstanceTransferMetadata = (e) => {
 const HandleInstanceTransferRenewLink = (e) => {
 	const auth = requireAdmin(e);
 	const code = $security.randomString(48);
-	const record = find$1(pathId(e));
+	const record = find$2(pathId(e));
 	assertOwner(record, auth);
 	$app.runInTransaction((app) => {
-		const current = find$1(record.id, app);
+		const current = find$2(record.id, app);
 		if (current.getString("direction") !== "export" || ![
 			"queued",
 			"preparing",
@@ -14663,7 +15068,7 @@ const HandleInstanceTransferRenewLink = (e) => {
 	const link = `${($os.getenv("APP_URL") || "").replace(/\/+$/, "")}/api/instance-transfers/${record.id}#${code}`;
 	e.response.header().set("Cache-Control", "no-store");
 	return e.json(200, {
-		transfer: serialize$1(find$1(record.id)),
+		transfer: serialize$1(find$2(record.id)),
 		link,
 		code
 	});
@@ -14673,7 +15078,7 @@ const HandleInstanceTransferClaim = (e) => {
 	const claim = e.request.header.get("X-PocketHost-Claim") || "";
 	if (!/^[A-Za-z0-9]{48}$/.test(claim)) throw new BadRequestError("Identifiant cible invalide.");
 	$app.runInTransaction((app) => {
-		const current = find$1(record.id, app);
+		const current = find$2(record.id, app);
 		assertFresh(current);
 		if (!$security.equal(current.getString("codeHash"), $security.sha256(e.request.header.get("X-PocketHost-Transfer") || ""))) throw new ForbiddenError("Ce code a été remplacé.");
 		if (current.getString("status") !== "ready") throw new BadRequestError("Le transfert n’est pas disponible.");
@@ -14707,11 +15112,11 @@ const HandleInstanceTransferProgress = (e) => {
 		"failed"
 	].includes(input.phase)) throw new BadRequestError("Étape de transfert invalide.");
 	$app.runInTransaction((app) => {
-		const current = find$1(record.id, app);
+		const current = find$2(record.id, app);
 		assertClaim(e, current);
 		assertFresh(current);
 		if (current.getString("status") !== "ready" || !$security.equal(current.getString("codeHash"), $security.sha256(e.request.header.get("X-PocketHost-Transfer") || ""))) throw new BadRequestError("Transfert indisponible.");
-		const metadata = object$1(current.getString("metadata"));
+		const metadata = object$2(current.getString("metadata"));
 		const total = Number(metadata.compressedBytes || 0);
 		if (!Number.isSafeInteger(input.downloadedBytes) || input.downloadedBytes < 0 || input.downloadedBytes > total) throw new BadRequestError("Volume transféré invalide.");
 		current.set("metadata", {
@@ -14719,7 +15124,7 @@ const HandleInstanceTransferProgress = (e) => {
 			progress: {
 				phase: input.phase,
 				downloadedBytes: input.downloadedBytes,
-				updatedAt: now$1()
+				updatedAt: now$2()
 			}
 		});
 		app.save(current);
@@ -14729,7 +15134,7 @@ const HandleInstanceTransferProgress = (e) => {
 const HandleInstanceTransferComplete = (e) => {
 	const record = peerRecord(e, true);
 	$app.runInTransaction((app) => {
-		const current = find$1(record.id, app);
+		const current = find$2(record.id, app);
 		assertClaim(e, current);
 		if (!["ready", "complete"].includes(current.getString("status")) || !$security.equal(current.getString("codeHash"), $security.sha256(e.request.header.get("X-PocketHost-Transfer") || ""))) throw new BadRequestError("Transfert indisponible.");
 		if (current.getString("status") !== "complete") assertFresh(current);
@@ -14773,7 +15178,7 @@ const HandleInstanceTransferImport = (e) => {
 	instance.set("secrets", metadata.instance.secrets || []);
 	instance.set("webhooks", metadata.instance.webhooks || []);
 	instance.set("dev", false);
-	const record = new Record($app.findCollectionByNameOrId(COLLECTION$3));
+	const record = new Record($app.findCollectionByNameOrId(COLLECTION$4));
 	const claim = $security.randomString(48);
 	try {
 		$app.runInTransaction((app) => {
@@ -14813,7 +15218,7 @@ const HandleInstanceTransferImport = (e) => {
 };
 const HandleInstanceTransferCancel = (e) => {
 	const auth = requireAdmin(e);
-	const record = find$1(pathId(e));
+	const record = find$2(pathId(e));
 	assertOwner(record, auth);
 	if (record.getString("direction") !== "export" || ![
 		"queued",
@@ -14821,7 +15226,7 @@ const HandleInstanceTransferCancel = (e) => {
 		"failed"
 	].includes(record.getString("status"))) throw new BadRequestError("Attendez la fin de la préparation avant d’annuler. Un transfert terminé ne peut pas être annulé.");
 	$app.runInTransaction((app) => {
-		const current = find$1(record.id, app);
+		const current = find$2(record.id, app);
 		if (![
 			"queued",
 			"ready",
@@ -14829,48 +15234,48 @@ const HandleInstanceTransferCancel = (e) => {
 		].includes(current.getString("status"))) throw new BadRequestError("Transfert en cours de préparation.");
 		current.set("status", "revoked");
 		app.save(current);
-		if (object$1(current.getString("metadata")).wasRunning) {
+		if (object$2(current.getString("metadata")).wasRunning) {
 			const instance = app.findRecordById("instances", current.getString("instance"));
 			instance.set("power", true);
 			app.save(instance);
 		}
 	});
-	return e.json(200, { transfer: serialize$1(find$1(record.id)) });
+	return e.json(200, { transfer: serialize$1(find$2(record.id)) });
 };
 const HandleInstanceTransferRetry = (e) => {
 	const auth = requireAdmin(e);
-	const record = find$1(pathId(e));
+	const record = find$2(pathId(e));
 	assertOwner(record, auth);
 	assertFresh(record);
 	if (record.getString("status") !== "failed" || record.getString("direction") !== "import" || !exists(credentialsPath(record.id))) throw new BadRequestError("Ce transfert ne peut pas être repris. Préparez un nouveau lien sur la source.");
 	if ($app.findRecordById("instances", record.getString("instance")).getBool("power")) throw new BadRequestError("Arrêtez l’instance cible avant de reprendre le transfert.");
 	$app.runInTransaction((app) => {
-		const current = find$1(record.id, app);
+		const current = find$2(record.id, app);
 		if (current.getString("status") !== "failed") throw new BadRequestError("Ce transfert est déjà en cours.");
 		current.set("status", "queued");
 		current.set("error", "");
 		app.save(current);
 	});
-	return e.json(202, { transfer: serialize$1(find$1(record.id)) });
+	return e.json(202, { transfer: serialize$1(find$2(record.id)) });
 };
 const BeforeUpdate_instanceTransferPower = (e) => {
 	if (!e.record) return;
 	if (!e.record.getBool("power")) return;
 	try {
-		e.app.findCollectionByNameOrId(COLLECTION$3);
+		e.app.findCollectionByNameOrId(COLLECTION$4);
 	} catch {
 		return;
 	}
-	if (e.app.findRecordsByFilter(COLLECTION$3, "instance = {:id} && (direction = \"export\" && (status = \"queued\" || status = \"preparing\" || status = \"ready\") || (direction = \"import\" && status != \"complete\" && status != \"revoked\"))", "", 1, 0, { id: e.record.id }).length) throw new BadRequestError("Terminez ou annulez le transfert avant de démarrer cette instance.");
+	if (e.app.findRecordsByFilter(COLLECTION$4, "instance = {:id} && (direction = \"export\" && (status = \"queued\" || status = \"preparing\" || status = \"ready\") || (direction = \"import\" && status != \"complete\" && status != \"revoked\"))", "", 1, 0, { id: e.record.id }).length) throw new BadRequestError("Terminez ou annulez le transfert avant de démarrer cette instance.");
 };
 const BeforeDelete_instanceTransfer = (e) => {
 	if (!e.record) return;
 	try {
-		e.app.findCollectionByNameOrId(COLLECTION$3);
+		e.app.findCollectionByNameOrId(COLLECTION$4);
 	} catch {
 		return;
 	}
-	if (e.app.findRecordsByFilter(COLLECTION$3, "instance = {:id} && (status = \"queued\" || status = \"preparing\" || status = \"ready\" || status = \"downloading\" || status = \"restoring\")", "", 1, 0, { id: e.record.id }).length) throw new BadRequestError("Terminez ou annulez le transfert avant de supprimer cette instance.");
+	if (e.app.findRecordsByFilter(COLLECTION$4, "instance = {:id} && (status = \"queued\" || status = \"preparing\" || status = \"ready\" || status = \"downloading\" || status = \"restoring\")", "", 1, 0, { id: e.record.id }).length) throw new BadRequestError("Terminez ou annulez le transfert avant de supprimer cette instance.");
 };
 const AfterDelete_instanceTransfer = (e) => {
 	if (e.record) $os.removeAll(directory(e.record.id));
@@ -14883,7 +15288,7 @@ const prepareExport = (record) => {
 		$app.save(record);
 	});
 	record.set("metadata", {
-		...object$1(record.getString("metadata")),
+		...object$2(record.getString("metadata")),
 		instance: metadataForPeer(record).instance,
 		compressedBytes: Number(backup.get("compressedBytes"))
 	});
@@ -14893,7 +15298,7 @@ const performImport = (record) => {
 	assertFresh(record);
 	const instance = $app.findRecordById("instances", record.getString("instance"));
 	if (instance.getBool("power")) throw new Error("L’instance cible doit rester arrêtée.");
-	const metadata = object$1(record.getString("metadata")).peer;
+	const metadata = object$2(record.getString("metadata")).peer;
 	const peer = parsePeer(`${record.getString("sourceUrl")}/api/instance-transfers/${record.getString("remoteId")}#${"x".repeat(48)}`);
 	const archive = metadata.archive;
 	let backup;
@@ -14923,8 +15328,8 @@ const performImport = (record) => {
 const HandleInstanceTransferDispatcher = () => {
 	let record;
 	$app.runInTransaction((app) => {
-		if (app.findRecordsByFilter(COLLECTION$3, "status = \"preparing\" || status = \"downloading\" || status = \"restoring\"", "", 1, 0).length) return;
-		const queued = app.findRecordsByFilter(COLLECTION$3, "status = \"queued\"", "created", 1, 0);
+		if (app.findRecordsByFilter(COLLECTION$4, "status = \"preparing\" || status = \"downloading\" || status = \"restoring\"", "", 1, 0).length) return;
+		const queued = app.findRecordsByFilter(COLLECTION$4, "status = \"queued\"", "created", 1, 0);
 		if (!queued.length) return;
 		record = queued[0];
 		record.set("status", record.getString("direction") === "export" ? "preparing" : "downloading");
@@ -14942,11 +15347,11 @@ const HandleInstanceTransferDispatcher = () => {
 };
 const HandleInstanceTransferBootstrap = () => {
 	try {
-		$app.findCollectionByNameOrId(COLLECTION$3);
+		$app.findCollectionByNameOrId(COLLECTION$4);
 	} catch {
 		return;
 	}
-	const interrupted = $app.findRecordsByFilter(COLLECTION$3, "status = \"preparing\" || status = \"downloading\" || status = \"restoring\"", "", 500, 0);
+	const interrupted = $app.findRecordsByFilter(COLLECTION$4, "status = \"preparing\" || status = \"downloading\" || status = \"restoring\"", "", 500, 0);
 	for (const record of interrupted) {
 		if (!record) continue;
 		if (record.getString("backup")) {
@@ -14958,7 +15363,7 @@ const HandleInstanceTransferBootstrap = () => {
 			if (backup.getString("restoreState") === "running") {
 				backup.set("restoreState", "failed");
 				backup.set("restoreError", "Restauration interrompue. Le transfert peut être repris.");
-				backup.set("restoreUpdatedAt", now$1());
+				backup.set("restoreUpdatedAt", now$2());
 			}
 			$app.save(backup);
 		}
@@ -16731,7 +17136,7 @@ const HandleUserWelcomeMessage = (e) => {
 
 //#endregion
 //#region src/lib/handlers/webApps/members.ts
-const ID$1 = /^[a-z0-9]{15}$/;
+const ID$4 = /^[a-z0-9]{15}$/;
 const fail = (error) => {
 	if (!error) return;
 	if (error.code === "forbidden") throw new ForbiddenError(error.message);
@@ -16763,7 +17168,7 @@ const memberView = (row, selfId, store = $app) => ({
 const ownerCount = (projectId, store) => store.findRecordsByFilter(WEB_MEMBERS, "project={:id} && role=\"owner\"", "", 1e3, 0, { id: projectId }).length;
 const memberOf = (e, projectId, store) => {
 	const id = e.request.pathValue("memberId");
-	if (!ID$1.test(id || "")) throw new BadRequestError("Membre invalide.");
+	if (!ID$4.test(id || "")) throw new BadRequestError("Membre invalide.");
 	let row;
 	try {
 		row = store.findRecordById(WEB_MEMBERS, id);
@@ -16954,7 +17359,7 @@ const HandleWebProjectMembersAudit = (e) => {
 */
 const assignedUser = (e) => {
 	const id = e.request.pathValue("userId");
-	if (!ID$1.test(id || "")) throw new BadRequestError("Utilisateur invalide.");
+	if (!ID$4.test(id || "")) throw new BadRequestError("Utilisateur invalide.");
 	try {
 		return $app.findRecordById("users", id);
 	} catch {
@@ -16980,7 +17385,7 @@ const HandleWebUserProjectsGet = (e) => {
 	return webJson(e, assignments(assignedUser(e)));
 };
 const validateWebUserProjects = (projects) => {
-	if (!Array.isArray(projects) || projects.length > 1e3 || projects.some((p) => !p || typeof p !== "object" || Array.isArray(p) || typeof p.projectId !== "string" || Object.keys(p).some((key) => !["projectId", "role"].includes(key)) || !ID$1.test(p.projectId || "") || !isWebRole(p.role))) throw new BadRequestError("Liste attendue : [{ projectId, role }] avec un rôle viewer, developer, admin ou owner.");
+	if (!Array.isArray(projects) || projects.length > 1e3 || projects.some((p) => !p || typeof p !== "object" || Array.isArray(p) || typeof p.projectId !== "string" || Object.keys(p).some((key) => !["projectId", "role"].includes(key)) || !ID$4.test(p.projectId || "") || !isWebRole(p.role))) throw new BadRequestError("Liste attendue : [{ projectId, role }] avec un rôle viewer, developer, admin ou owner.");
 	if (new Set(projects.map((p) => p.projectId)).size !== projects.length) throw new BadRequestError("Un projet ne peut être sélectionné qu’une fois.");
 	return projects;
 };
@@ -17461,6 +17866,195 @@ const HandleOperatorAdminDiskCleanupRun = (e) => {
 };
 
 //#endregion
+//#region src/lib/handlers/operatorAdmin/controls.ts
+const local = (action, body) => {
+	let result;
+	try {
+		result = JSON.parse(toString($os.cmd("/usr/bin/timeout", "30", "/usr/bin/python3", "-I", "/opt/pockethost-web/platform_operator_socket.py", "request", action, JSON.stringify(body)).output()));
+	} catch {
+		throw new ApiError(503, "Le contrôle local est indisponible. Les services clients restent en service.");
+	}
+	if (!result.ok) throw new ApiError(result.status === 409 ? 409 : result.status === 400 ? 400 : 503, result.message || "Contrôle local indisponible.");
+	return result.value;
+};
+const HandleOperatorControls = (e) => {
+	requireOperatorAdmin(e);
+	e.response.header().set("Cache-Control", "no-store");
+	return operationJson(e, local("status", {}));
+};
+const HandleOperatorMemory = (e) => {
+	const actor = requireOperatorAdmin(e);
+	const body = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	if (typeof body.id !== "string" || !/^[a-z0-9]{15}$/.test(body.id)) throw new BadRequestError("Base invalide.");
+	const instance = $app.findRecordById("instances", body.id);
+	const result = local("memory", body);
+	recordInstanceAction(instance, actor, "memory.updated", {
+		mode: body.mode,
+		maximumMiB: body.maximumMiB,
+		restartRequired: false
+	});
+	return operationJson(e, result);
+};
+const HandleOperatorDeploymentMaintenance = (e) => {
+	const actor = requireOperatorAdmin(e);
+	const body = JSON.parse(JSON.stringify(e.requestInfo().body || {}));
+	let result;
+	if (body.paused === true && Object.keys(body).sort().join(",") === "paused,seconds") result = local("pause", {
+		owner: `admin-${actor.id}-${$security.randomString(8).toLowerCase()}`,
+		seconds: body.seconds
+	});
+	else if (body.paused === false && Object.keys(body).sort().join(",") === "owner,paused") result = local("resume", { owner: body.owner });
+	else throw new BadRequestError("Pause ou reprise invalide.");
+	$app.logger().info("Deployment admission maintenance updated", "actor", actor.id, "paused", body.paused);
+	return operationJson(e, result);
+};
+
+//#endregion
+//#region ../common/platformFleet.ts
+/** Read-only cross-host DTO. No native records or remote-provided URLs cross this boundary. */
+const fleetPeers = [
+	"app3",
+	"app4",
+	"app5"
+];
+const invalid$2 = () => {
+	throw Error("Rapport de flotte invalide.");
+};
+const obj = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : invalid$2();
+const text$1 = (value, max) => typeof value === "string" && value.length <= max ? value : invalid$2();
+const date$1 = (value) => {
+	const result = text$1(value, 40);
+	return Number.isFinite(Date.parse(result)) ? new Date(result).toISOString() : invalid$2();
+};
+const number$1 = (value, max = Number.MAX_SAFE_INTEGER) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : invalid$2();
+const count = (value) => {
+	const n = number$1(value, Number.MAX_SAFE_INTEGER);
+	return Number.isInteger(n) ? n : invalid$2();
+};
+const optionalNumber$1 = (value, max = Number.MAX_SAFE_INTEGER) => value === null ? null : number$1(value, max);
+const states$1 = [
+	"ok",
+	"warning",
+	"error",
+	"unknown",
+	"paused"
+];
+const stale = (value, age, now) => value === null || now - Date.parse(value) > age || Date.parse(value) > now + 3e4;
+/** Reconstruct every field; peer identity, links, counts and freshness are never accepted blindly. */
+function parsePlatformFleet(value, now = Date.now()) {
+	const raw = obj(value);
+	if (raw.version !== 1 || !fleetPeers.includes(raw.self) || !Array.isArray(raw.servers) || raw.servers.length !== 3) return invalid$2();
+	const servers = raw.servers.map((input) => {
+		const row = obj(input);
+		if (!fleetPeers.includes(row.key)) return invalid$2();
+		const unavailable = {
+			key: row.key,
+			hostname: `${row.key}.monappli.re`,
+			access: "unavailable",
+			checkedAt: new Date(now).toISOString()
+		};
+		try {
+			if (row.hostname !== `${row.key}.monappli.re` || ![
+				"granted",
+				"denied",
+				"unavailable",
+				"notConfigured"
+			].includes(row.access)) return invalid$2();
+			const server = {
+				key: row.key,
+				hostname: `${row.key}.monappli.re`,
+				access: row.access,
+				checkedAt: date$1(row.checkedAt)
+			};
+			if (row.access !== "granted") return server;
+			const counts = obj(row.counts);
+			server.counts = {
+				databases: count(counts.databases),
+				applications: count(counts.applications),
+				databasesRunning: count(counts.databasesRunning),
+				applicationsRunning: count(counts.applicationsRunning),
+				deploymentsRunning: count(counts.deploymentsRunning),
+				deploymentsQueued: count(counts.deploymentsQueued),
+				deploymentsFailed24h: count(counts.deploymentsFailed24h)
+			};
+			if (!Array.isArray(row.inventory) || row.inventory.length > 2e3 || typeof row.truncated !== "boolean") return invalid$2();
+			server.inventory = row.inventory.map((value) => {
+				const item = obj(value), id = text$1(item.id, 15);
+				if (!/^[a-z0-9]{15}$/.test(id) || !["database", "application"].includes(item.kind)) return invalid$2();
+				return {
+					id,
+					kind: item.kind,
+					name: text$1(item.name, 200),
+					status: text$1(item.status, 40),
+					cpuPercent: optionalNumber$1(item.cpuPercent, 100),
+					memoryBytes: optionalNumber$1(item.memoryBytes),
+					diskBytes: optionalNumber$1(item.diskBytes)
+				};
+			});
+			if (new Set(server.inventory.map((item) => `${item.kind}:${item.id}`)).size !== server.inventory.length) return invalid$2();
+			server.truncated = row.truncated;
+			server.metrics = null;
+			if (row.metrics !== null) {
+				const metrics = obj(row.metrics), collectedAt = metrics.collectedAt === null ? null : date$1(metrics.collectedAt);
+				server.metrics = {
+					collectedAt,
+					stale: metrics.stale === true || stale(collectedAt, 6e4, now),
+					cpuPercent: optionalNumber$1(metrics.cpuPercent, 100),
+					memoryTotalBytes: optionalNumber$1(metrics.memoryTotalBytes),
+					memoryUsedBytes: optionalNumber$1(metrics.memoryUsedBytes),
+					diskTotalBytes: optionalNumber$1(metrics.diskTotalBytes),
+					diskUsedBytes: optionalNumber$1(metrics.diskUsedBytes)
+				};
+			}
+			server.monitoring = null;
+			if (row.monitoring !== null) {
+				const monitor = obj(row.monitoring), counts = obj(monitor.counts), checkedAt = monitor.checkedAt === null ? null : date$1(monitor.checkedAt);
+				const clean = Object.fromEntries(states$1.map((state) => [state, count(counts[state])]));
+				server.monitoring = {
+					checkedAt,
+					stale: monitor.stale === true || stale(checkedAt, 18e4, now),
+					counts: clean,
+					state: [
+						"error",
+						"warning",
+						"unknown"
+					].find((state) => clean[state] > 0) || "ok"
+				};
+			}
+			return server;
+		} catch {
+			return unavailable;
+		}
+	});
+	if (new Set(servers.map((row) => row.key)).size !== 3) return invalid$2();
+	return {
+		version: 1,
+		checkedAt: date$1(raw.checkedAt),
+		self: raw.self,
+		servers: fleetPeers.map((key) => servers.find((row) => row.key === key))
+	};
+}
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/fleet.ts
+/** Fixed-peer read only helper; actor identity is taken from validated native auth, never a query/body. */
+const HandleOperatorFleet = (e) => {
+	const actor = requireOperatorAdmin(e);
+	if (!actor.getBool("verified")) throw new ForbiddenError("Une adresse e-mail vérifiée est requise.");
+	e.response.header().set("Cache-Control", "no-store");
+	try {
+		const result = toString($os.cmd("/usr/bin/timeout", "13", "/usr/bin/python3", "-I", "/opt/pockethost-web/platform_fleet_reader.py", "request", JSON.stringify({
+			version: 1,
+			email: actor.getString("email")
+		})).output());
+		if (result.length > 2 * 1024 * 1024) throw Error("Oversized result");
+		return e.json(200, parsePlatformFleet(JSON.parse(result)));
+	} catch {
+		throw new ApiError(503, "La vue des serveurs est indisponible. Les sites et bases restent en service.");
+	}
+};
+
+//#endregion
 //#region ../common/platformMonitoring.ts
 const states = [
 	"ok",
@@ -17514,6 +18108,194 @@ function parseMonitoringReport(value) {
 const monitoringStale = (report, now = Date.now()) => now - Date.parse(report.checkedAt) > 18e4 || Date.parse(report.checkedAt) > now + 3e4;
 
 //#endregion
+//#region ../common/platformDiagnostics.ts
+const ID$3 = /^[a-z0-9]{15}$/;
+const issue = (row) => !!row && [
+	"error",
+	"warning",
+	"unknown"
+].includes(row.state);
+const severity = (rows) => rows.some((row) => row.state === "error") ? "error" : rows.some((row) => row.state === "warning") ? "warning" : "unknown";
+const fresh = (date, now, max) => {
+	const age = now - Date.parse(date);
+	return Number.isFinite(age) && age >= -3e4 && age <= max;
+};
+/** Only a known category crosses the API boundary; deployment errors/logs can contain project secrets. */
+function deploymentDiagnosticCategory(status, error) {
+	if (/Un commit plus récent est en attente|Remplacé par un déploiement plus récent/.test(error)) return "superseded";
+	if (status === "cancelled") return "other";
+	if (/Capacité toujours insuffisante|capacité insuffisante dans le budget web|Admission suspendue/.test(error)) return "resources";
+	if (/La commande de construction a échoué/.test(error)) return "build";
+	if (/La nouvelle version ne passe pas le contrôle de santé/.test(error)) return "health";
+	if (/Worker interrompu pendant le déploiement|Worker injoignable|battement.*expiré/.test(error)) return "interrupted";
+	return "other";
+}
+/**
+* Read-only explanations of an existing snapshot. A declared dependency is not proof of causality. No signal is removed
+* or marked recovered; alert confirmation/delivery uses the original report.
+*/
+function platformDiagnostics(report, bindings = [], events = [], options = {}) {
+	const now = options.now ?? Date.now(), stale = monitoringStale(report, now), byId = new Map(report.checks.map((row) => [row.id, row])), consumed = /* @__PURE__ */ new Set(), items = [];
+	const safeEvents = events.filter((row) => ID$3.test(row.id) && ID$3.test(row.appId) && ["failed", "cancelled"].includes(row.status) && [
+		"resources",
+		"build",
+		"health",
+		"superseded",
+		"interrupted",
+		"other"
+	].includes(row.category) && fresh(row.finishedAt, now, 36e5)).sort((a, b) => Date.parse(b.finishedAt) - Date.parse(a.finishedAt)).slice(0, 20).map(({ id, appId, status, finishedAt, category }) => ({
+		id,
+		appId,
+		appName: byId.get("web:" + appId)?.name || "Application " + appId,
+		status,
+		finishedAt,
+		category
+	}));
+	const base = {
+		checkedAt: report.checkedAt,
+		stale,
+		dependencyInventoryAvailable: options.dependencyInventoryAvailable ?? true,
+		eventInventoryAvailable: options.eventInventoryAvailable ?? true,
+		events: safeEvents
+	};
+	if (stale) return {
+		...base,
+		items: [{
+			id: "report-stale",
+			title: "La supervision ne fournit plus de mesure actuelle",
+			state: "unknown",
+			explanation: "Ce relevé ne permet pas de déterminer l’état actuel des services ni la cause d’un incident.",
+			evidence: [],
+			checkIds: [],
+			additionalEvidence: 0,
+			hypotheses: [],
+			nextAction: "Vérifier le collecteur de supervision, puis actualiser le relevé avant de conclure à une panne."
+		}],
+		omittedCount: 0
+	};
+	const add = (id, title, rows, explanation, nextAction, hypotheses = [], extraEvidence = []) => {
+		const checks = rows.filter((row) => issue(row) && !consumed.has(row.id));
+		if (!checks.length && !extraEvidence.length) return;
+		for (const row of checks) consumed.add(row.id);
+		const evidence = [...checks.map(({ id, name, detail, state, href }) => ({
+			id,
+			name,
+			detail,
+			state,
+			...href ? { href } : {},
+			checkedAt: report.checkedAt
+		})), ...extraEvidence];
+		items.push({
+			id,
+			title,
+			state: evidence.some((row) => row.state === "error") ? "error" : checks.length ? severity(checks) : "warning",
+			explanation,
+			evidence: evidence.slice(0, 25),
+			checkIds: checks.map((row) => row.id),
+			additionalEvidence: Math.max(0, evidence.length - 25),
+			hypotheses,
+			nextAction
+		});
+	};
+	const selected = (ids) => ids.flatMap((id) => byId.has(id) ? [byId.get(id)] : []);
+	if (issue(byId.get("web-worker"))) add("hosting-control", "Le pilotage des hébergements est à vérifier", selected([
+		"web-worker",
+		"web-runtime-metrics",
+		"web-queue"
+	]).concat(report.checks.filter((row) => row.id.startsWith("web:") && row.state === "unknown")), "Le worker fournit les mesures des conteneurs et pilote les déploiements. Ces signaux partagent ce circuit de contrôle ; leur absence ne prouve pas l’arrêt des sites publiés.", "Lire l’état et les journaux du worker, puis contrôler une URL publiée indépendamment. Ne pas redémarrer les sites pour rétablir une mesure.");
+	if (issue(byId.get("docker:databases"))) add("database-inventory", "L’inventaire des bases est indisponible", selected(["docker:databases", "database-inventory"]), "Le collecteur n’a pas pu lire l’inventaire Docker. Il ne dispose donc pas d’une réponse HTTP indépendante pour chaque base dans ce relevé.", "Vérifier l’accès du collecteur au moteur Docker et consulter la santé locale d’une base, sans la redémarrer.");
+	const safeBindings = bindings.filter((row) => ID$3.test(row.id) && ID$3.test(row.appId) && ID$3.test(row.instanceId));
+	for (const database of report.checks.filter((row) => row.id.startsWith("database:") && issue(row))) {
+		const instanceId = database.id.slice(9), links = safeBindings.filter((row) => row.instanceId === instanceId), apps = [...new Set(links.map((row) => row.appId))].flatMap((id) => byId.has("web:" + id) ? [byId.get("web:" + id)] : []), failedApps = apps.filter((row) => issue(row) && !consumed.has(row.id));
+		add("dependency:" + instanceId, `${database.name} · base à vérifier`, [database, ...failedApps], links.length ? `${links.length} liaison(s) privée(s) déclarée(s) vers cette base. La sonde de base teste son accès local, indépendamment du domaine public et de Cloudflare.` : "La sonde de base teste son accès local, indépendamment du domaine public et de Cloudflare.", "Vérifier d’abord la réponse locale et les journaux de la base, puis la liaison privée et l’action en erreur dans l’application. Conserver les services en place pendant le diagnostic.", failedApps.length ? ["Le défaut observé sur la base peut contribuer aux erreurs des applications liées. Le lien déclaré et des échecs simultanés ne prouvent pas cette cause."] : [], apps.filter((row) => row.state === "ok").map(({ id, name, detail, state, href }) => ({
+			id,
+			name,
+			detail,
+			state,
+			href,
+			checkedAt: report.checkedAt
+		})));
+	}
+	const linkErrors = {
+		broker_unavailable: "Le service de liaison privée est indisponible.",
+		proxy_unavailable: "Le relais local de l’application est indisponible.",
+		base_stopped: "La liaison signale une base arrêtée.",
+		authorization_revoked: "L’autorisation de la liaison a été révoquée.",
+		configuration: "La liaison signale une configuration invalide."
+	};
+	for (const link of safeBindings) {
+		if (!fresh(link.lastSeenAt, now, 45e3) || link.status !== "unavailable" || !linkErrors[link.errorCode]) continue;
+		const app = byId.get("web:" + link.appId), database = byId.get("database:" + link.instanceId);
+		if (consumed.has("web:" + link.appId)) continue;
+		add("private-link:" + link.id, `${app?.name || "Application"} · liaison privée en défaut`, app ? [app] : [], "Le relais a signalé une difficulté sur cette liaison précise. Une réponse HTTP du site ou de la base ne valide pas toutes les opérations qui utilisent ce relais.", "Ouvrir la liaison privée de l’application et vérifier son autorisation et son état. Ne pas changer les URL publiques sans vérifier les variables serveur utilisées.", issue(app) ? ["Le défaut de liaison peut expliquer l’erreur du site ; le résultat de la sonde HTTP seul ne confirme pas cette causalité."] : [], [{
+			id: "private-link:" + link.id,
+			name: "Liaison vers " + (database?.name || "la base"),
+			state: "error",
+			detail: linkErrors[link.errorCode],
+			href: "/applications/" + link.appId,
+			checkedAt: link.lastSeenAt
+		}]);
+	}
+	for (const row of report.checks) {
+		if (!issue(row) || consumed.has(row.id)) continue;
+		const origin = row.id === "origin", web = row.id.startsWith("web:"), memory = row.id === "ram" || row.id.startsWith("web-memory:"), disk = row.id.startsWith("disk:") || row.id.startsWith("storage:"), deployment = row.id === "deployments-failed";
+		add(row.id, row.name, [row], origin ? "Cette sonde vérifie l’accès HTTPS à la plateforme et son certificat. Elle ne teste pas le moteur des bases et ne démontre pas une panne de celles-ci." : web ? "La sonde de la publication a signalé ce résultat. Elle n’identifie pas, à elle seule, la cause dans le code, la base, les ressources ou le routage." : memory ? "La mesure signale une pression ou un plafond de mémoire. Un pourcentage élevé ne prouve ni une fuite ni un arrêt du processus." : disk ? "La mesure de stockage nécessite une vérification. Elle ne prouve pas la perte de données." : deployment ? "Une tentative de déploiement et la version publiée sont contrôlées séparément. Les événements récents ci-dessous aident à retrouver la tentative concernée." : "Le contrôle ci-dessous est une observation. Sa cause doit être confirmée avant toute action sur un service.", origin ? "Vérifier le pare-feu HTTPS, le certificat et la réponse directe à l’origine, puis comparer avec le chemin public." : web ? "Ouvrir la santé de l’application et le journal de la version concernée, puis vérifier ses dépendances déclarées." : memory ? "Comparer la mémoire réellement utilisée, le plafond et la mémoire disponible du serveur dans Ressources avant de modifier un budget." : disk ? "Examiner la répartition et les quotas dans Ressources. Identifier les fichiers avant tout nettoyage." : deployment ? "Ouvrir le déploiement concerné et consulter son journal masqué. Contrôler séparément la disponibilité de la version publiée." : row.group === "backups" ? "Consulter le dernier journal de sauvegarde et vérifier la disponibilité de l’archive. Une sauvegarde verte ne remplace pas un essai de restauration." : "Consulter l’état et les journaux du composant concerné ; confirmer la cause avant de modifier ou redémarrer un service.");
+	}
+	items.sort((a, b) => [
+		"error",
+		"warning",
+		"unknown"
+	].indexOf(a.state) - [
+		"error",
+		"warning",
+		"unknown"
+	].indexOf(b.state));
+	return {
+		...base,
+		items: items.slice(0, 100),
+		omittedCount: Math.max(0, items.length - 100)
+	};
+}
+
+//#endregion
+//#region src/lib/handlers/operatorAdmin/diagnostics.ts
+/** Bounded metadata reads only. Never decrypt configuration or load deployment logs for explanations. */
+const readOperatorDiagnostics = (report, store = $app) => {
+	const bindings = [], events = [];
+	let dependencyInventoryAvailable = true, eventInventoryAvailable = true;
+	try {
+		const rows = store.findRecordsByFilter("web_private_db_bindings", "enabled=true", "id", 5001, 0);
+		if (rows.length > 5e3) throw Error("Dependency inventory bound exceeded");
+		for (const row of rows) bindings.push({
+			id: row.id,
+			appId: row.getString("appId"),
+			instanceId: row.getString("instanceId"),
+			status: row.getString("status"),
+			errorCode: row.getString("errorCode"),
+			lastSeenAt: row.getString("lastSeenAt")
+		});
+	} catch {
+		dependencyInventoryAvailable = false;
+	}
+	try {
+		const rows = store.findRecordsByFilter("web_deployments", "(status=\"failed\" || status=\"cancelled\") && finishedAt>{:cutoff}", "-finishedAt", 20, 0, { cutoff: (/* @__PURE__ */ new Date(Date.now() - 36e5)).toISOString().replace("T", " ") });
+		for (const row of rows) events.push({
+			id: row.id,
+			appId: row.getString("appId"),
+			status: row.getString("status"),
+			finishedAt: row.getString("finishedAt"),
+			category: deploymentDiagnosticCategory(row.getString("status"), row.getString("error"))
+		});
+	} catch {
+		eventInventoryAvailable = false;
+	}
+	return platformDiagnostics(report, bindings, events, {
+		dependencyInventoryAvailable,
+		eventInventoryAvailable
+	});
+};
+
+//#endregion
 //#region src/lib/handlers/operatorAdmin/monitoring.ts
 const webhookKey = () => {
 	const key = $os.getenv("PLATFORM_MONITORING_KEY") || $os.getenv("WEB_APPS_MASTER_KEY");
@@ -17552,6 +18334,7 @@ const HandleOperatorMonitoring = (e) => {
 			available: true,
 			stale: monitoringStale(report),
 			report,
+			diagnostics: readOperatorDiagnostics(report),
 			settings: publicSettings(monitoringSettings())
 		});
 	} catch {
@@ -17559,6 +18342,7 @@ const HandleOperatorMonitoring = (e) => {
 			available: false,
 			stale: true,
 			report: null,
+			diagnostics: null,
 			settings: publicSettings(monitoringSettings())
 		});
 	}
@@ -17641,7 +18425,7 @@ const PLATFORM_RESOURCE_RANGES = [
 const invalid$1 = () => {
 	throw Error("Mesures de ressources invalides.");
 };
-const object = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : invalid$1();
+const object$1 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : invalid$1();
 const number = (value, maximum = Number.MAX_SAFE_INTEGER) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum ? value : invalid$1();
 const optionalNumber = (value, maximum = Number.MAX_SAFE_INTEGER) => value === null ? null : number(value, maximum);
 const date = (value) => {
@@ -17650,7 +18434,7 @@ const date = (value) => {
 };
 const text = (value, maximum) => typeof value === "string" && value.length <= maximum ? value : invalid$1();
 const values = (value) => {
-	const raw = object(value);
+	const raw = object$1(value);
 	return {
 		cpuPercent: optionalNumber(raw.cpuPercent, 100),
 		memoryBytes: optionalNumber(raw.memoryBytes),
@@ -17673,15 +18457,15 @@ const emptyPlatformResources = (range) => ({
 });
 /** Only explicit non-secret fields cross the privileged collector → operator API boundary. */
 function parsePlatformResources(value, range, now = Date.now()) {
-	const raw = object(value);
+	const raw = object$1(value);
 	if (raw.range !== range || typeof raw.available !== "boolean") return invalid$1();
 	if (!raw.available || raw.sample === null) return emptyPlatformResources(range);
-	const source = object(raw.sample), host = object(source.host);
+	const source = object$1(raw.sample), host = object$1(source.host);
 	if (source.version !== 1 || source.diskAttribution !== "directory-estimate") return invalid$1();
 	const cpuCount = number(host.cpuCount, 65536);
 	if (!Number.isInteger(cpuCount) || cpuCount < 1) return invalid$1();
 	const categories = array(source.categories, 6).map((item) => {
-		const row = object(item), resourceCount = number(row.resourceCount, 1e5);
+		const row = object$1(item), resourceCount = number(row.resourceCount, 1e5);
 		if (!Number.isInteger(resourceCount)) return invalid$1();
 		return {
 			id: categoryId(row.id),
@@ -17691,7 +18475,7 @@ function parsePlatformResources(value, range, now = Date.now()) {
 	});
 	if (categories.length !== 6 || new Set(categories.map((row) => row.id)).size !== 6) return invalid$1();
 	const resources = array(source.resources, 4096).map((item) => {
-		const row = object(item), id = text(row.id, 160);
+		const row = object$1(item), id = text(row.id, 160);
 		if (!/^[A-Za-z0-9:_@.-]{1,160}$/.test(id) || ![
 			"database",
 			"application",
@@ -17732,7 +18516,7 @@ function parsePlatformResources(value, range, now = Date.now()) {
 		categories,
 		resources,
 		filesystems: array(source.filesystems, 64).map((item) => {
-			const row = object(item), mount = text(row.mount, 255);
+			const row = object$1(item), mount = text(row.mount, 255);
 			if (!/^\/[A-Za-z0-9_./-]*$/.test(mount) || mount.split("/").includes("..")) return invalid$1();
 			return {
 				mount,
@@ -17747,8 +18531,8 @@ function parsePlatformResources(value, range, now = Date.now()) {
 			return /^[A-Za-z0-9:_-]+$/.test(code) ? code : invalid$1();
 		})
 	};
-	const history = object(raw.history), points = array(history.points, 240).map((item) => {
-		const point = object(item), groups = object(point.categories), timestamp = number(point.timestamp, 864e13);
+	const history = object$1(raw.history), points = array(history.points, 240).map((item) => {
+		const point = object$1(item), groups = object$1(point.categories), timestamp = number(point.timestamp, 864e13);
 		if (!Number.isInteger(timestamp)) return invalid$1();
 		return {
 			timestamp,
@@ -17794,7 +18578,9 @@ const serviceLabels = {
 	"platform:containerd": "Runtime des conteneurs",
 	"platform:rootless": "Docker des hébergements",
 	"platform:collector": "Collecteur de supervision",
-	"backups:recovery": "Sauvegardes de la plateforme"
+	"backups:recovery": "Sauvegardes de la plateforme",
+	"backups:project-sandbox": "Copies isolées des projets",
+	"backups:project-recovery": "Capture et reprise des projets"
 };
 /** IDs and measurements come from the collector; human labels come from this authenticated controller. */
 const enrichResources = (response) => {
@@ -23617,11 +24403,11 @@ except Exception as error:
  print(json.dumps({'error':message}))
 finally:signal.alarm(0)
 `;
-const COLLECTION$2 = "web_github_setup_sessions";
+const COLLECTION$3 = "web_github_setup_sessions";
 const lifetime = 1800 * 1e3;
 const token = () => $security.randomString(64);
 const hash = (value) => $security.sha256(value);
-const now = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const now$1 = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
 const publicInfo = (row) => JSON.parse(row.getString("publicInfo") || "{}");
 const pendingConfig = (row) => decryptWebValue(row.getString("pendingEncrypted"));
 const stateValue = (value) => {
@@ -23675,7 +24461,7 @@ const consume = (actorId, state, kind) => {
 	let id = "";
 	$app.runInTransaction((tx) => {
 		const field = kind === "manifest" ? "manifestStateHash" : "installStateHash";
-		const row = tx.findRecordsByFilter(COLLECTION$2, `${field} = {:hash}`, "", 1, 0, { hash: hash(state) })[0];
+		const row = tx.findRecordsByFilter(COLLECTION$3, `${field} = {:hash}`, "", 1, 0, { hash: hash(state) })[0];
 		if (!row) throw new BadRequestError("Cette étape GitHub est invalide ou a déjà été utilisée.");
 		valid(row, actorId);
 		if (row.getString("status") !== (kind === "manifest" ? "created" : "awaiting_installation")) throw new BadRequestError("Cette étape GitHub a déjà été utilisée. Reprenez la connexion depuis les paramètres.");
@@ -23684,10 +24470,10 @@ const consume = (actorId, state, kind) => {
 		tx.save(row);
 		id = row.id;
 	});
-	return $app.findRecordById(COLLECTION$2, id);
+	return $app.findRecordById(COLLECTION$3, id);
 };
 const markFailed = (id, status, error) => {
-	const row = $app.findRecordById(COLLECTION$2, id);
+	const row = $app.findRecordById(COLLECTION$3, id);
 	if (!["manifest_exchanging", "installation_verifying"].includes(row.getString("status"))) return;
 	row.set("status", status);
 	row.set("lastError", error instanceof BadRequestError ? `${error.message}`.slice(0, 500) : "La connexion GitHub n’a pas pu être finalisée.");
@@ -23729,16 +24515,16 @@ const HandleWebGithubConnectStart = (e) => {
 			if (connections.length >= 10) throw new BadRequestError(`${10} connexions GitHub maximum.`);
 			target = newGithubConnectionId(connections.map((c) => c.id));
 		}
-		const pending = tx.findRecordsByFilter(COLLECTION$2, "actorId = {:actor} && expiresAt > {:now} && status != \"completed\" && status != \"cancelled\"", "", 20, 0, {
+		const pending = tx.findRecordsByFilter(COLLECTION$3, "actorId = {:actor} && expiresAt > {:now} && status != \"completed\" && status != \"cancelled\"", "", 20, 0, {
 			actor: user.id,
-			now: now()
+			now: now$1()
 		});
 		for (const old of pending) {
 			old.set("status", "cancelled");
 			old.set("pendingEncrypted", "");
 			tx.save(old);
 		}
-		const row = new Record(tx.findCollectionByNameOrId(COLLECTION$2));
+		const row = new Record(tx.findCollectionByNameOrId(COLLECTION$3));
 		row.set("actorId", user.id);
 		row.set("manifestStateHash", hash(state));
 		row.set("baselineDigest", revision(tx, githubSettingsKey(target)));
@@ -23792,7 +24578,7 @@ const HandleWebGithubConnectManifest = (e) => {
 		if (info.organization && info.organization.toLowerCase() !== config.ownerLogin.toLowerCase()) throw new BadRequestError("La GitHub App n’appartient pas à l’organisation choisie.");
 		const nextState = token();
 		$app.runInTransaction((tx) => {
-			const current = tx.findRecordById(COLLECTION$2, row.id);
+			const current = tx.findRecordById(COLLECTION$3, row.id);
 			valid(current, user.id);
 			if (current.getString("status") !== "manifest_exchanging") throw new BadRequestError("Cette connexion n’est plus active.");
 			current.set("pendingEncrypted", encryptWebValue(config));
@@ -23823,7 +24609,7 @@ const HandleWebGithubConnectInstallStart = (e) => {
 	const state = token();
 	let config, expiresAt = "";
 	$app.runInTransaction((tx) => {
-		const row = tx.findRecordById(COLLECTION$2, id);
+		const row = tx.findRecordById(COLLECTION$3, id);
 		valid(row, user.id);
 		if (!["awaiting_installation", "installation_failed"].includes(row.getString("status"))) throw new BadRequestError("Recommencez la création de la GitHub App depuis les paramètres.");
 		config = pendingConfig(row);
@@ -23846,7 +24632,7 @@ const activateConnection = (row, actorId, config, result, expectedInstallation) 
 	if (!/^[1-9][0-9]{0,19}$/.test(installationId) || expectedInstallation && installationId !== expectedInstallation || `${result.accountId}` !== `${config.ownerId}` || !Number.isInteger(result.repositoryCount) || result.repositoryCount < 1) throw new BadRequestError("L’installation GitHub n’a pas pu être vérifiée.");
 	let target = GITHUB_PRINCIPAL, mode = "replace", label = "";
 	$app.runInTransaction((tx) => {
-		const current = tx.findRecordById(COLLECTION$2, row.id);
+		const current = tx.findRecordById(COLLECTION$3, row.id);
 		valid(current, actorId);
 		if (current.getString("status") !== "installation_verifying") throw new BadRequestError("Cette connexion n’est plus active.");
 		const info = publicInfo(current), session = githubSessionTarget(info);
@@ -23918,7 +24704,7 @@ const HandleWebGithubConnectInstallCheck = (e) => {
 	const user = requirePlatformAdmin(e), id = `${webInput(e).sessionId || ""}`;
 	if (!/^[a-z0-9]{15}$/.test(id)) throw new BadRequestError("Connexion GitHub invalide.");
 	$app.runInTransaction((tx) => {
-		const row = tx.findRecordById(COLLECTION$2, id);
+		const row = tx.findRecordById(COLLECTION$3, id);
 		valid(row, user.id);
 		if (!["awaiting_installation", "installation_failed"].includes(row.getString("status"))) throw new BadRequestError("Cette connexion GitHub ne peut pas être vérifiée maintenant.");
 		row.set("installStateHash", hash(token()));
@@ -23926,7 +24712,7 @@ const HandleWebGithubConnectInstallCheck = (e) => {
 		row.set("lastError", "");
 		tx.save(row);
 	});
-	const row = $app.findRecordById(COLLECTION$2, id);
+	const row = $app.findRecordById(COLLECTION$3, id);
 	try {
 		const config = pendingConfig(row);
 		if (!config.githubAppId) throw new BadRequestError("La création de la GitHub App n’est pas terminée.");
@@ -23938,9 +24724,9 @@ const HandleWebGithubConnectInstallCheck = (e) => {
 	}
 };
 const HandleWebGithubConnectStatus = (e) => {
-	const user = requirePlatformAdmin(e), rows = $app.findRecordsByFilter(COLLECTION$2, "actorId = {:actor} && expiresAt > {:now} && status != \"completed\" && status != \"cancelled\"", "-created,-id", 1, 0, {
+	const user = requirePlatformAdmin(e), rows = $app.findRecordsByFilter(COLLECTION$3, "actorId = {:actor} && expiresAt > {:now} && status != \"completed\" && status != \"cancelled\"", "-created,-id", 1, 0, {
 		actor: user.id,
-		now: now()
+		now: now$1()
 	});
 	const connections = listWebGithubConnections(), row = rows[0], info = row ? publicInfo(row) : {}, target = githubSessionTarget(info);
 	return webJson(e, {
@@ -23960,11 +24746,11 @@ const HandleWebGithubConnectStatus = (e) => {
 };
 const HandleWebGithubConnectMaintenance = () => {
 	try {
-		$app.findCollectionByNameOrId(COLLECTION$2);
+		$app.findCollectionByNameOrId(COLLECTION$3);
 	} catch {
 		return;
 	}
-	const expired = $app.findRecordsByFilter(COLLECTION$2, "expiresAt < {:now}", "expiresAt", 500, 0, { now: now() });
+	const expired = $app.findRecordsByFilter(COLLECTION$3, "expiresAt < {:now}", "expiresAt", 500, 0, { now: now$1() });
 	for (const row of expired) $app.delete(row);
 };
 
@@ -24048,8 +24834,8 @@ const HandleWebGithubHealth = (e) => {
 
 //#endregion
 //#region src/lib/handlers/webApps/terminal.ts
-const COLLECTION$1 = "web_terminal_sessions";
-const stamp$3 = () => (/* @__PURE__ */ new Date()).toISOString();
+const COLLECTION$2 = "web_terminal_sessions";
+const stamp$4 = () => (/* @__PURE__ */ new Date()).toISOString();
 const closedReasons = [
 	"disconnected",
 	"idle",
@@ -24076,7 +24862,7 @@ const close = (row, reason, store = $app) => {
 	if (row.getString("status") === "closed") return;
 	row.set("status", "closed");
 	row.set("reason", closedReasons.includes(reason) ? reason : "connect_failed");
-	row.set("closedAt", stamp$3());
+	row.set("closedAt", stamp$4());
 	row.set("grantHash", "");
 	row.set("leaseHash", "");
 	store.save(row);
@@ -24110,11 +24896,11 @@ const sessionId = (value) => {
 	return value;
 };
 const lease$1 = (input, store = $app) => {
-	const row = store.findRecordById(COLLECTION$1, sessionId(input.sessionId));
+	const row = store.findRecordById(COLLECTION$2, sessionId(input.sessionId));
 	if (typeof input.proof !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.proof) || !row.getString("leaseHash") || !$security.equal(row.getString("leaseHash"), $security.sha256(input.proof))) throw new UnauthorizedError("Session de terminal invalide.");
 	return row;
 };
-const metadata = (row) => ({
+const metadata$1 = (row) => ({
 	id: row.id,
 	actorId: row.getString("actorId"),
 	status: row.getString("status"),
@@ -24133,14 +24919,14 @@ const HandleWebTerminalSession = (e) => {
 	let rowId = "", expiresAt = "";
 	$app.runInTransaction((tx) => {
 		const publication = currentPublication(app.id, "", tx);
-		const rows = tx.findRecordsByFilter(COLLECTION$1, "status != \"closed\"", "created", 100, 0);
+		const rows = tx.findRecordsByFilter(COLLECTION$2, "status != \"closed\"", "created", 100, 0);
 		const live = [];
 		for (const row of rows) if (active(row)) live.push(row);
 		else close(row, "expired", tx);
 		if (live.length >= 16) throw new BadRequestError("Seize terminaux sont déjà ouverts sur ce serveur.");
 		if (live.filter((r) => r.getString("appId") === app.id).length >= 2) throw new BadRequestError("Deux terminaux sont déjà ouverts sur cette application. Fermez une session avant de continuer.");
 		if (live.filter((r) => r.getString("actorId") === actor.id).length >= 2) throw new BadRequestError("Deux terminaux sont déjà ouverts pour ce compte. Fermez une session avant de continuer.");
-		const row = new Record(tx.findCollectionByNameOrId(COLLECTION$1));
+		const row = new Record(tx.findCollectionByNameOrId(COLLECTION$2));
 		expiresAt = new Date(Date.now() + 6e4).toISOString();
 		row.set("appId", app.id);
 		row.set("actorId", actor.id);
@@ -24170,7 +24956,7 @@ const HandleWebTerminalClaim = (e) => {
 	if (typeof input.token !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.token)) throw new UnauthorizedError("Autorisation de terminal invalide.");
 	let result;
 	$app.runInTransaction((tx) => {
-		const row = tx.findRecordsByFilter(COLLECTION$1, "grantHash = {:hash}", "", 1, 0, { hash: $security.sha256(input.token) })[0];
+		const row = tx.findRecordsByFilter(COLLECTION$2, "grantHash = {:hash}", "", 1, 0, { hash: $security.sha256(input.token) })[0];
 		if (!row || row.getString("status") !== "issued" || !active(row)) throw new UnauthorizedError("Cette autorisation a expiré ou a déjà été utilisée.");
 		validateActor(row, tx);
 		currentPublication(row.getString("appId"), row.getString("deploymentId"), tx);
@@ -24178,7 +24964,7 @@ const HandleWebTerminalClaim = (e) => {
 		row.set("grantHash", "");
 		row.set("leaseHash", $security.sha256(proof));
 		row.set("status", "connecting");
-		row.set("lastSeenAt", stamp$3());
+		row.set("lastSeenAt", stamp$4());
 		tx.save(row);
 		result = {
 			sessionId: row.id,
@@ -24221,9 +25007,9 @@ const HandleWebTerminalValidate = (e) => {
 			return;
 		}
 		row.set("containerId", input.containerId);
-		row.set("lastSeenAt", stamp$3());
+		row.set("lastSeenAt", stamp$4());
 		if (!row.getString("openedAt")) {
-			row.set("openedAt", stamp$3());
+			row.set("openedAt", stamp$4());
 			row.set("status", "open");
 		}
 		tx.save(row);
@@ -24244,11 +25030,11 @@ const HandleWebTerminalClose = (e) => {
 };
 const HandleWebTerminalHistory = (e) => {
 	const app = requireWebAppPermission(e, "terminal.open").app;
-	return webJson(e, { items: $app.findRecordsByFilter(COLLECTION$1, "appId={:id}", "-created", 30, 0, { id: app.id }).map(metadata) });
+	return webJson(e, { items: $app.findRecordsByFilter(COLLECTION$2, "appId={:id}", "-created", 30, 0, { id: app.id }).map(metadata$1) });
 };
 const HandleWebTerminalRevoke = (e) => {
 	const app = requireWebAppPermission(e, "terminal.open").app;
-	const row = $app.findRecordById(COLLECTION$1, sessionId(e.request.pathValue("sessionId")));
+	const row = $app.findRecordById(COLLECTION$2, sessionId(e.request.pathValue("sessionId")));
 	if (row.getString("appId") !== app.id) throw new ForbiddenError("Session invalide.");
 	close(row, "revoked");
 	return webJson(e, { closed: true });
@@ -24256,14 +25042,14 @@ const HandleWebTerminalRevoke = (e) => {
 const HandleWebTerminalMaintenance = () => {
 	if (!webEnabled()) return;
 	try {
-		$app.findCollectionByNameOrId(COLLECTION$1);
+		$app.findCollectionByNameOrId(COLLECTION$2);
 	} catch {
 		return;
 	}
-	const rows = $app.findRecordsByFilter(COLLECTION$1, "status != \"closed\"", "created", 200, 0);
+	const rows = $app.findRecordsByFilter(COLLECTION$2, "status != \"closed\"", "created", 200, 0);
 	for (const row of rows) if (!active(row)) close(row, "expired");
 	const cutoff = (/* @__PURE__ */ new Date(Date.now() - 30 * 864e5)).toISOString().replace("T", " ");
-	for (const row of $app.findRecordsByFilter(COLLECTION$1, "status = \"closed\" && closedAt < {:cutoff}", "", 500, 0, { cutoff })) $app.delete(row);
+	for (const row of $app.findRecordsByFilter(COLLECTION$2, "status = \"closed\" && closedAt < {:cutoff}", "", 500, 0, { cutoff })) $app.delete(row);
 };
 
 //#endregion
@@ -24323,7 +25109,7 @@ const config = (app, row) => row ? {
 	...defaults(app),
 	revision: ""
 };
-const snapshot = (app, row) => {
+const snapshot$1 = (app, row) => {
 	const cfg = config(app, row), checkedAt = row?.getString("lastCheckedAt") || "";
 	const sameDeployment = row?.getString("deploymentId") === app.getString("activeDeployment");
 	const reference = sameDeployment ? checkedAt || row?.getString("statusSince") || "" : app.getString("updated") || row?.getString("statusSince") || "";
@@ -24351,7 +25137,7 @@ const snapshot = (app, row) => {
 		automaticRecovery: false
 	};
 };
-const requireWorker$2 = (e) => {
+const requireWorker$3 = (e) => {
 	if (!webEnabled()) throw new NotFoundError();
 	const secret = $os.getenv("WEB_APPS_WORKER_SECRET");
 	if (secret.length < 32 || !$security.equal(secret, e.request.header.get("X-Web-Worker") || "")) throw new UnauthorizedError("Contrôle de santé non autorisé.");
@@ -24398,7 +25184,7 @@ const event = (row, previous, reason, store = $app, actorId = "") => {
 };
 const HandleWebHealthGet = (e) => {
 	const app = requireWebAppPermission(e, "app.read").app;
-	return webJson(e, snapshot(app, record(app.id)));
+	return webJson(e, snapshot$1(app, record(app.id)));
 };
 const HandleWebHealthUpdate = (e) => {
 	const { user: actor, app: found } = requireWebAppPermission(e, "health.manage"), app = found, input = webInput(e);
@@ -24465,7 +25251,7 @@ const HandleWebHealthUpdate = (e) => {
 		tx.save(row);
 		event(row, previous, cfg.enabled ? "configuration_changed" : "disabled", tx, actor.id);
 	});
-	return webJson(e, snapshot(app, record(app.id)));
+	return webJson(e, snapshot$1(app, record(app.id)));
 };
 const HandleWebHealthHistory = (e) => {
 	const app = requireWebAppPermission(e, "app.read").app, query = e.request.url.query();
@@ -24491,7 +25277,7 @@ const HandleWebHealthHistory = (e) => {
 	});
 };
 const HandleWebHealthConfig = (e) => {
-	requireWorker$2(e);
+	requireWorker$3(e);
 	const input = webInput(e), page = Math.max(1, Math.min(1e4, Math.floor(Number(input.page) || 1))), perPage = 100;
 	const rows = $app.findRecordsByFilter(CONFIG, "enabled=true", "appId", 101, (page - 1) * perPage);
 	const items = [];
@@ -24516,7 +25302,7 @@ const HandleWebHealthConfig = (e) => {
 	});
 };
 const HandleWebHealthReport = (e) => {
-	requireWorker$2(e);
+	requireWorker$3(e);
 	const input = webInput(e);
 	if (typeof input.appId !== "string" || !id.test(input.appId) || typeof input.deploymentId !== "string" || !id.test(input.deploymentId) || typeof input.revision !== "string" || !/^[A-Za-z0-9]{24}$/.test(input.revision) || ![
 		"",
@@ -24576,6 +25362,11 @@ const HandleWebHealthMaintenance = () => {
 
 //#endregion
 //#region ../common/webCron.ts
+const webCronOffset = (timezone = "UTC") => {
+	if (timezone === "UTC") return 0;
+	if (timezone === "Indian/Reunion") return 4 * 36e5;
+	throw new Error("Choisissez UTC ou La Réunion (UTC+4).");
+};
 const parseWebCron = (expression) => {
 	if (typeof expression !== "string" || expression.length > 100) throw new Error("Expression cron invalide.");
 	const parts = expression.trim().split(/\s+/);
@@ -24612,8 +25403,9 @@ const dayMatches = (cron, date) => {
 	const day = cron.fields[2].has(date.getUTCDate()), weekday = cron.fields[4].has(date.getUTCDay());
 	return cron.anyDay ? weekday : cron.anyWeekday ? day : day || weekday;
 };
-const nextWebCron = (cron, after) => {
-	const date = /* @__PURE__ */ new Date(Math.floor(after / 6e4) * 6e4 + 6e4);
+const nextWebCron = (cron, after, timezone = "UTC") => {
+	const offset = webCronOffset(timezone);
+	const date = /* @__PURE__ */ new Date(Math.floor((after + offset) / 6e4) * 6e4 + 6e4);
 	const limit = date.getUTCFullYear() + 5;
 	while (date.getUTCFullYear() <= limit) {
 		if (!cron.fields[3].has(date.getUTCMonth() + 1)) {
@@ -24634,15 +25426,15 @@ const nextWebCron = (cron, after) => {
 			date.setUTCMinutes(date.getUTCMinutes() + 1, 0, 0);
 			continue;
 		}
-		return date.toISOString();
+		return new Date(date.getTime() - offset).toISOString();
 	}
 	return null;
 };
 
 //#endregion
 //#region src/lib/handlers/webApps/scheduledTasks.ts
-const TASKS = "web_scheduled_tasks", RUNS = "web_task_runs";
-const stamp$2 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
+const TASKS = "web_scheduled_tasks", RUNS$1 = "web_task_runs";
+const stamp$3 = (time = Date.now()) => new Date(time).toISOString().replace("T", " ");
 const ident = (value) => {
 	if (typeof value !== "string" || !/^[a-z0-9]{15}$/.test(value)) throw new BadRequestError("Tâche invalide.");
 	return value;
@@ -24676,13 +25468,19 @@ const runMetadata = (row, includeLog = true) => ({
 });
 /** La commande déchiffrée peut contenir des identifiants écrits en clair : réservée à tasks.manage. */
 const taskMetadata = (row, canManage = true) => {
-	const last = $app.findRecordsByFilter(RUNS, "taskId={:id}", "-created", 1, 0, { id: row.id })[0];
+	const last = $app.findRecordsByFilter(RUNS$1, "taskId={:id}", "-created", 1, 0, { id: row.id })[0];
+	const success = $app.findRecordsByFilter(RUNS$1, "taskId={:id} && status=\"succeeded\"", "-finishedAt", 1, 0, { id: row.id })[0];
 	return {
 		id: row.id,
 		name: row.getString("name"),
 		...canManage ? { command: command(row) } : {},
 		schedule: row.getString("schedule"),
-		timezone: "UTC",
+		timezone: row.getString("timezone") || "UTC",
+		catchUp: row.getString("catchUp") || "once",
+		maxCatchUpDelayMinutes: row.getInt("maxCatchUpDelayMinutes") || 15,
+		lastMissedAt: row.getString("lastMissedAt"),
+		lastSuccessAt: success?.getString("finishedAt") || "",
+		late: row.getBool("enabled") && Date.parse(row.getString("nextRunAt")) < Date.now() - 6e4,
 		enabled: row.getBool("enabled"),
 		timeoutSeconds: row.getInt("timeoutSeconds"),
 		nextRunAt: row.getString("nextRunAt"),
@@ -24690,9 +25488,9 @@ const taskMetadata = (row, canManage = true) => {
 		updated: row.getString("updated")
 	};
 };
-const next = (schedule, now = Date.now()) => {
+const next = (schedule, now = Date.now(), timezone = "UTC") => {
 	try {
-		const parsed = parseWebCron(schedule), due = nextWebCron(parsed, now);
+		const parsed = parseWebCron(schedule), due = nextWebCron(parsed, now, timezone);
 		if (!due) throw new Error("Cette expression ne produit aucune occurrence dans les cinq prochaines années.");
 		return {
 			schedule: parsed.expression,
@@ -24709,7 +25507,9 @@ const validate = (body, row) => {
 		"schedule",
 		"enabled",
 		"timeoutSeconds",
-		"timezone"
+		"timezone",
+		"catchUp",
+		"maxCatchUpDelayMinutes"
 	].includes(key))) throw new BadRequestError("Options de tâche invalides.");
 	const name = body.name === void 0 ? row?.getString("name") : body.name;
 	const cmd = body.command === void 0 ? row && command(row) : body.command;
@@ -24719,13 +25519,24 @@ const validate = (body, row) => {
 	if (typeof name !== "string" || !name.trim() || name.trim().length > 80 || name.includes("\0")) throw new BadRequestError("Nommez la tâche avec 1 à 80 caractères.");
 	if (typeof cmd !== "string" || !cmd.trim() || cmd.length > 4e3 || cmd.includes("\0")) throw new BadRequestError("Commande requise, limitée à 4 000 caractères.");
 	if (typeof enabled !== "boolean" || !Number.isInteger(timeout) || timeout < 1 || timeout > 900) throw new BadRequestError("La durée maximale doit être comprise entre 1 et 900 secondes.");
-	if (body.timezone !== void 0 && body.timezone !== "UTC") throw new BadRequestError("Les horaires sont exprimés en UTC.");
+	const timezone = body.timezone ?? (row ? row.getString("timezone") || "UTC" : "Indian/Reunion");
+	try {
+		webCronOffset(timezone);
+	} catch {
+		throw new BadRequestError("Choisissez UTC ou La Réunion (UTC+4).");
+	}
+	const catchUp = body.catchUp ?? (row?.getString("catchUp") || "once");
+	const maxCatchUpDelayMinutes = body.maxCatchUpDelayMinutes ?? (row?.getInt("maxCatchUpDelayMinutes") || 15);
+	if (!["once", "skip"].includes(catchUp) || !Number.isInteger(maxCatchUpDelayMinutes) || maxCatchUpDelayMinutes < 1 || maxCatchUpDelayMinutes > 1440) throw new BadRequestError("Choisissez une reprise unique ou aucune, dans un délai de 1 à 1 440 minutes.");
 	return {
 		name: name.trim(),
 		command: cmd,
 		enabled,
 		timeoutSeconds: timeout,
-		...next(schedule)
+		timezone,
+		catchUp,
+		maxCatchUpDelayMinutes,
+		...next(schedule, Date.now(), timezone)
 	};
 };
 /**
@@ -24744,10 +25555,10 @@ const publication = (appId, store = $app) => {
 		containerName: result.container
 	};
 };
-const overlap = (taskId, store = $app) => store.findRecordsByFilter(RUNS, "taskId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: taskId }).length > 0;
+const overlap = (taskId, store = $app) => store.findRecordsByFilter(RUNS$1, "taskId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: taskId }).length > 0;
 const enqueue = (task, actorId, trigger, occurrence, scheduledAt, store) => {
 	if (overlap(task.id, store)) throw new BadRequestError("Cette tâche possède déjà une exécution en attente ou en cours.");
-	const row = new Record(store.findCollectionByNameOrId(RUNS));
+	const row = new Record(store.findCollectionByNameOrId(RUNS$1));
 	row.set("appId", task.getString("appId"));
 	row.set("taskId", task.id);
 	row.set("taskName", task.getString("name"));
@@ -24780,7 +25591,7 @@ const HandleWebTasksList = (e) => {
 	} catch {}
 	return webJson(e, {
 		items: $app.findRecordsByFilter(TASKS, "appId={:id}", "created", 100, 0, { id: app.id }).map((row) => taskMetadata(row, canManage)),
-		timezone: "UTC",
+		timezone: "Indian/Reunion",
 		worker
 	});
 };
@@ -24797,6 +25608,9 @@ const HandleWebTasksCreate = (e) => {
 		row.set("schedule", value.schedule);
 		row.set("enabled", value.enabled);
 		row.set("timeoutSeconds", value.timeoutSeconds);
+		row.set("timezone", value.timezone);
+		row.set("catchUp", value.catchUp);
+		row.set("maxCatchUpDelayMinutes", value.maxCatchUpDelayMinutes);
 		row.set("nextRunAt", value.due);
 		tx.save(row);
 		result = row;
@@ -24809,7 +25623,10 @@ const HandleWebTaskUpdate = (e) => {
 	task.set("name", value.name);
 	task.set("commandEncrypted", encryptWebValue({ command: value.command }));
 	task.set("timeoutSeconds", value.timeoutSeconds);
-	if (task.getString("schedule") !== value.schedule || !task.getBool("enabled") && value.enabled) task.set("nextRunAt", value.due);
+	if (task.getString("schedule") !== value.schedule || (task.getString("timezone") || "UTC") !== value.timezone || !task.getBool("enabled") && value.enabled) task.set("nextRunAt", value.due);
+	task.set("timezone", value.timezone);
+	task.set("catchUp", value.catchUp);
+	task.set("maxCatchUpDelayMinutes", value.maxCatchUpDelayMinutes);
 	task.set("schedule", value.schedule);
 	task.set("enabled", value.enabled);
 	$app.save(task);
@@ -24818,11 +25635,11 @@ const HandleWebTaskUpdate = (e) => {
 const HandleWebTaskDelete = (e) => {
 	const { task } = taskFor(e, "tasks.manage");
 	$app.runInTransaction((tx) => {
-		const rows = tx.findRecordsByFilter(RUNS, "taskId={:id} && (status=\"queued\" || status=\"running\")", "", 100, 0, { id: task.id });
+		const rows = tx.findRecordsByFilter(RUNS$1, "taskId={:id} && (status=\"queued\" || status=\"running\")", "", 100, 0, { id: task.id });
 		if (rows.some((row) => row.getString("status") === "running")) throw new BadRequestError("Attendez la fin de l’exécution avant de supprimer cette tâche.");
 		for (const row of rows) {
 			row.set("status", "cancelled");
-			row.set("finishedAt", stamp$2());
+			row.set("finishedAt", stamp$3());
 			row.set("snapshotEncrypted", "");
 			row.set("error", "Tâche supprimée avant son exécution.");
 			tx.save(row);
@@ -24837,14 +25654,14 @@ const HandleWebTaskRun = (e) => {
 	if (Object.keys(webInput(e)).length) throw new BadRequestError("Aucune option d’exécution n’est attendue.");
 	$app.runInTransaction((tx) => {
 		publication(app.id, tx);
-		result = enqueue(tx.findRecordById(TASKS, task.id), actor.id, "manual", `manual:${$security.randomString(32)}`, stamp$2(), tx);
+		result = enqueue(tx.findRecordById(TASKS, task.id), actor.id, "manual", `manual:${$security.randomString(32)}`, stamp$3(), tx);
 	});
 	return webJson(e, { run: runMetadata(result) }, 202);
 };
 const HandleWebTaskRuns = (e) => {
 	const app = requireWebAppPermission(e, "logs.read").app, query = e.request.url.query(), page = Math.max(1, Math.min(1e5, Math.floor(Number(query.get("page")) || 1))), taskId = query.get("taskId") || "";
 	if (taskId) ident(taskId);
-	const filter = "appId={:id}" + (taskId ? " && taskId={:taskId}" : ""), rows = $app.findRecordsByFilter(RUNS, filter, "-created,-id", 11, (page - 1) * 10, {
+	const filter = "appId={:id}" + (taskId ? " && taskId={:taskId}" : ""), rows = $app.findRecordsByFilter(RUNS$1, filter, "-created,-id", 11, (page - 1) * 10, {
 		id: app.id,
 		taskId
 	});
@@ -24856,7 +25673,7 @@ const HandleWebTaskRuns = (e) => {
 		hasMore: rows.length > 10
 	});
 };
-const requireWorker$1 = (e) => {
+const requireWorker$2 = (e) => {
 	if (!webEnabled()) throw new NotFoundError();
 	const expected = $os.getenv("WEB_APPS_WORKER_SECRET"), received = e.request.header.get("X-Web-Worker") || "";
 	if (expected.length < 32 || !$security.equal(expected, received)) throw new UnauthorizedError();
@@ -24865,30 +25682,30 @@ const requireWorker$1 = (e) => {
 const finish = (row, status, error, store) => {
 	row.set("status", status);
 	row.set("error", error);
-	row.set("finishedAt", stamp$2());
-	row.set("durationMs", Math.max(0, Date.now() - Date.parse(row.getString("startedAt") || stamp$2())));
+	row.set("finishedAt", stamp$3());
+	row.set("durationMs", Math.max(0, Date.now() - Date.parse(row.getString("startedAt") || stamp$3())));
 	row.set("leaseHash", "");
 	row.set("snapshotEncrypted", "");
 	store.save(row);
 };
 const lease = (input, store = $app) => {
-	const row = store.findRecordById(RUNS, ident(input.id));
+	const row = store.findRecordById(RUNS$1, ident(input.id));
 	if (row.getString("status") !== "running" || typeof input.proof !== "string" || !/^[A-Za-z0-9]{80}$/.test(input.proof) || !$security.equal(row.getString("leaseHash"), $security.sha256(input.proof))) throw new UnauthorizedError("Exécution invalide.");
 	return row;
 };
 const HandleWebTaskClaim = (e) => {
-	requireWorker$1(e);
+	requireWorker$2(e);
 	let result = null;
 	$app.runInTransaction((tx) => {
-		const now = Date.now(), nowText = stamp$2(now);
-		for (const row of tx.findRecordsByFilter(RUNS, "status=\"running\"", "startedAt", 100, 0)) if (Date.parse(row.getString("deadline")) + 15e3 < now) {
+		const now = Date.now(), nowText = stamp$3(now);
+		for (const row of tx.findRecordsByFilter(RUNS$1, "status=\"running\"", "startedAt", 100, 0)) if (Date.parse(row.getString("deadline")) + 15e3 < now) {
 			row.set("exitCode", 124);
 			finish(row, "timed_out", "La durée maximale a été dépassée ; le superviseur du conteneur a interrompu la commande.", tx);
 		} else return;
 		for (const task of tx.findRecordsByFilter(TASKS, "enabled=true && nextRunAt!=\"\" && nextRunAt<={:now}", "nextRunAt", 100, 0, { now: nowText })) {
 			const scheduledAt = task.getString("nextRunAt"), occurrence = `cron:${scheduledAt.slice(0, 16)}`;
 			task.set("lastScheduledAt", scheduledAt);
-			task.set("nextRunAt", next(task.getString("schedule"), now).due);
+			task.set("nextRunAt", next(task.getString("schedule"), now, task.getString("timezone") || "UTC").due);
 			if (!actorValid(task.getString("actorId"), task.getString("appId"), tx)) {
 				task.set("enabled", false);
 				emitWebAlert(tx, "app", task.getString("appId"), "task_failed", "task-disabled:" + task.id + ":" + scheduledAt, {
@@ -24896,13 +25713,34 @@ const HandleWebTaskClaim = (e) => {
 					status: "disabled",
 					reason: "rights"
 				});
-			} else if (!overlap(task.id, tx) && !tx.findRecordsByFilter(RUNS, "taskId={:id} && occurrence={:occurrence}", "", 1, 0, {
+			} else if (!tx.findRecordsByFilter(RUNS$1, "taskId={:id} && occurrence={:occurrence}", "", 1, 0, {
 				id: task.id,
 				occurrence
-			}).length) enqueue(task, task.getString("actorId"), "cron", occurrence, scheduledAt, tx);
+			}).length) {
+				const delay = Math.max(0, now - Date.parse(scheduledAt));
+				if (overlap(task.id, tx) || delay > 6e4 && (task.getString("catchUp") === "skip" || delay > (task.getInt("maxCatchUpDelayMinutes") || 15) * 6e4)) {
+					const skipped = new Record(tx.findCollectionByNameOrId(RUNS$1));
+					for (const [key, value] of Object.entries({
+						appId: task.getString("appId"),
+						taskId: task.id,
+						taskName: task.getString("name"),
+						actorId: task.getString("actorId"),
+						trigger: "cron",
+						occurrence,
+						scheduledAt,
+						status: "missed",
+						timeoutSeconds: task.getInt("timeoutSeconds"),
+						exitCode: -1,
+						finishedAt: nowText,
+						error: "Occurrence manquée : tâche déjà en attente ou délai de reprise dépassé."
+					})) skipped.set(key, value);
+					tx.save(skipped);
+					task.set("lastMissedAt", scheduledAt);
+				} else enqueue(task, task.getString("actorId"), "cron", occurrence, scheduledAt, tx);
+			}
 			tx.save(task);
 		}
-		for (const row of tx.findRecordsByFilter(RUNS, "status=\"queued\"", "created,id", 100, 0)) try {
+		for (const row of tx.findRecordsByFilter(RUNS$1, "status=\"queued\"", "created,id", 100, 0)) try {
 			if (!actorValid(row.getString("actorId"), row.getString("appId"), tx)) throw new Error("rights");
 			const current = publication(row.getString("appId"), tx), snapshot = decryptWebValue(row.getString("snapshotEncrypted")), published = decryptWebValue(current.deployment.getString("snapshotEncrypted"));
 			const values = [...Object.values(decryptWebValue(current.app.getString("envEncrypted")) || {}), ...Object.values(published.env || {})];
@@ -24910,8 +25748,8 @@ const HandleWebTaskClaim = (e) => {
 			const proof = $security.randomString(80), timeout = row.getInt("timeoutSeconds");
 			row.set("deploymentId", current.deployment.id);
 			row.set("status", "running");
-			row.set("startedAt", stamp$2(now));
-			row.set("deadline", stamp$2(now + (timeout + 5) * 1e3));
+			row.set("startedAt", stamp$3(now));
+			row.set("deadline", stamp$3(now + (timeout + 5) * 1e3));
 			row.set("leaseHash", $security.sha256(proof));
 			row.set("snapshotEncrypted", encryptWebValue({
 				...snapshot,
@@ -24938,7 +25776,7 @@ const HandleWebTaskClaim = (e) => {
 	return webJson(e, { job: result });
 };
 const HandleWebTaskValidate = (e) => {
-	requireWorker$1(e);
+	requireWorker$2(e);
 	const row = lease(webInput(e));
 	let valid = false;
 	try {
@@ -24948,7 +25786,7 @@ const HandleWebTaskValidate = (e) => {
 	return webJson(e, { valid });
 };
 const HandleWebTaskReport = (e) => {
-	requireWorker$1(e);
+	requireWorker$2(e);
 	const input = webInput(e);
 	if (![
 		"succeeded",
@@ -25156,7 +25994,7 @@ const webUniqueSlug = (base, taken) => {
 
 //#endregion
 //#region src/lib/handlers/webApps/deletion.ts
-const JOBS = "web_deletion_jobs", stamp$1 = () => (/* @__PURE__ */ new Date()).toISOString();
+const JOBS = "web_deletion_jobs", stamp$2 = () => (/* @__PURE__ */ new Date()).toISOString();
 const assertStorageSettled = () => {
 	let pending = false;
 	try {
@@ -25311,7 +26149,7 @@ const HandleWebDeletionClaim = (e) => {
 			const lease = $security.randomString(40);
 			job.set("status", "running");
 			job.set("leaseHash", $security.sha256(lease));
-			job.set("heartbeatAt", stamp$1());
+			job.set("heartbeatAt", stamp$2());
 			job.set("stage", "Nettoyage des applications");
 			tx.save(job);
 			claimed = {
@@ -25380,7 +26218,7 @@ const HandleWebDeletionReport = (e) => {
 			name: snapshot.name,
 			apps: snapshot.apps.map((app) => ({ id: app.id }))
 		});
-		job.set("heartbeatAt", stamp$1());
+		job.set("heartbeatAt", stamp$2());
 		job.set("stage", String(input.stage || (input.status === "ready" ? "Suppression terminée" : "")).slice(0, 150));
 		job.set("error", input.status === "failed" ? String(input.error || "Le nettoyage a échoué. Réessayez.").slice(0, 1e3) : "");
 		tx.save(job);
@@ -25728,8 +26566,8 @@ const HandleWebAppProjectMove = (e) => {
 
 //#endregion
 //#region src/lib/handlers/webApps/privateDatabases.ts
-const COLLECTION = "web_private_db_bindings";
-const ID = /^[a-z0-9]{15}$/;
+const COLLECTION$1 = "web_private_db_bindings";
+const ID$2 = /^[a-z0-9]{15}$/;
 const TOKEN = /^[A-Za-z0-9]{64}$/;
 const STATUSES = [
 	"pending",
@@ -25746,25 +26584,25 @@ const ERRORS = [
 	"configuration"
 ];
 const supported = () => $os.getenv("WEB_APPS_ENABLED") === "true" && $os.getenv("WEB_DB_BRIDGE_ENABLED") === "true";
-const stamp = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const stamp$1 = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
 const safeId = (value) => {
-	if (typeof value !== "string" || !ID.test(value)) throw new BadRequestError("Identifiant de liaison invalide.");
+	if (typeof value !== "string" || !ID$2.test(value)) throw new BadRequestError("Identifiant de liaison invalide.");
 	return value;
 };
-const find = (collection, id, store) => {
+const find$1 = (collection, id, store) => {
 	try {
 		return store.findRecordById(collection, id);
 	} catch {
 		return null;
 	}
 };
-const rows = (filter, params, store = $app) => store.findRecordsByFilter(COLLECTION, filter, "created,id", 500, 0, params);
+const rows = (filter, params, store = $app) => store.findRecordsByFilter(COLLECTION$1, filter, "created,id", 500, 0, params);
 const activeApps = (store) => store.findRecordsByFilter("web_apps", "deletionId=\"\"", "created,id", 1e3, 0);
 const authorization = (row, store = $app) => {
-	const app = find("web_apps", row.getString("appId"), store);
-	const instance = find("instances", row.getString("instanceId"), store);
-	const actor = find("users", row.getString("actorId"), store);
-	const owner = instance ? find("users", instance.getString("uid"), store) : null;
+	const app = find$1("web_apps", row.getString("appId"), store);
+	const instance = find$1("instances", row.getString("instanceId"), store);
+	const actor = find$1("users", row.getString("actorId"), store);
+	const owner = instance ? find$1("users", instance.getString("uid"), store) : null;
 	const authorized = !!(app && instance && actor && owner && !owner.getString("suspension") && !app.getString("deletionId") && !app.getString("suspension") && !instance.getString("suspension") && !actor.getString("suspension") && canManageInstance(instance, actor) && webCan(actor, { appId: app.id }, "app.configure", store));
 	return {
 		app,
@@ -25860,7 +26698,7 @@ const HandleInstancePrivateAccessPut = (e) => {
 			port,
 			id: existing?.id || ""
 		}, tx).length) throw new BadRequestError("Ce port local est déjà utilisé par une autre liaison.");
-		const row = existing || new Record(tx.findCollectionByNameOrId(COLLECTION));
+		const row = existing || new Record(tx.findCollectionByNameOrId(COLLECTION$1));
 		row.set("appId", appId);
 		row.set("instanceId", instance.id);
 		row.set("actorId", actor.id);
@@ -25891,7 +26729,7 @@ const deleteBinding = (e, instanceSide) => {
 	let targetId = "";
 	if (instanceSide) targetId = instanceState(e).instance.id;
 	else targetId = requireWebAppPermission(e, "app.configure").app.id;
-	const row = $app.findRecordById(COLLECTION, bindingId);
+	const row = $app.findRecordById(COLLECTION$1, bindingId);
 	if (row.getString(instanceSide ? "instanceId" : "appId") !== targetId) throw new NotFoundError("Liaison introuvable.");
 	$app.delete(row);
 	return webJson(e, { removed: true });
@@ -26019,15 +26857,15 @@ const HandleWebPrivateDatabaseStatus = (e) => {
 		"errorCode",
 		"serviceCount",
 		"needsRestart"
-	].includes(k)) || typeof item.id !== "string" || !ID.test(item.id) || typeof item.appId !== "string" || !ID.test(item.appId) || typeof item.revision !== "string" || !/^[A-Za-z0-9]{24}$/.test(item.revision) || typeof item.status !== "string" || !STATUSES.includes(item.status) || item.errorCode !== void 0 && typeof item.errorCode !== "string" || !ERRORS.includes(item.errorCode || "") || item.serviceCount !== void 0 && (!Number.isInteger(item.serviceCount) || item.serviceCount < 0 || item.serviceCount > 8) || item.needsRestart !== void 0 && typeof item.needsRestart !== "boolean") throw new BadRequestError("État de liaison invalide.");
+	].includes(k)) || typeof item.id !== "string" || !ID$2.test(item.id) || typeof item.appId !== "string" || !ID$2.test(item.appId) || typeof item.revision !== "string" || !/^[A-Za-z0-9]{24}$/.test(item.revision) || typeof item.status !== "string" || !STATUSES.includes(item.status) || item.errorCode !== void 0 && typeof item.errorCode !== "string" || !ERRORS.includes(item.errorCode || "") || item.serviceCount !== void 0 && (!Number.isInteger(item.serviceCount) || item.serviceCount < 0 || item.serviceCount > 8) || item.needsRestart !== void 0 && typeof item.needsRestart !== "boolean") throw new BadRequestError("État de liaison invalide.");
 	let updated = 0;
 	$app.runInTransaction((tx) => {
 		for (const item of input.bindings) {
-			const row = find(COLLECTION, item.id, tx);
+			const row = find$1(COLLECTION$1, item.id, tx);
 			if (!row || !row.getBool("enabled") || row.getString("appId") !== item.appId || row.getString("revision") !== item.revision || !authorization(row, tx).authorized) continue;
 			row.set("status", item.status);
 			row.set("errorCode", item.errorCode || "");
-			row.set("lastSeenAt", stamp());
+			row.set("lastSeenAt", stamp$1());
 			row.set("serviceCount", item.serviceCount || 0);
 			row.set("needsRestart", !!item.needsRestart);
 			tx.save(row);
@@ -26038,6 +26876,1076 @@ const HandleWebPrivateDatabaseStatus = (e) => {
 		ok: true,
 		updated
 	});
+};
+
+//#endregion
+//#region src/lib/handlers/webApps/projectRecovery.ts
+const RUNS = "web_project_recovery_runs", ID$1 = /^[a-z0-9]{15}$/, now = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const object = (row, key) => JSON.parse(row.getString(key) || "{}");
+const metadata = (row) => ({
+	id: row.id,
+	projectId: row.getString("projectId"),
+	operation: row.getString("operation"),
+	status: row.getString("status"),
+	stage: row.getString("stage"),
+	startedAt: row.getString("startedAt"),
+	finishedAt: row.getString("finishedAt"),
+	created: row.getString("created"),
+	errorCode: row.getString("errorCode"),
+	result: object(row, "result")
+});
+const snapshot = (projectId, store = $app) => {
+	if (!ID$1.test(projectId)) throw new BadRequestError("Projet invalide.");
+	const project = store.findRecordById("web_projects", projectId);
+	const memberships = store.findRecordsByFilter("web_app_environments", "projectId={:id} && appId!=\"\"", "id", 21, 0, { id: projectId });
+	if (!memberships.length || memberships.length > 20) throw new BadRequestError("Le projet doit contenir une à vingt applications.");
+	const selectedAppIds = new Set(memberships.map((membership) => membership.getString("appId")));
+	const databases = {}, apps = [];
+	for (const membership of memberships) {
+		const app = store.findRecordById("web_apps", membership.getString("appId"));
+		if (app.getString("status") !== "running" || !ID$1.test(app.getString("activeDeployment"))) throw new BadRequestError("Chaque application doit posséder une version publiée en service.");
+		const deployment = store.findRecordById("web_deployments", app.getString("activeDeployment"));
+		if (deployment.getString("appId") !== app.id) throw new BadRequestError("Publication incohérente.");
+		const published = decryptWebValue(deployment.getString("snapshotEncrypted"));
+		const bindings = store.findRecordsByFilter("web_private_db_bindings", "appId={:id} && enabled=true", "id", 5, 0, { id: app.id }).map((binding) => {
+			const instance = store.findRecordById("instances", binding.getString("instanceId"));
+			databases[instance.id] = {
+				id: instance.id,
+				version: instance.getString("version") || instance.getString("pocketbaseVersion"),
+				name: instance.getString("subdomain"),
+				externalApplicationBindingsCount: store.findRecordsByFilter("web_private_db_bindings", "instanceId={:id} && enabled=true", "id", 1001, 0, { id: instance.id }).filter((link) => !selectedAppIds.has(link.getString("appId"))).length,
+				configuration: {
+					dev: instance.getBool("dev"),
+					syncAdmin: instance.getBool("syncAdmin"),
+					secrets: JSON.parse(instance.getString("secrets") || "{}")
+				}
+			};
+			return {
+				instanceId: instance.id,
+				port: binding.getInt("port"),
+				publicHosts: [instance.getString("subdomain") + "." + ($os.getenv("APEX_DOMAIN") || "")]
+			};
+		});
+		const externalDependencies = Object.entries(published.env || {}).filter(([name, value]) => {
+			const content = typeof value?.value === "string" ? value.value : "";
+			if (!content) return false;
+			if (/^(?:R2_|S3_|AWS_S3_)/.test(name)) return true;
+			if (!/(?:DATABASE|POCKETBASE|SUPABASE|(?:^|_)(?:PB|DB)|POSTGRES|MYSQL|MARIADB|MONGO|REDIS|LIBSQL|TURSO|COUCHDB).*(?:URL|URI|HOST(?:NAME)?|DSN|ENDPOINT|ADDR(?:ESS)?)$/i.test(name)) return false;
+			const parsed = /^https?:\/\/([a-z0-9.-]+)(?::([0-9]+))?(?:\/|$)/i.exec(content);
+			if (!parsed) return true;
+			const host = parsed[1].toLowerCase(), port = Number(parsed[2] || 0);
+			return !bindings.some((binding) => ["localhost", "127.0.0.1"].includes(host) && binding.port === port || binding.publicHosts.includes(host));
+		}).map(([name]) => name);
+		apps.push({
+			id: app.id,
+			name: app.getString("name"),
+			deploymentId: deployment.id,
+			commit: deployment.getString("commit"),
+			bindings,
+			externalDependencies,
+			configuration: {
+				config: published.config || {},
+				env: published.env || {},
+				runtime: published.runtime || {},
+				storage: published.storage || [],
+				domains: published.domains || [],
+				projectEnvironment: published.projectEnvironment || {},
+				checks: published.checks ? { preflight: published.checks.preflight } : void 0
+			},
+			scheduledTasks: store.findRecordsByFilter("web_scheduled_tasks", "appId={:id}", "id", 100, 0, { id: app.id }).map((task) => ({
+				id: task.id,
+				name: task.getString("name"),
+				schedule: task.getString("schedule"),
+				timezone: task.getString("timezone") || "UTC",
+				enabled: task.getBool("enabled"),
+				command: String(decryptWebValue(task.getString("commandEncrypted")).command || ""),
+				timeoutSeconds: task.getInt("timeoutSeconds")
+			})),
+			domains: store.findRecordsByFilter("web_app_domains", "appId={:id}", "id", 50, 0, { id: app.id }).map((domain) => ({
+				host: domain.getString("host"),
+				status: domain.getString("status")
+			}))
+		});
+	}
+	const value = {
+		version: 1,
+		platform: ($os.getenv("APEX_DOMAIN") || $os.getenv("PUBLIC_HOST") || "").split(".")[0] || "kolab-project",
+		projectId,
+		projectName: project.getString("name"),
+		apps,
+		databases: Object.values(databases)
+	};
+	return {
+		...value,
+		revision: $security.sha256(JSON.stringify(value))
+	};
+};
+const preview = (value) => ({
+	projectId: value.projectId,
+	projectName: value.projectName,
+	revision: value.revision,
+	apps: value.apps.map((app) => ({
+		id: app.id,
+		name: app.name,
+		services: "published-images",
+		databases: app.bindings.map((row) => row.instanceId),
+		scheduledTasks: app.scheduledTasks.length,
+		domains: app.domains,
+		externalDependencies: app.externalDependencies
+	})),
+	databases: value.databases.map((row) => ({
+		id: row.id,
+		name: row.name,
+		version: row.version,
+		externalApplicationBindingsCount: row.externalApplicationBindingsCount || 0
+	})),
+	blockers: value.apps.flatMap((app) => app.externalDependencies.map((name) => ({
+		appId: app.id,
+		code: "external_storage_not_captured",
+		name
+	}))),
+	withoutInterruption: true,
+	copyNetwork: "none",
+	mailsDisabled: true,
+	workersInert: true,
+	cronsDisabled: true
+});
+const workerState = () => {
+	try {
+		const state = JSON.parse($app.store().get("project-recovery-worker") || "{}");
+		return {
+			...state,
+			online: state.blocked !== true && Date.now() - Date.parse(state.lastSeenAt) < 3e4
+		};
+	} catch {
+		return { online: false };
+	}
+};
+const admissionPaused = () => {
+	try {
+		return JSON.parse(toString($os.cmd("/usr/bin/timeout", "3", "/usr/bin/python3", "-I", "-c", "import sys,json;sys.path.insert(0,'/opt/pockethost-web');from platform_maintenance import status;print(json.dumps(status(path=sys.argv[1])))", "/run/kolab-platform-maintenance/admission.json").output())).paused !== false;
+	} catch {
+		return true;
+	}
+};
+const HandleProjectRecoveryGet = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, {
+		worker: workerState(),
+		projects: $app.findRecordsByFilter("web_projects", "", "name", 1e3, 0).map((row) => ({
+			id: row.id,
+			name: row.getString("name")
+		})),
+		runs: $app.findRecordsByFilter(RUNS, "", "-created,-id", 50, 0).map(metadata)
+	});
+};
+const HandleProjectRecoveryPreview = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, preview(snapshot(e.request.pathValue("projectId"))));
+};
+const HandleProjectRecoveryQueue = (e) => {
+	const actor = requirePlatformAdmin(e), body = webInput(e), projectId = e.request.pathValue("projectId");
+	if (Object.keys(body).sort().join(",") !== "operation,revision" || body.operation !== "drill" || typeof body.revision !== "string") throw new BadRequestError("Test isolé et révision requis.");
+	if (!workerState().online || workerState().blocked) throw new ApiError(503, "Le service de reprise de projet est indisponible.");
+	let output;
+	$app.runInTransaction((tx) => {
+		const current = snapshot(projectId, tx);
+		if (current.revision !== body.revision) throw new ApiError(409, "Le projet a changé. Préparez un nouvel aperçu.");
+		if (preview(current).blockers.length) throw new BadRequestError("Les stockages externes signalés doivent être inclus avant une reprise complète.");
+		if (tx.findRecordsByFilter(RUNS, "status=\"queued\" || status=\"running\"", "", 1, 0).length) throw new ApiError(409, "Un essai de reprise est déjà en attente ou en cours.");
+		const row = new Record(tx.findCollectionByNameOrId(RUNS));
+		for (const [key, value] of Object.entries({
+			projectId,
+			actorId: actor.id,
+			operation: "drill",
+			status: "queued",
+			revision: current.revision,
+			snapshotEncrypted: encryptWebValue(current)
+		})) row.set(key, value);
+		tx.save(row);
+		output = metadata(row);
+	});
+	return webJson(e, { run: output }, 202);
+};
+const requireWorker$1 = (e) => {
+	let expected = "";
+	try {
+		expected = toString($os.readFile("/etc/kolab/project-recovery-controller.key")).trim();
+	} catch {}
+	const received = e.request.header.get("X-Project-Recovery") || "";
+	if (!/^[a-f0-9]{64}$/.test(expected) || !$security.equal(expected, received) || !webDirectLoopback(e)) throw new ForbiddenError("Service de reprise local requis.");
+};
+const HandleProjectRecoveryClaim = (e) => {
+	requireWorker$1(e);
+	const body = webInput(e);
+	if (Object.keys(body).some((key) => ![
+		"cleanupOnly",
+		"blocked",
+		"recoverOrphans"
+	].includes(key)) || body.cleanupOnly !== void 0 && typeof body.cleanupOnly !== "boolean" || body.blocked !== void 0 && typeof body.blocked !== "boolean" || body.recoverOrphans !== void 0 && typeof body.recoverOrphans !== "boolean" || body.recoverOrphans === true && body.cleanupOnly !== true) throw new BadRequestError("Demande invalide.");
+	$app.store().set("project-recovery-worker", JSON.stringify({
+		online: true,
+		blocked: body.blocked === true,
+		lastSeenAt: now()
+	}));
+	let job = null;
+	$app.runInTransaction((tx) => {
+		tx.db().newQuery("UPDATE web_project_recovery_runs SET status=status WHERE id={:id}").bind({ id: "" }).execute();
+		if (body.recoverOrphans === true) for (const orphan of tx.findRecordsByFilter(RUNS, "status=\"running\"", "", 100, 0)) {
+			orphan.set("status", "failed");
+			orphan.set("errorCode", "worker_lost");
+			orphan.set("finishedAt", now());
+			orphan.set("snapshotEncrypted", "");
+			orphan.set("leaseHash", "");
+			tx.save(orphan);
+		}
+		for (const expired of tx.findRecordsByFilter(RUNS, "status=\"running\" && deadline<{:now}", "", 100, 0, { now: now() })) {
+			expired.set("status", "failed");
+			expired.set("errorCode", "lease_expired");
+			expired.set("finishedAt", now());
+			expired.set("snapshotEncrypted", "");
+			expired.set("leaseHash", "");
+			tx.save(expired);
+		}
+		if (body.cleanupOnly || body.blocked || admissionPaused() || tx.findRecordsByFilter(RUNS, "status=\"running\"", "", 1, 0).length) return;
+		const row = tx.findRecordsByFilter(RUNS, "status=\"queued\"", "created,id", 1, 0)[0];
+		if (!row) return;
+		let changed = false;
+		try {
+			const actor = tx.findRecordById("users", row.getString("actorId"));
+			changed = actor.getString("suspension") || !actor.getBool("superAdmin");
+		} catch {
+			changed = true;
+		}
+		try {
+			changed = changed || snapshot(row.getString("projectId"), tx).revision !== row.getString("revision");
+		} catch {
+			changed = true;
+		}
+		if (changed) {
+			row.set("status", "cancelled");
+			row.set("errorCode", "project_changed");
+			row.set("snapshotEncrypted", "");
+			row.set("finishedAt", now());
+			tx.save(row);
+			return;
+		}
+		const proof = $security.randomString(80);
+		row.set("status", "running");
+		row.set("startedAt", now());
+		row.set("deadline", new Date(Date.now() + 72e5).toISOString());
+		row.set("leaseHash", $security.sha256(proof));
+		row.set("stage", "capture");
+		tx.save(row);
+		job = {
+			id: row.id,
+			lease: proof,
+			snapshot: decryptWebValue(row.getString("snapshotEncrypted"))
+		};
+	});
+	return webJson(e, { job });
+};
+const HandleProjectRecoveryReport = (e) => {
+	requireWorker$1(e);
+	const body = webInput(e);
+	if (!ID$1.test(body.id || "") || typeof body.lease !== "string" || body.lease.length > 100) throw new BadRequestError("Bail invalide.");
+	let output;
+	$app.runInTransaction((tx) => {
+		const row = tx.findRecordById(RUNS, body.id);
+		if (row.getString("status") !== "running" || !$security.equal(row.getString("leaseHash"), $security.sha256(body.lease)) || Date.parse(row.getString("deadline")) < Date.now()) throw new ForbiddenError("Bail expiré ou déjà consommé.");
+		if (body.status === "running" && [
+			"capture",
+			"restore",
+			"probe",
+			"report"
+		].includes(body.stage)) {
+			row.set("stage", body.stage);
+			tx.save(row);
+			output = metadata(row);
+			return;
+		}
+		const result = body.result;
+		if (![
+			"ready",
+			"partial",
+			"failed"
+		].includes(body.status) || !result || typeof result !== "object" || JSON.stringify(result).length > 5e4) throw new BadRequestError("Résultat invalide.");
+		const clean = {
+			completeArtifacts: result.completeArtifacts === true,
+			applicationVerified: result.applicationVerified === true,
+			runtimeStarted: result.runtimeStarted === true,
+			noExternalNetwork: result.noExternalNetwork === true,
+			mailsDisabled: result.mailsDisabled === true,
+			scheduledTasksDisabled: result.scheduledTasksDisabled === true,
+			workersInert: result.workersInert === true,
+			cleanedUp: result.cleanedUp === true,
+			scope: result.scope === "isolated-http-health" ? "isolated-http-health" : "artifacts-only",
+			apps: Number(result.apps) || 0,
+			databases: Number(result.databases) || 0,
+			images: Number(result.images) || 0,
+			archiveBytes: Number(result.archiveBytes) || 0,
+			durationSeconds: Number(result.durationSeconds) || 0,
+			sha256: /^[a-f0-9]{64}$/.test(result.sha256 || "") ? result.sha256 : "",
+			services: Array.isArray(result.services) ? result.services.slice(0, 80).map((service) => ({
+				appId: ID$1.test(service.appId || "") ? service.appId : "",
+				name: typeof service.service === "string" ? service.service.slice(0, 31) : "",
+				status: [
+					"running-isolated",
+					"inert-worker-preserved",
+					"failed"
+				].includes(service.status) ? service.status : "failed"
+			})) : []
+		};
+		const captured = decryptWebValue(row.getString("snapshotEncrypted"));
+		const appIds = new Set(captured.apps.map((app) => app.id));
+		if (clean.apps < 0 || clean.databases < 0 || clean.images < 0 || clean.archiveBytes < 0 || !Number.isSafeInteger(clean.apps) || !Number.isSafeInteger(clean.databases) || !Number.isSafeInteger(clean.images) || !Number.isSafeInteger(clean.archiveBytes) || clean.services.some((service) => !appIds.has(service.appId))) throw new BadRequestError("Inventaire de résultat invalide.");
+		if (body.status === "ready" && (clean.apps !== captured.apps.length || clean.databases !== captured.databases.length || clean.images < 1 || clean.archiveBytes < 1 || clean.services.some((service) => service.status === "failed") || captured.apps.some((app) => !clean.services.some((service) => service.appId === app.id)))) throw new BadRequestError("Le résultat ne couvre pas tout le projet.");
+		clean.applicationVerified = false;
+		if (body.status === "ready" && !(clean.completeArtifacts && clean.scope === "isolated-http-health" && clean.services.some((service) => service.status === "running-isolated") && clean.runtimeStarted && clean.noExternalNetwork && clean.mailsDisabled && clean.scheduledTasksDisabled && clean.workersInert && clean.cleanedUp)) throw new BadRequestError("Une recette incomplète ne peut pas être déclarée réussie.");
+		row.set("status", body.status);
+		row.set("stage", "complete");
+		row.set("finishedAt", now());
+		row.set("result", clean);
+		row.set("errorCode", typeof body.errorCode === "string" && /^[a-z_]{1,60}$/.test(body.errorCode) ? body.errorCode : "");
+		row.set("snapshotEncrypted", "");
+		row.set("leaseHash", "");
+		tx.save(row);
+		output = metadata(row);
+	});
+	return webJson(e, { run: output });
+};
+const projectRecoverySnapshot = snapshot;
+const projectRecoveryPreview = preview;
+
+//#endregion
+//#region src/lib/handlers/webApps/projectMigration.ts
+const COLLECTION = "web_project_migrations", ID = /^[a-z0-9]{15}$/, SHA = /^[a-f0-9]{64}$/;
+const stamp = () => (/* @__PURE__ */ new Date()).toISOString().replace("T", " ");
+const assertAdmission = () => {
+	try {
+		if (JSON.parse(toString($os.cmd("/usr/bin/timeout", "3", "/usr/bin/python3", "-I", "-c", "import sys,json;sys.path.insert(0,'/opt/pockethost-web');from platform_maintenance import status;print(json.dumps(status(path=sys.argv[1])))", $os.getenv("WEB_PROJECT_MIGRATION_ADMISSION_FILE") || "/run/kolab-platform-maintenance/admission.json").output())).paused !== false) throw Error("Paused");
+	} catch {
+		throw new ApiError(503, "Les nouvelles opérations sont suspendues pour maintenance. Le plan est conservé.");
+	}
+};
+const webCronScheduleValid = (value) => {
+	try {
+		parseWebCron(value);
+		return true;
+	} catch {
+		return false;
+	}
+};
+/** Same canonical encoding as Python json(sort_keys=True, ensure_ascii=True). */
+const canonical = (value) => {
+	if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+	if (value && typeof value === "object") return "{" + Object.keys(value).sort().map((key) => canonical(key) + ":" + canonical(value[key])).join(",") + "}";
+	return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (char) => "\\u" + char.charCodeAt(0).toString(16).padStart(4, "0"));
+};
+const planOf = (row) => decryptWebValue(row.getString("planEncrypted"));
+const view = (row) => ({
+	id: row.id,
+	revision: row.getString("revision"),
+	status: row.getString("status"),
+	projectName: row.getString("projectName"),
+	source: row.getString("source"),
+	target: row.getString("target"),
+	approvedAt: row.getString("approvedAt"),
+	importedAt: row.getString("importedAt"),
+	releasedAt: row.getString("releasedAt"),
+	dnsRevision: row.getString("dnsRevision"),
+	dnsPreview: JSON.parse(row.getString("dnsPreview") || "null"),
+	dnsApprovedAt: row.getString("dnsApprovedAt"),
+	plan: JSON.parse(row.getString("publicPlan") || "{}")
+});
+const operator = (e) => {
+	const key = toString($os.readFile($os.getenv("WEB_PROJECT_MIGRATION_CONTROL_KEY_FILE") || "/etc/kolab/project-migration-control.key")).trim();
+	if (!/^[A-Za-z0-9]{80}$/.test(key) || !$security.equal(key, e.request.header.get("X-Project-Migration") || "") || !webDirectLoopback(e)) throw new ForbiddenError("Opérateur local de migration requis.");
+};
+const find = (store, collection, id) => {
+	try {
+		return store.findRecordById(collection, id);
+	} catch {
+		return null;
+	}
+};
+const rowFrom = (body, store) => {
+	if (!ID.test(body.id || "") || !SHA.test(body.revision || "")) throw new BadRequestError("Plan révisé requis.");
+	const row = store.findRecordById(COLLECTION, body.id);
+	if (row.getString("revision") !== body.revision) throw new ApiError(409, "Le plan a changé.");
+	return row;
+};
+const projection = (plan) => ({
+	id: plan.id,
+	revision: plan.revision,
+	projectId: plan.projectId,
+	targetProjectId: plan.targetProjectId,
+	projectName: plan.projectName,
+	source: plan.source,
+	target: plan.target,
+	ownerId: plan.ownerId,
+	expiresAt: plan.expiresAt,
+	requiredBytes: plan.requiredBytes,
+	requiredMemoryMiB: plan.requiredMemoryMiB,
+	writeBarrier: plan.writeBarrier || null,
+	restoreBytes: plan.restoreBytes,
+	archiveSha256: plan.archiveSha256,
+	applications: plan.applications.map((row) => ({
+		sourceId: row.sourceId,
+		targetId: row.targetId,
+		name: row.name,
+		hasFront: row.hasFront
+	})),
+	databases: plan.databases.map((row) => ({
+		sourceId: row.sourceId,
+		targetId: row.targetId,
+		subdomain: row.subdomain,
+		version: row.version,
+		memoryReservationMiB: row.memoryReservationMiB,
+		memoryRequestMiB: row.memoryRequestMiB,
+		targetHost: row.targetHost
+	})),
+	environment: plan.environment.map((row) => ({
+		appTargetId: row.appTargetId,
+		name: row.name,
+		action: row.action,
+		build: row.build,
+		runtime: row.runtime
+	})),
+	bindings: plan.bindings.map((row) => ({
+		appTargetId: row.appTargetId,
+		instanceTargetId: row.instanceTargetId,
+		port: row.port
+	})),
+	scheduledTasks: plan.scheduledTasks.map((row) => ({
+		name: row.name,
+		appTargetId: row.appTargetId,
+		schedule: row.schedule,
+		timezone: row.timezone,
+		sourceEnabled: row.sourceEnabled,
+		enabled: false
+	})),
+	domains: plan.domains.map((row) => ({
+		host: row.host,
+		appTargetId: row.appTargetId,
+		targetStatus: "pending",
+		proxied: true
+	})),
+	volumes: plan.volumes.map((row) => ({
+		appTargetId: row.appTargetId,
+		name: row.name,
+		bytes: row.state.bytes
+	})),
+	workers: plan.workers.map((row) => ({
+		appTargetId: row.appTargetId,
+		service: row.service,
+		enabled: false
+	})),
+	blockers: plan.blockers.map((row) => ({
+		code: row.code,
+		appId: row.appId,
+		name: row.name
+	})),
+	limitations: plan.limitations,
+	sourcePreserved: true,
+	importedPaused: true,
+	mailsEnabled: false,
+	cronsEnabled: false,
+	autoDeploy: false
+});
+const validatePlan = (plan, store) => {
+	if (!plan || typeof plan !== "object" || plan.version !== 1 || plan.mode !== "paused-import" || JSON.stringify(plan).length > 4e6 || !ID.test(plan.id || "") || !ID.test(plan.ownerId || "") || !ID.test(plan.projectId || "") || !ID.test(plan.targetProjectId || "") || !SHA.test(plan.revision || "") || !SHA.test(plan.archiveSha256 || "")) throw new BadRequestError("Plan privé invalide.");
+	const review = { ...plan };
+	delete review.revision;
+	if ($security.sha256(canonical(review)) !== plan.revision) throw new BadRequestError("Empreinte du plan invalide.");
+	const host = $os.getenv("PUBLIC_HOST") || $os.getenv("APEX_DOMAIN");
+	if (![
+		"app3",
+		"app4",
+		"app5"
+	].includes(plan.source) || ![
+		"app3",
+		"app4",
+		"app5"
+	].includes(plan.target) || plan.source === plan.target || host !== plan.target + ".monappli.re") throw new BadRequestError("Le plan doit viser ce serveur.");
+	if (!Number.isSafeInteger(plan.expiresAt) || plan.expiresAt * 1e3 < Date.now() || plan.expiresAt * 1e3 > Date.now() + 19e5) throw new BadRequestError("Plan expiré ou durée excessive.");
+	const owner = find(store, "users", plan.ownerId);
+	if (!owner || owner.getString("suspension") || !owner.getBool("superAdmin")) throw new BadRequestError("Un propriétaire superadmin existant sur la cible est requis.");
+	if (typeof plan.projectName !== "string" || !plan.projectName.trim() || plan.projectName.length > 80) throw new BadRequestError("Nom cible invalide.");
+	for (const [key, max] of [
+		["applications", 20],
+		["databases", 20],
+		["environment", 1e4],
+		["bindings", 80],
+		["scheduledTasks", 2e3],
+		["domains", 1e3],
+		["volumes", 80],
+		["workers", 80],
+		["blockers", 1e4]
+	]) if (!Array.isArray(plan[key]) || plan[key].length > max) throw new BadRequestError("Inventaire hors bornes.");
+	if (store.countRecords("instances", $dbx.exp("uid={:id}", { id: plan.ownerId })) + plan.databases.length > owner.getInt("subscription_quantity")) throw new BadRequestError("Le quota de bases du propriétaire cible est insuffisant.");
+	if (!plan.applications.length || !Number.isSafeInteger(plan.requiredBytes) || plan.requiredBytes < 15 * 1024 ** 3) throw new BadRequestError("Capacité du plan invalide.");
+	const ids = /* @__PURE__ */ new Set(), applications = /* @__PURE__ */ new Set(), databases = /* @__PURE__ */ new Set();
+	const fresh = (collection, id) => {
+		if (typeof id !== "string" || !ID.test(id) || ids.has(id) || find(store, collection, id)) throw new BadRequestError("Un identifiant cible est déjà utilisé.");
+		ids.add(id);
+	};
+	fresh("web_projects", plan.targetProjectId);
+	for (const row of plan.applications) {
+		fresh("web_apps", row.targetId);
+		fresh("web_deployments", row.targetDeployment);
+		applications.add(row.targetId);
+		if (!ID.test(row.sourceId || "") || row.sourceId === row.targetId || typeof row.hasFront !== "boolean" || typeof row.name !== "string" || !row.name || row.name.length > 80) throw new BadRequestError("Mapping application invalide.");
+	}
+	for (const row of plan.databases) {
+		fresh("instances", row.targetId);
+		databases.add(row.targetId);
+		if (!/^0\.\d{1,3}\.\d{1,4}$/.test(row.version || "") || String(row.subdomain).startsWith("web-") || !/^[a-z][a-z0-9-]{1,58}[a-z0-9]$/.test(row.subdomain || "") || row.targetHost !== row.subdomain + "." + host || store.findRecordsByFilter("instances", "subdomain={:name}", "", 1, 0, { name: row.subdomain }).length) throw new BadRequestError("Mapping base invalide.");
+		assertNoWebDomainConflict(row.targetHost);
+	}
+	for (const category of [
+		"environment",
+		"bindings",
+		"scheduledTasks",
+		"domains",
+		"volumes",
+		"workers"
+	]) for (const row of plan[category]) if (!applications.has(row.appTargetId)) throw new BadRequestError("Mapping hors application cible.");
+	for (const row of plan.bindings) {
+		fresh("web_private_db_bindings", row.targetId);
+		if (!databases.has(row.instanceTargetId) || !Number.isInteger(row.port) || row.port < 1024 || row.port > 65535) throw new BadRequestError("Liaison cible invalide.");
+	}
+	for (const row of plan.scheduledTasks) {
+		fresh("web_scheduled_tasks", row.targetId);
+		if (typeof row.command !== "string" || !row.command || row.command.length > 1e4 || !webCronScheduleValid(row.schedule) || !["UTC", "Indian/Reunion"].includes(row.timezone) || row.enabled !== false) throw new BadRequestError("Tâche cible invalide.");
+	}
+	for (const row of plan.domains) {
+		fresh("web_app_domains", row.targetId);
+		if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(row.host || "") || store.findRecordsByFilter("web_app_domains", "host={:host}", "", 1, 0, { host: row.host }).length) throw new BadRequestError("Domaine cible déjà réservé ou invalide.");
+	}
+	for (const row of plan.environment) if (!/^[A-Za-z_][A-Za-z0-9_]{0,119}$/.test(row.name || "") || typeof row.value !== "string" || row.value.includes("\0") || typeof row.build !== "boolean" || typeof row.runtime !== "boolean") throw new BadRequestError("Variable cible invalide.");
+	return plan;
+};
+const recordsOf = (row) => JSON.parse(row.getString("importedRecords") || "[]");
+const importedUntouched = (row, store) => {
+	const plan = planOf(row);
+	for (const mapped of plan.applications) {
+		const app = store.findRecordById("web_apps", mapped.targetId);
+		if (app.getString("migrationLock") !== row.id || app.getString("status") !== "stopped" || app.getString("activeDeployment") !== mapped.targetDeployment || store.findRecordsByFilter("web_deployments", "appId={:id} && (status=\"queued\" || status=\"running\")", "", 1, 0, { id: app.id }).length) throw new BadRequestError("Une application importée est déjà utilisée ou déverrouillée.");
+	}
+	for (const mapped of plan.databases) {
+		const instance = store.findRecordById("instances", mapped.targetId);
+		if (instance.getString("migrationLock") !== row.id || instance.getBool("power")) throw new BadRequestError("Une base importée est déjà utilisée ou déverrouillée.");
+	}
+};
+const HandleProjectMigrationsGet = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, {
+		items: $app.findRecordsByFilter(COLLECTION, "", "-created,-id", 50, 0).map(view),
+		ownerId: e.auth.id
+	});
+};
+const HandleProjectMigrationSources = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, { items: $app.findRecordsByFilter("web_projects", "", "name", 1e3, 0).map((row) => ({
+		id: row.id,
+		name: row.getString("name")
+	})) });
+};
+const HandleProjectMigrationSourcePreview = (e) => {
+	requirePlatformAdmin(e);
+	return webJson(e, projectRecoveryPreview(projectRecoverySnapshot(e.request.pathValue("projectId"))));
+};
+const HandleProjectMigrationApprove = (e) => {
+	const actor = requirePlatformAdmin(e), body = webInput(e);
+	let saved;
+	$app.runInTransaction((tx) => {
+		const row = rowFrom({
+			id: e.request.pathValue("id"),
+			revision: body.revision
+		}, tx), plan = planOf(row);
+		if (row.getString("status") !== "review" || body.confirmation !== row.getString("projectName")) throw new BadRequestError("Confirmez le nom exact du projet pour autoriser son import suspendu.");
+		validatePlan(plan, tx);
+		row.set("status", "approved");
+		row.set("actorId", actor.id);
+		row.set("approvedAt", stamp());
+		tx.save(row);
+		saved = view(row);
+	});
+	return webJson(e, { item: saved });
+};
+const HandleProjectMigrationRelease = (e) => {
+	requirePlatformAdmin(e);
+	const body = webInput(e);
+	let saved;
+	$app.runInTransaction((tx) => {
+		const row = rowFrom({
+			id: e.request.pathValue("id"),
+			revision: body.revision
+		}, tx), plan = planOf(row);
+		if (row.getString("status") !== "imported_paused" || body.confirmation !== row.getString("projectName") || body.keepDeliveryDisabled !== true) throw new BadRequestError("Import suspendu et confirmation explicite requis.");
+		if (plan.blockers.length) throw new BadRequestError("Résolvez les blocages du plan avant une recette en service. Les artefacts restent suspendus.");
+		if (plan.workers.length && body.sourceWorkersPaused !== true) throw new BadRequestError("Confirmez que les workers source sont arrêtés avant de déverrouiller leur copie.");
+		importedUntouched(row, tx);
+		for (const name of [
+			"web_apps",
+			"web_projects",
+			"instances"
+		]) for (const item of recordsOf(row).filter((item) => item.collection === name)) {
+			const record = tx.findRecordById(name, item.id);
+			record.set("migrationLock", "");
+			tx.save(record);
+		}
+		for (const binding of plan.bindings) {
+			const record = tx.findRecordById("web_private_db_bindings", binding.targetId);
+			record.set("enabled", true);
+			record.set("status", "pending");
+			tx.save(record);
+		}
+		row.set("status", "released");
+		row.set("releasedAt", stamp());
+		tx.save(row);
+		saved = view(row);
+	});
+	return webJson(e, {
+		item: saved,
+		servicesStarted: false,
+		mailsEnabled: false,
+		cronsEnabled: false
+	});
+};
+const HandleProjectMigrationDnsApprove = (e) => {
+	requirePlatformAdmin(e);
+	const body = webInput(e);
+	let saved;
+	$app.runInTransaction((tx) => {
+		const row = rowFrom({
+			id: e.request.pathValue("id"),
+			revision: body.revision
+		}, tx), plan = planOf(row);
+		if (row.getString("status") !== "released" || body.confirmation !== row.getString("projectName") || !SHA.test(body.dnsRevision || "") || [
+			"sourceWritesPaused",
+			"sourceCronsPaused",
+			"targetVerified",
+			"nonAtomicAccepted"
+		].some((key) => body[key] !== true)) throw new BadRequestError("Les validations de bascule et la révision DNS exacte sont requises.");
+		if (plan.blockers.length) throw new BadRequestError("Le plan contient encore des blocages.");
+		const dns = JSON.parse(row.getString("dnsPreview") || "null");
+		if (!dns || dns.revision !== body.dnsRevision || dns.expiresAt * 1e3 < Date.now()) throw new BadRequestError("Examinez un aperçu DNS actuel avant de valider.");
+		if (!plan.writeBarrier || plan.writeBarrier.projectId !== plan.projectId || plan.writeBarrier.source !== plan.source || plan.writeBarrier.sourceWritesPaused !== true || plan.writeBarrier.sourceCronsPaused !== true || plan.writeBarrier.sourceWorkersPaused !== true) throw new BadRequestError("La capture doit avoir été précédée du gel explicite des écritures, crons et workers source. Exportez une nouvelle capsule après ce gel.");
+		for (const mapped of plan.applications) {
+			const app = tx.findRecordById("web_apps", mapped.targetId);
+			if (mapped.hasFront && app.getString("status") !== "running") throw new BadRequestError("Une application cible n’est pas encore en service.");
+		}
+		row.set("dnsRevision", body.dnsRevision);
+		row.set("dnsApprovedAt", stamp());
+		tx.save(row);
+		saved = view(row);
+	});
+	return webJson(e, {
+		item: saved,
+		dnsChanged: false
+	});
+};
+const HandleProjectMigrationOperator = (e) => {
+	operator(e);
+	const body = webInput(e), action = e.request.pathValue("action");
+	let result = {};
+	$app.runInTransaction((tx) => {
+		if (["take", "rollback"].includes(action)) {
+			if (!ID.test(body.id || "")) throw new BadRequestError("Plan invalide.");
+			tx.db().newQuery("UPDATE web_project_migrations SET status=status WHERE id={:id}").bind({ id: body.id }).execute();
+		}
+		if (action === "export-snapshot") {
+			const snapshot = projectRecoverySnapshot(body.projectId, tx);
+			if (snapshot.revision !== body.revision) throw new ApiError(409, "Le projet source a changé depuis l’aperçu.");
+			if (body.sourceWritesPaused === true) {
+				if (body.confirmation !== snapshot.projectId || body.sourceCronsPaused !== true || body.sourceWorkersPaused !== true) throw new BadRequestError("Confirmation du gel source incomplète.");
+				for (const app of snapshot.apps) if (app.scheduledTasks.some((task) => task.enabled)) throw new BadRequestError("Désactivez les crons source avant une capture destinée à une bascule.");
+				snapshot.migrationSourceBarrier = {
+					version: 1,
+					projectId: snapshot.projectId,
+					source: snapshot.platform,
+					attestedAt: stamp(),
+					sourceWritesPaused: true,
+					sourceCronsPaused: true,
+					sourceWorkersPaused: true,
+					attestationOnly: true
+				};
+			}
+			result = { snapshot };
+			return;
+		}
+		if (action === "prepare") {
+			const plan = validatePlan(body.plan, tx);
+			if (find(tx, COLLECTION, plan.id)) throw new ApiError(409, "Plan déjà enregistré.");
+			const row = new Record(tx.findCollectionByNameOrId(COLLECTION));
+			row.id = plan.id;
+			for (const [key, value] of Object.entries({
+				projectName: plan.projectName,
+				ownerId: plan.ownerId,
+				source: plan.source,
+				target: plan.target,
+				revision: plan.revision,
+				status: "review",
+				planEncrypted: encryptWebValue(plan),
+				publicPlan: projection(plan),
+				expiresAt: (/* @__PURE__ */ new Date(plan.expiresAt * 1e3)).toISOString()
+			})) row.set(key, value);
+			tx.save(row);
+			result = { item: view(row) };
+			return;
+		}
+		const row = rowFrom(body, tx), plan = planOf(row);
+		if (action === "state") {
+			result = { item: view(row) };
+			return;
+		}
+		if (action === "dns-preview") {
+			const preview = body.preview, review = { ...preview };
+			delete review.revision;
+			if (!["imported_paused", "released"].includes(row.getString("status")) || !preview || preview.migrationId !== row.id || preview.planRevision !== row.getString("revision") || preview.revision !== $security.sha256(canonical(review)) || !Array.isArray(preview.changes) || preview.changes.length !== plan.domains.length || preview.expiresAt * 1e3 < Date.now() || preview.expiresAt * 1e3 > Date.now() + 91e4 || plan.domains.some((domain) => preview.changes.filter((change) => change.host === domain.host && change.after?.proxied === true && change.after?.type === "A" && change.after?.name === domain.host).length !== 1)) throw new BadRequestError("Aperçu DNS non conforme au plan.");
+			row.set("dnsPreview", preview);
+			row.set("dnsRevision", "");
+			row.set("dnsApprovedAt", "");
+			tx.save(row);
+			result = { item: view(row) };
+			return;
+		}
+		if (action === "take") {
+			if (row.getString("status") !== "approved") throw new BadRequestError("L’import suspendu doit être approuvé dans Kolab.");
+			const actor = find(tx, "users", row.getString("actorId"));
+			if (!actor?.getBool("superAdmin") || actor.getString("suspension")) throw new ForbiddenError("L’approbateur n’est plus autorisé.");
+			validatePlan(plan, tx);
+			assertAdmission();
+			row.set("status", "importing");
+			tx.save(row);
+			result = { taken: true };
+			return;
+		}
+		if (action === "fail") {
+			if (row.getString("status") === "importing") {
+				row.set("status", "failed");
+				tx.save(row);
+			}
+			result = { saved: true };
+			return;
+		}
+		if (action === "rollback") {
+			if (![
+				"imported_paused",
+				"failed",
+				"rolling_back"
+			].includes(row.getString("status"))) throw new BadRequestError("Seule une copie suspendue peut être retirée automatiquement.");
+			if (row.getString("status") !== "rolling_back" && recordsOf(row).length) importedUntouched(row, tx);
+			assertAdmission();
+			row.set("status", "rolling_back");
+			tx.save(row);
+			result = { allowed: true };
+			return;
+		}
+		if (action === "rolled-back") {
+			if (row.getString("status") !== "rolling_back") throw new BadRequestError("Retour arrière non engagé.");
+			for (const item of recordsOf(row).reverse()) {
+				const record = find(tx, item.collection, item.id);
+				if (record) tx.delete(record);
+			}
+			row.set("status", "rolled_back");
+			row.set("importedRecords", []);
+			tx.save(row);
+			result = { rolledBack: true };
+			return;
+		}
+		if (action === "dns-ready") {
+			if (row.getString("status") !== "released" || row.getString("dnsRevision") !== body.dnsRevision || Date.now() - Date.parse(row.getString("dnsApprovedAt")) > 9e5) throw new ForbiddenError("Aucune approbation récente pour cet aperçu DNS.");
+			result = { approved: true };
+			return;
+		}
+		if (action === "dns-result") {
+			if (row.getString("dnsRevision") !== body.dnsRevision || body.status !== "cutover") throw new ForbiddenError("Révision DNS différente.");
+			row.set("status", "cutover");
+			tx.save(row);
+			result = { recorded: true };
+			return;
+		}
+		if (action !== "commit" || row.getString("status") !== "importing" || canonical(body.plan) !== canonical(plan)) throw new BadRequestError("Import non engagé ou plan modifié.");
+		const captured = body.capsule;
+		if (!captured || captured.projectId !== plan.projectId || captured.revision !== plan.capsuleRevision || !Array.isArray(captured.apps) || captured.apps.length !== plan.applications.length) throw new BadRequestError("Capsule différente du plan.");
+		const probe = body.drill;
+		if (!probe || probe.sandboxUid !== 1002 || probe.capsuleRevision !== plan.capsuleRevision || probe.manifestSha256 !== plan.manifestSha256 || probe.noExternalNetwork !== true || probe.cleanedUp !== true || !Array.isArray(probe.services)) throw new BadRequestError("Une recette isolée de cette capsule doit être terminée et nettoyée avant import.");
+		const expected = captured.apps.flatMap((app) => app.services.map((service) => ({
+			appId: app.id,
+			service: service.name,
+			status: service.front ? "running-isolated" : "inert-worker-preserved"
+		})));
+		if (probe.services.length !== expected.length || expected.some((service) => probe.services.filter((item) => item.appId === service.appId && item.service === service.service && item.status === service.status).length !== 1)) throw new BadRequestError("La recette ne couvre pas exactement les services capturés.");
+		const records = [];
+		const save = (collection, id, values) => {
+			const record = new Record(tx.findCollectionByNameOrId(collection));
+			record.id = id;
+			for (const [key, value] of Object.entries(values)) record.set(key, value);
+			tx.save(record);
+			records.push({
+				collection,
+				id: record.id
+			});
+			return record;
+		};
+		save("web_projects", plan.targetProjectId, {
+			name: plan.projectName,
+			repository: "migration/" + plan.projectId,
+			actorId: plan.ownerId,
+			multiRepository: true,
+			allowedRepositories: [],
+			previewEnabled: false,
+			previewMax: 3,
+			previewTtlHours: 24,
+			migrationLock: row.id
+		});
+		save("web_project_members", $security.randomStringWithAlphabet(15, "abcdefghijklmnopqrstuvwxyz0123456789"), {
+			project: plan.targetProjectId,
+			user: plan.ownerId,
+			role: "owner",
+			invitedBy: plan.ownerId
+		});
+		for (const mapped of plan.databases) {
+			if (find(tx, "instances", mapped.targetId)) throw new ApiError(409, "Base cible déjà présente.");
+			const description = captured.databases[mapped.sourceId];
+			if (!description || description.version !== mapped.version) throw new BadRequestError("Binaire natif incohérent.");
+			save("instances", mapped.targetId, {
+				uid: plan.ownerId,
+				subdomain: mapped.subdomain,
+				version: mapped.version,
+				power: false,
+				status: "idle",
+				dev: false,
+				syncAdmin: false,
+				autoVacuum: false,
+				secrets: description.configuration?.secrets || [],
+				migrationLock: row.id
+			});
+		}
+		for (const mapped of plan.applications) {
+			assertWebSiteCapacity(tx);
+			const original = captured.apps.find((app) => app.id === mapped.sourceId);
+			if (!original || original.deploymentId !== mapped.sourceDeployment || !Array.isArray(original.services) || !original.services.length || mapped.hasFront !== original.services.some((service) => service.front === true) || original.services.some((service) => !/^sha256:[a-f0-9]{64}$/.test(body.images?.[mapped.targetId]?.[service.name] || ""))) throw new BadRequestError("Images importées incomplètes.");
+			const input = { ...original.configuration.runtime || { kind: "nextjs" } };
+			delete input.registry;
+			if (input.compose) input.compose = {
+				front: input.compose.front,
+				services: input.compose.services
+			};
+			const runtime = validateRuntimeProfile(input), config = {
+				...original.configuration.config,
+				repository: "",
+				repositoryId: 0,
+				autoDeploy: false,
+				generatedDomain: `web-${mapped.targetId}.${$os.getenv("APEX_DOMAIN") || "monappli.re"}`
+			};
+			for (const name of [
+				"source",
+				"gitSourceId",
+				"githubConnectionId"
+			]) delete config[name];
+			const environment = {};
+			for (const item of plan.environment.filter((item) => item.appTargetId === mapped.targetId)) environment[item.name] = {
+				value: item.value,
+				build: item.build,
+				runtime: item.runtime
+			};
+			for (const service of original.services) for (const text of service.environment || []) {
+				const name = String(text).split("=", 1)[0] || "";
+				if (/SMTP|BREVO|SENDGRID|MAILGUN|RESEND|SES_|STRIPE|WEBHOOK|CRON_SECRET/i.test(name)) environment[name] = {
+					value: "",
+					build: false,
+					runtime: true
+				};
+			}
+			for (const [name, value] of Object.entries({
+				KOLAB_MIGRATION_PAUSED: "1",
+				DISABLE_CRON: "true",
+				CRON_ENABLED: "false",
+				SMTP_ENABLED: "false",
+				MAIL_ENABLED: "false"
+			})) environment[name] = {
+				value,
+				build: false,
+				runtime: true
+			};
+			save("web_apps", mapped.targetId, {
+				name: mapped.name,
+				uid: plan.ownerId,
+				config,
+				envEncrypted: encryptWebValue(environment),
+				status: "stopped",
+				activeDeployment: mapped.targetDeployment,
+				desiredCommit: original.commit || "",
+				migrationLock: row.id
+			});
+			const snapshot = {
+				config,
+				env: environment,
+				runtime,
+				storage: original.configuration.storage || [],
+				domains: []
+			};
+			save("web_runtime_profiles", $security.randomStringWithAlphabet(15, "abcdefghijklmnopqrstuvwxyz0123456789"), {
+				appId: mapped.targetId,
+				profile: runtime,
+				registryEncrypted: "",
+				revision: $security.randomString(24)
+			});
+			save("web_storage_settings", $security.randomStringWithAlphabet(15, "abcdefghijklmnopqrstuvwxyz0123456789"), {
+				appId: mapped.targetId,
+				volumes: snapshot.storage,
+				retention: 7,
+				revision: $security.randomString(24)
+			});
+			save("web_app_environments", $security.randomStringWithAlphabet(15, "abcdefghijklmnopqrstuvwxyz0123456789"), {
+				projectId: plan.targetProjectId,
+				appId: mapped.targetId,
+				environment: "prod",
+				slug: "migration-" + mapped.targetId,
+				state: "active"
+			});
+			const images = body.images[mapped.targetId], first = images[original.services[0].name];
+			save("web_deployments", mapped.targetDeployment, {
+				appId: mapped.targetId,
+				actorId: plan.ownerId,
+				action: "migration-import",
+				commit: original.commit || "",
+				status: "ready",
+				stage: "Importée suspendue",
+				snapshotEncrypted: encryptWebValue(snapshot),
+				result: runtime.kind === "compose" ? {
+					images,
+					runtimeKind: runtime.kind
+				} : {
+					image: first,
+					runtimeKind: runtime.kind
+				},
+				finishedAt: stamp()
+			});
+		}
+		for (const binding of plan.bindings) save("web_private_db_bindings", binding.targetId, {
+			appId: binding.appTargetId,
+			instanceId: binding.instanceTargetId,
+			actorId: plan.ownerId,
+			port: binding.port,
+			enabled: false,
+			tokenEncrypted: encryptWebValue({ token: $security.randomString(64) }),
+			revision: $security.randomString(24),
+			status: "unavailable",
+			needsRestart: true
+		});
+		for (const task of plan.scheduledTasks) save("web_scheduled_tasks", task.targetId, {
+			appId: task.appTargetId,
+			actorId: plan.ownerId,
+			name: task.name,
+			commandEncrypted: encryptWebValue({ command: task.command }),
+			schedule: task.schedule,
+			timezone: task.timezone,
+			enabled: false,
+			timeoutSeconds: task.timeoutSeconds,
+			catchUp: "skip",
+			maxCatchUpDelayMinutes: 15
+		});
+		for (const domain of plan.domains) save("web_app_domains", domain.targetId, {
+			appId: domain.appTargetId,
+			host: domain.host,
+			status: "pending",
+			ownershipToken: $security.randomString(48),
+			autoDns: false,
+			lastError: "Migration suspendue : DNS et certificat à valider avant bascule."
+		});
+		row.set("status", "imported_paused");
+		row.set("publicPlan", {
+			...projection(plan),
+			drill: {
+				verified: true,
+				sandboxUid: 1002,
+				noExternalNetwork: true,
+				cleanedUp: true,
+				services: expected.length
+			}
+		});
+		row.set("importedAt", stamp());
+		row.set("importedRecords", records);
+		tx.save(row);
+		result = {
+			item: view(row),
+			servicesStarted: false
+		};
+	});
+	return webJson(e, result);
+};
+/** Model-level locks cover metadata edits and queued operations admitted before import commit. */
+const lockOf = (record, store) => {
+	const name = record.collection().name;
+	if ([
+		"instances",
+		"web_apps",
+		"web_projects"
+	].includes(name)) return record.getString("migrationLock") || find(store, name, record.id)?.getString("migrationLock") || "";
+	if (!name.startsWith("web_") || name === COLLECTION) return "";
+	const appId = record.getString("appId");
+	if (appId) return find(store, "web_apps", appId)?.getString("migrationLock") || "";
+	const projectId = record.getString("projectId") || (name === "web_project_members" ? record.getString("project") : "");
+	return projectId ? find(store, "web_projects", projectId)?.getString("migrationLock") || "" : "";
+};
+const GuardProjectMigrationRecord = (e) => {
+	const record = e.record, name = record.collection().name, store = e.app || $app, lock = lockOf(record, store);
+	if (!lock) return e.next();
+	if (find(store, COLLECTION, lock)?.getString("status") === "importing") return e.next();
+	if ([
+		"instances",
+		"web_apps",
+		"web_projects"
+	].includes(name) && !record.isNew()) {
+		const previous = find(store, name, record.id);
+		if (previous && (name === "instances" ? [
+			"uid",
+			"subdomain",
+			"version",
+			"power",
+			"dev",
+			"syncAdmin",
+			"autoVacuum",
+			"secrets",
+			"cname"
+		] : name === "web_apps" ? [
+			"name",
+			"uid",
+			"config",
+			"envEncrypted",
+			"activeDeployment",
+			"desiredCommit",
+			"deletionId",
+			"status"
+		] : [
+			"name",
+			"repository",
+			"actorId",
+			"multiRepository",
+			"allowedRepositories",
+			"previewEnabled",
+			"previewMax",
+			"previewTtlHours",
+			"deletionId"
+		]).every((key) => record.getString(key) === previous.getString(key))) return e.next();
+	}
+	throw new BadRequestError("Import suspendu : déverrouillez son plan avant de modifier cette ressource.");
+};
+const GuardProjectMigrationDelete = (e) => {
+	const lock = lockOf(e.record, e.app || $app);
+	if (lock && find(e.app || $app, COLLECTION, lock)?.getString("status") !== "rolling_back") throw new BadRequestError("Import suspendu : utilisez le retour arrière de son assistant.");
+	return e.next();
+};
+const GuardProjectMigrationRequest = (e) => {
+	const body = e.requestInfo().body || {};
+	if (Object.keys(body).some((key) => key === "migrationLock" || key.startsWith("migrationLock:") || key.startsWith("migrationLock+"))) throw new ForbiddenError("Le verrou de migration est réservé à son assistant.");
+	if (e.request?.method === "DELETE" && lockOf(e.record, e.app || $app)) throw new ForbiddenError("Import suspendu : retour arrière opérateur requis.");
+	return e.next();
 };
 
 //#endregion
@@ -26201,6 +28109,9 @@ exports.GITHUB_PRINCIPAL_LABEL = GITHUB_PRINCIPAL_LABEL;
 exports.GIT_SOURCE_READER = GIT_SOURCE_READER;
 exports.GuardDashboardTotp = GuardDashboardTotp;
 exports.GuardInstanceHostnamesRequest = GuardInstanceHostnamesRequest;
+exports.GuardProjectMigrationDelete = GuardProjectMigrationDelete;
+exports.GuardProjectMigrationRecord = GuardProjectMigrationRecord;
+exports.GuardProjectMigrationRequest = GuardProjectMigrationRequest;
 exports.GuardWebDeletingRecord = GuardWebDeletingRecord;
 exports.GuardWebInstanceDomainCreate = GuardWebInstanceDomainCreate;
 exports.GuardWebInstanceDomainUpdate = GuardWebInstanceDomainUpdate;
@@ -26294,7 +28205,11 @@ exports.HandleOperatorAdminTestBackupS3 = HandleOperatorAdminTestBackupS3;
 exports.HandleOperatorAdminTestSMTP = HandleOperatorAdminTestSMTP;
 exports.HandleOperatorAdminUpdateSettings = HandleOperatorAdminUpdateSettings;
 exports.HandleOperatorAdminUpdateUser = HandleOperatorAdminUpdateUser;
+exports.HandleOperatorControls = HandleOperatorControls;
 exports.HandleOperatorDatabaseRequestLimits = HandleOperatorDatabaseRequestLimits;
+exports.HandleOperatorDeploymentMaintenance = HandleOperatorDeploymentMaintenance;
+exports.HandleOperatorFleet = HandleOperatorFleet;
+exports.HandleOperatorMemory = HandleOperatorMemory;
 exports.HandleOperatorMonitoring = HandleOperatorMonitoring;
 exports.HandleOperatorMonitoringDeliveryConfig = HandleOperatorMonitoringDeliveryConfig;
 exports.HandleOperatorMonitoringUpdate = HandleOperatorMonitoringUpdate;
@@ -26305,6 +28220,18 @@ exports.HandleOperatorWebRequestLimit = HandleOperatorWebRequestLimit;
 exports.HandleOutpostUnsubscribe = HandleOutpostUnsubscribe;
 exports.HandleProcessNotification = HandleProcessNotification;
 exports.HandleProcessSingleNotification = HandleProcessSingleNotification;
+exports.HandleProjectMigrationApprove = HandleProjectMigrationApprove;
+exports.HandleProjectMigrationDnsApprove = HandleProjectMigrationDnsApprove;
+exports.HandleProjectMigrationOperator = HandleProjectMigrationOperator;
+exports.HandleProjectMigrationRelease = HandleProjectMigrationRelease;
+exports.HandleProjectMigrationSourcePreview = HandleProjectMigrationSourcePreview;
+exports.HandleProjectMigrationSources = HandleProjectMigrationSources;
+exports.HandleProjectMigrationsGet = HandleProjectMigrationsGet;
+exports.HandleProjectRecoveryClaim = HandleProjectRecoveryClaim;
+exports.HandleProjectRecoveryGet = HandleProjectRecoveryGet;
+exports.HandleProjectRecoveryPreview = HandleProjectRecoveryPreview;
+exports.HandleProjectRecoveryQueue = HandleProjectRecoveryQueue;
+exports.HandleProjectRecoveryReport = HandleProjectRecoveryReport;
 exports.HandleSesError = HandleSesError;
 exports.HandleSignupCheck = HandleSignupCheck;
 exports.HandleSignupConfirm = HandleSignupConfirm;
@@ -26339,6 +28266,11 @@ exports.HandleWebBackupRestorePreview = HandleWebBackupRestorePreview;
 exports.HandleWebBackupSettings = HandleWebBackupSettings;
 exports.HandleWebBackupsList = HandleWebBackupsList;
 exports.HandleWebBranches = HandleWebBranches;
+exports.HandleWebChecksClaim = HandleWebChecksClaim;
+exports.HandleWebChecksGet = HandleWebChecksGet;
+exports.HandleWebChecksPut = HandleWebChecksPut;
+exports.HandleWebChecksReport = HandleWebChecksReport;
+exports.HandleWebChecksRun = HandleWebChecksRun;
 exports.HandleWebCiDeploy = HandleWebCiDeploy;
 exports.HandleWebCiMaintenance = HandleWebCiMaintenance;
 exports.HandleWebCiTokenRevoke = HandleWebCiTokenRevoke;
@@ -26589,6 +28521,8 @@ exports.normalizeWebhookUrl = normalizeWebhookUrl;
 exports.operationJson = operationJson;
 exports.operationsAccess = operationsAccess;
 exports.planWebAppEnv = planWebAppEnv;
+exports.projectRecoveryPreview = projectRecoveryPreview;
+exports.projectRecoverySnapshot = projectRecoverySnapshot;
 exports.queueWebDeployment = queueWebDeployment;
 exports.queueWebGitPush = queueWebGitPush;
 exports.readDockerMetricsSnapshot = readDockerMetricsSnapshot;
@@ -26643,6 +28577,7 @@ exports.webAppDetachment = webAppDetachment;
 exports.webAppSettingActive = webAppSettingActive;
 exports.webAppsCapability = webAppsCapability;
 exports.webCan = webCan;
+exports.webChecksSnapshot = webChecksSnapshot;
 exports.webConfig = webConfig;
 exports.webDeletionView = webDeletionView;
 exports.webDeploymentOrigin = webDeploymentOrigin;

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import ResourcesOverview from '$components/monitoring/ResourcesOverview.svelte'
+  import OperatorControls from '$components/monitoring/OperatorControls.svelte'
+  import IncidentDiagnostics from '$components/monitoring/IncidentDiagnostics.svelte'
+  import type { PlatformDiagnostics } from '../../../../../pockethost/src/common/platformDiagnostics'
   import { client } from '$src/pocketbase-client'
   import { userStore } from '$util/stores'
   import type {
@@ -72,6 +75,7 @@
     group: MonitorGroup | 'all' = 'all',
     issuesOnly = false,
     now = Date.now()
+  let diagnostics: PlatformDiagnostics | null = null
   const labels: Record<MonitorState, string> = {
     ok: 'OK',
     warning: 'À surveiller',
@@ -115,9 +119,11 @@
         available: boolean
         stale: boolean
         report: MonitoringReport | null
+        diagnostics: PlatformDiagnostics | null
         settings: AlertSettings
       }>('/api/admin/monitoring', { method: 'GET', requestKey: 'platform-monitoring' })
       report = next.report
+      diagnostics = next.diagnostics
       if (!dirty && !saving) applySettings(next.settings)
       available = next.available
       stale = next.stale
@@ -215,6 +221,7 @@
       aria-labelledby="monitor-tab-resources"
       hidden={view !== 'resources'}
     >
+      <OperatorControls />
       <ResourcesOverview
         active={view === 'resources' && canAccess}
         refreshKey={resourcesRefresh}
@@ -274,6 +281,7 @@
           >
         </div>
       </div>
+      <IncidentDiagnostics {diagnostics} stale={isStale} />
       {#if settings}
         <details class="monitor-alert-settings">
           <summary>Notifications <span>E-mail et Discord · ce serveur</span></summary>

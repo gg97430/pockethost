@@ -1,0 +1,14 @@
+[Unit]
+Description=Kolab read-only fleet reader local socket
+
+[Socket]
+ListenStream=/run/kolab-fleet-reader.sock
+SocketUser=root
+SocketGroup=ubuntu
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

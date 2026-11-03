@@ -46,6 +46,12 @@ def valid_bundle(directory, targets):
         raise ValueError('Identifiant de version invalide.')
     if not re.fullmatch(r'[a-f0-9]{64}', data.get('sourceHash', '')):
         raise ValueError('Empreinte commune manquante.')
+    waves = data.get('waves', [list(ACTIVE)])
+    if (not isinstance(waves, list) or not waves or
+            any(not isinstance(wave, list) or not wave for wave in waves) or
+            any(not isinstance(host,str)or host not in ACTIVE for wave in waves for host in wave) or
+            sorted(host for wave in waves for host in wave) != sorted(ACTIVE)):
+        raise ValueError('Les vagues doivent inclure chaque serveur actif exactement une fois.')
     for row in [data['installer'], *data['targets'].values()]:
         name = row['file']
         if pathlib.PurePosixPath(name).name != name:
@@ -58,19 +64,21 @@ def valid_bundle(directory, targets):
 
 def publish(directory, targets, upload, phase):
     data = valid_bundle(directory, targets)
-    # Upload and all preflights finish before the first server is activated.
-    for host in ACTIVE:
-        upload(host, targets[host], directory, data)
-    for host in ACTIVE:
-        phase(host, targets[host], data, 'prepare')
     touched = []
     try:
-        for host in ACTIVE:
-            touched.append(host)  # Include a server whose activation fails halfway through.
-            phase(host, targets[host], data, 'activate')
-        for host in ACTIVE:
-            phase(host, targets[host], data, 'verify')
-        for host in ACTIVE:
+        waves = data.get('waves', [list(ACTIVE)])
+        for wave in waves:
+            # Every pilot in this wave passes before any later host is contacted.
+            for host in wave:
+                upload(host, targets[host], directory, data)
+            for host in wave:
+                phase(host, targets[host], data, 'prepare')
+            for host in wave:
+                touched.append(host)  # Include a partially activated server.
+                phase(host, targets[host], data, 'activate')
+            for host in wave:
+                phase(host, targets[host], data, 'verify')
+        for host in touched:
             phase(host, targets[host], data, 'commit')
     except BaseException as original:
         failures = []
@@ -154,8 +162,8 @@ def phase(host, target, data, name):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
-    sub.add_parser('check', help='Vérifier app3 et app4 sans modifier leur configuration.')
-    release = sub.add_parser('publish', help='Publier un lot testé sur les deux serveurs, avec retour arrière commun.')
+    sub.add_parser('check', help='Vérifier app3, app4 et app5 sans modifier leur configuration.')
+    release = sub.add_parser('publish', help='Publier sur les trois serveurs, avec vagues et retour arrière commun.')
     release.add_argument('directory', type=pathlib.Path)
     args = parser.parse_args()
     targets = configuration()

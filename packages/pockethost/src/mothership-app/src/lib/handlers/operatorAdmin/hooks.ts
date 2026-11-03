@@ -1,5 +1,31 @@
 routerAdd(
   'GET',
+  '/api/admin/fleet',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorFleet(e),
+  $apis.requireAuth('users')
+)
+
+routerAdd(
+  'GET',
+  '/api/admin/controls',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorControls(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'PUT',
+  '/api/admin/controls/memory',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorMemory(e),
+  $apis.requireAuth('users')
+)
+routerAdd(
+  'PUT',
+  '/api/admin/controls/maintenance',
+  (e) => require(`${__hooks}/mothership`).HandleOperatorDeploymentMaintenance(e),
+  $apis.requireAuth('users')
+)
+
+routerAdd(
+  'GET',
   '/api/admin/monitoring/resources',
   (e) => require(`${__hooks}/mothership`).HandleOperatorResourceMetrics(e),
   $apis.requireAuth('users')

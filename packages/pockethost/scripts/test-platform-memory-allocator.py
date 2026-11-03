@@ -71,6 +71,8 @@ class Policy(unittest.TestCase):
 
 class Integration(unittest.TestCase):
     def setUp(self):
+        policy=patch.object(m,'load_policy',return_value={});policy.start();self.addCleanup(policy.stop)
+        management=patch.object(m,'load_database_management',return_value={});management.start();self.addCleanup(management.stop)
         self.item={'cid':CID,'name':'ph-web-'+APP+'-'+DEP,'pid':123,'running':True,
                    'labels':{'pockethost.web':'true','pockethost.web.app':APP,'pockethost.web.deployment':DEP},
                    'host':{'Memory':768*M,'MemorySwap':768*M,'MemoryReservation':256*M},'mounts':[]}
@@ -85,9 +87,9 @@ class Integration(unittest.TestCase):
             def update(self,item,target):outer.updates.append(target)
         self.engine=Fake()
 
-    def cycle(self, state=None, available=22000*M, busy=None, registry=None, pressure=False):
+    def cycle(self, state=None, available=22000*M, busy=None, registry=None, pressure=False, snapshot=(740*M,730*M), test_scope=None):
         reg=registry or {'version':1,'apps':{},'projects':{}}
-        with patch.object(m,'host_memory',return_value=(32000*M,available)),patch.object(m,'database_inventory',return_value=({DB},self.profile,{APP:DEP},busy or set())),patch.object(m,'read_json',return_value=reg),patch.object(m,'scope',return_value=pathlib.Path('/scope')),patch.object(m,'counters',return_value=(740*M,730*M)),patch.object(m,'pressure',return_value=pressure),patch.object(m,'ancestor_headroom',return_value=20000*M):
+        with patch.object(m,'host_memory',return_value=(32000*M,available)),patch.object(m,'database_inventory',return_value=({DB},self.profile,{APP:DEP},busy or set())),patch.object(m,'read_json',return_value=reg),patch.object(m,'scope',return_value=test_scope or pathlib.Path('/scope')),patch.object(m,'counters',return_value=snapshot),patch.object(m,'pressure',return_value=pressure),patch.object(m,'ancestor_headroom',return_value=20000*M):
             return m.cycle(self.config,[self.engine],state or {},now=2000)
 
     def test_growth_is_verified_and_remembered(self):
@@ -101,9 +103,49 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.updates,[])
         self.assertEqual(report['resources'][0]['decision'],'server-reserve')
 
-    def test_pressure_blocks_growth(self):
+    def test_pressure_does_not_freeze_active_service_with_plenty_of_ram(self):
         self.cycle(pressure=True)
+        self.assertEqual(len(self.updates),1)
+
+    def test_pressure_with_little_headroom_still_blocks_growth(self):
+        self.cycle(pressure=True,available=5300*M)
         self.assertEqual(self.updates,[])
+
+    def test_database_does_not_shrink_an_idle_learned_cap(self):
+        self.engine.kind='databases'
+        self.item.update(name=DB,mounts=[('/instances/'+DB,'/home/pockethost')])
+        self.item['labels']={'pockethost.database.memory':'adaptive'}
+        self.item['host']={'Memory':8192*M,'MemorySwap':-1,'MemoryReservation':0}
+        state,report=self.cycle({CID:{'lastApplied':8192*M,'lowSince':0,'changedAt':0}})
+        self.assertEqual(self.updates,[])
+        self.assertEqual(state['database:'+DB]['memoryBytes'],8192*M)
+        self.assertEqual(report['resources'][0]['allocatedBytes'],8192*M)
+
+    def test_recreated_database_reuses_previous_learned_cap(self):
+        self.engine.kind='databases'
+        self.item.update(name=DB,mounts=[('/instances/'+DB,'/home/pockethost')])
+        self.item['labels']={'pockethost.database.memory':'adaptive'}
+        self.item['host']={'Memory':4096*M,'MemorySwap':-1,'MemoryReservation':0}
+        state,report=self.cycle({'database:'+DB:{'memoryBytes':8192*M}})
+        self.assertEqual(self.updates,[8192*M])
+        self.assertEqual(state['database:'+DB]['memoryBytes'],8192*M)
+
+    def test_unused_dedicated_database_ram_is_not_shared_with_web(self):
+        with patch.object(m,'load_policy',return_value={DB:32*1024*M}):
+            with self.assertRaises(ValueError):self.cycle()
+        # 16 GiB reserved on a 32 GiB host, while 20 GiB remain available:
+        # physical RAM looks ample, but the unconsumed commitment leaves no growth budget.
+        with patch.object(m,'load_policy',return_value={DB:16384*M}):
+            self.cycle(available=20000*M)
+        self.assertEqual(self.updates,[])
+
+    def test_limit_pressure_grows_even_after_short_peak_has_subsided(self):
+        with tempfile.TemporaryDirectory()as t:
+            p=pathlib.Path(t);(p/'memory.events').write_text('max 10\noom 0\n')
+            (p/'memory.peak').write_text(str(760*M))
+            _,report=self.cycle(snapshot=(200*M,180*M),test_scope=p)
+            self.assertGreaterEqual(self.updates[0],1792*M)
+            self.assertEqual(report['resources'][0]['decision'],'grow')
 
     def test_explicit_project_budget_blocks_growth(self):
         reg={'version':1,'apps':{APP:'project'},'projects':{'project':{'resources':{'enabled':True,'memoryMiB':4096}}}}
@@ -154,6 +196,25 @@ class Integration(unittest.TestCase):
         self.assertEqual(len(self.updates),1)
         self.assertGreater(self.updates[0],740*M)
         self.assertEqual(report['resources'][0]['decision'],'initial')
+
+    def test_explicit_operator_approval_reenables_adaptive_mode_without_container_restart(self):
+        self.engine.kind='databases'
+        self.item.update(name=DB,mounts=[('/instances/'+DB,'/home/pockethost')],labels={'pockethost.database.memory':'fixed'})
+        self.item['host']={'Memory':4096*M,'MemorySwap':-1,'MemoryReservation':0}
+        old={CID:{'externalOverride':True,'lastApplied':2048*M,'baseline':{'Memory':2048*M,'MemorySwap':-1,'MemoryReservation':0}}}
+        with patch.object(m,'load_database_management',return_value={DB:{'mode':'adaptive','maximumMiB':8192,'revision':'a'*32}}):
+            state,report=self.cycle(state=old,snapshot=(3800*M,3700*M))
+        self.assertEqual(report['resources'][0]['decision'],'grow')
+        self.assertEqual(state[CID]['managementRevision'],'a'*32)
+        self.assertNotIn('externalOverride',state[CID]);self.assertGreater(self.updates[0],4096*M)
+
+    def test_fixed_reservation_always_wins_over_adaptive_labels(self):
+        self.engine.kind='databases'
+        self.item.update(name=DB,mounts=[('/instances/'+DB,'/home/pockethost')],labels={'pockethost.database.memory':'adaptive'})
+        self.item['host']={'Memory':4096*M,'MemorySwap':-1,'MemoryReservation':4096*M}
+        with patch.object(m,'load_policy',return_value={DB:4096*M}):
+            _,report=self.cycle(snapshot=(3800*M,3700*M))
+        self.assertEqual(report['resources'][0]['decision'],'fixed-database-limit');self.assertEqual(self.updates,[])
 
     def test_root_configuration_must_not_be_writable(self):
         with tempfile.TemporaryDirectory() as t:

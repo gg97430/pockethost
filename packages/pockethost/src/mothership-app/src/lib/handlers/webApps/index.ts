@@ -7,6 +7,7 @@ export * from './source'
 export * from './terminal'
 
 export * from './backups'
+export * from './checks'
 export * from './health'
 export * from './scheduledTasks'
 
@@ -27,6 +28,8 @@ export * from './githubConnections'
 export * from './gitSource'
 export * from './members'
 export * from './privateDatabases'
+export * from './projectMigration'
+export * from './projectRecovery'
 export * from './recovery'
 
 export * from './cloudflare'

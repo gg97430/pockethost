@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Disposable native PocketBase: cron CRUD, bounded worker leases, deduplication and redacted history."""
-import argparse,concurrent.futures,datetime,json,os,pathlib,secrets,shutil,socket,sqlite3,subprocess,tempfile,time,urllib.error,urllib.request
+import argparse,base64,hashlib,hmac,struct,concurrent.futures,datetime,json,os,pathlib,secrets,shutil,socket,sqlite3,subprocess,tempfile,time,urllib.error,urllib.request
 p=argparse.ArgumentParser();p.add_argument('--source',required=True,type=pathlib.Path);p.add_argument('--pocketbase',required=True);args=p.parse_args();os.umask(0o077);root=pathlib.Path(tempfile.mkdtemp(prefix='ph-web-cron-api-')).resolve();process=None;checks=[];secret=secrets.token_urlsafe(40)
 with socket.socket()as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
 base=f'http://127.0.0.1:{port}'
@@ -16,7 +16,9 @@ def private(path,body=None,status=200):return req('/api/web-apps/_tasks/'+path,b
 try:
  source=args.source/'packages/pockethost/src/mothership-app';hooks=root/'hooks';hooks.mkdir();shutil.copy(source/'pb_hooks/mothership.js',hooks/'mothership.js')
  routes=[('GET','/api/web-apps/{id}/tasks','HandleWebTasksList',True),('POST','/api/web-apps/{id}/tasks','HandleWebTasksCreate',True),('PATCH','/api/web-apps/{id}/tasks/{taskId}','HandleWebTaskUpdate',True),('DELETE','/api/web-apps/{id}/tasks/{taskId}','HandleWebTaskDelete',True),('POST','/api/web-apps/{id}/tasks/{taskId}/run','HandleWebTaskRun',True),('GET','/api/web-apps/{id}/task-runs','HandleWebTaskRuns',True),('POST','/api/web-apps/_tasks/claim','HandleWebTaskClaim',False),('POST','/api/web-apps/_tasks/validate','HandleWebTaskValidate',False),('POST','/api/web-apps/_tasks/report','HandleWebTaskReport',False)]
+ routes += [('POST','/api/account/totp/setup','HandleDashboardTotpSetup',True),('POST','/api/account/totp/confirm','HandleDashboardTotpConfirm',True)]
  text='\n'.join('routerAdd('+json.dumps(method)+','+json.dumps(path)+',e=>require(`${__hooks}/mothership`).'+handler+'(e)'+(',$apis.requireAuth("users")'if auth else'')+');'for method,path,handler,auth in routes)
+ text+='\nonBootstrap(e=>{e.next();require(`${__hooks}/mothership`).InitializeDashboardTotp()});routerUse(e=>require(`${__hooks}/mothership`).GuardDashboardTotp(e));onRecordAuthRequest(e=>require(`${__hooks}/mothership`).HandleDashboardTotpAuth(e),"users");\n'
  text+='''
 routerAdd('POST','/test/fixture',e=>{if(!e.auth?.getBool('superAdmin'))throw new ForbiddenError();const mod=require(`${__hooks}/mothership`),app=new Record($app.findCollectionByNameOrId('web_apps')),config={repository:'owner/repo',branch:'main',rootDirectory:'.',healthPath:'/',generatedDomain:'web-fixture.example.invalid'},env={TOKEN:{value:'private-stdout-token',build:false,runtime:true}};app.set('uid',e.auth.id);app.set('name','Cron fixture');app.set('status','running');app.set('config',config);app.set('envEncrypted',mod.encryptWebValue(env));$app.save(app);const job=new Record($app.findCollectionByNameOrId('web_deployments'));job.set('appId',app.id);job.set('action','deploy');job.set('status','ready');job.set('snapshotEncrypted',mod.encryptWebValue({config,env}));$app.save(job);job.set('result',{container:'ph-web-'+app.id+'-'+job.id,image:'ph-web/'+app.id+':'+job.id});$app.save(job);app.set('activeDeployment',job.id);$app.save(app);return e.json(200,{id:app.id,deployment:job.id})},$apis.requireAuth('users'));
 '''
@@ -30,7 +32,11 @@ routerAdd('POST','/test/fixture',e=>{if(!e.auth?.getBool('superAdmin'))throw new
   except OSError:time.sleep(.1)
  su=req('/api/collections/_superusers/auth-with-password',body={'identity':email,'password':password})['token']
  def user(name,admin):
-  row=req('/api/collections/users/records',su,{'email':name+'@example.invalid','username':name,'password':password,'passwordConfirm':password,'verified':True,'superAdmin':admin,'subscription':'premium','subscription_quantity':1});return row,req('/api/collections/users/auth-with-password',body={'identity':row['email'],'password':password})['token']
+  row=req('/api/collections/users/records',su,{'email':name+'@example.invalid','username':name,'password':password,'passwordConfirm':password,'verified':True,'superAdmin':admin,'subscription':'premium','subscription_quantity':1})
+  token=req('/api/collections/users/auth-with-password',body={'identity':row['email'],'password':password})['token']
+  setup=req('/api/account/totp/setup',token,{'password':password});key=base64.b32decode(setup['secret']+'='*(-len(setup['secret'])%8));digest=hmac.new(key,struct.pack('>Q',int(time.time())//30),hashlib.sha1).digest();offset=digest[-1]&15;code=str((struct.unpack('>I',digest[offset:offset+4])[0]&0x7fffffff)%1000000).zfill(6)
+  token=req('/api/account/totp/confirm',token,{'password':password,'code':code})['token']
+  return row,token
  actor,token=user('cronadmin',True);_,plain=user('cronplain',False);app=req('/test/fixture',token,{});ident=app['id'];path='/api/web-apps/'+ident+'/tasks';history='/api/web-apps/'+ident+'/task-runs'
  for method,route in [('GET',path),('POST',path),('GET',history),('PATCH',path+'/'+'a'*15),('DELETE',path+'/'+'a'*15),('POST',path+'/'+'a'*15+'/run')]:req(route,body={}if method in ['POST','PATCH']else None,method=method,status=401);req(route,plain,{}if method in ['POST','PATCH']else None,method,status=404)
  for collection in ['web_scheduled_tasks','web_task_runs']:req('/api/collections/'+collection+'/records',token,status=403)
@@ -40,6 +46,12 @@ routerAdd('POST','/test/fixture',e=>{if(!e.auth?.getBool('superAdmin'))throw new
  task=req(path,token,draft,status=201)['task'];taskId=task['id'];taskPath=path+'/'+taskId;assert task['timezone']=='UTC'and task['command']==draft['command']and not task['enabled'];assert req(path,token)['worker']['ready']is False
  with sqlite3.connect((data/'data.db').as_uri()+'?mode=ro',uri=True)as db:encrypted=db.execute('SELECT commandEncrypted FROM web_scheduled_tasks WHERE id=?',(taskId,)).fetchone()[0];assert'private-command-marker'not in encrypted
  req(taskPath,token,{'name':'Night maintenance','enabled':True,'schedule':'0 2 * * *'},'PATCH');assert req(path,token)['items'][0]['enabled'];req(taskPath,token,{'enabled':False},'PATCH');checks.append('strict_utc_cron_duration_command_validation_and_encrypted_crud')
+ # Explicit timezone changes recalculate due dates; ordinary edits preserve legacy UTC.
+ assert req(path,token)['items'][0]['timezone']=='UTC'
+ tz=req(path,token,{**draft,'name':'Reunion','timezone':'Indian/Reunion','schedule':'0 2 * * *'},status=201)['task']
+ assert tz['timezone']=='Indian/Reunion'and datetime.datetime.fromisoformat(tz['nextRunAt'].replace('Z','+00:00')).hour==22
+ same=req(path+'/'+tz['id'],token,{'name':'Reunion renamed'},'PATCH')['task'];assert same['nextRunAt']==tz['nextRunAt']and same['timezone']=='Indian/Reunion'
+ req(path+'/'+tz['id'],token,method='DELETE');checks.append('reunion_timezone_and_legacy_utc_edits_preserved')
  req('/api/collections/web_apps/records/'+ident,su,{'status':'stopped'},'PATCH');req(taskPath+'/run',token,{},status=400);req('/api/collections/web_apps/records/'+ident,su,{'status':'running'},'PATCH')
  queued=req(taskPath+'/run',token,{},status=202)['run'];req(taskPath+'/run',token,{},status=400);assert queued['trigger']=='manual'and queued['status']=='queued'and'private-command-marker'not in json.dumps(queued)
  first=private('claim')['job'];assert first['id']==queued['id']and first['containerName']=='ph-web-'+ident+'-'+app['deployment'];assert first['command']==draft['command']and first['timeoutSeconds']==5and first['secrets']==['private-stdout-token'];assert private('claim')['job']is None
@@ -58,6 +70,12 @@ routerAdd('POST','/test/fixture',e=>{if(!e.auth?.getBool('superAdmin'))throw new
  past=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=1)).replace(second=0,microsecond=0).isoformat().replace('T',' ')
  req('/api/collections/web_scheduled_tasks/records/'+taskId,su,{'enabled':True,'schedule':'* * * * *','nextRunAt':past},'PATCH');automatic=private('claim')['job'];assert automatic and automatic['taskId']==taskId;private('report',{'id':automatic['id'],'proof':automatic['proof'],'status':'succeeded','exitCode':0,'log':'cron ran','truncated':False});req('/api/collections/web_scheduled_tasks/records/'+taskId,su,{'nextRunAt':past},'PATCH');assert private('claim')['job']is None
  with sqlite3.connect((data/'data.db').as_uri()+'?mode=ro',uri=True)as db:assert db.execute('SELECT COUNT(*) FROM web_task_runs WHERE taskId=? AND trigger=?',(taskId,'cron')).fetchone()[0]==1
+ assert next(row for row in req(path,token)['items']if row['id']==taskId)['lastSuccessAt']
+ old=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(hours=2)).replace(second=0,microsecond=0).isoformat().replace('T',' ')
+ req('/api/collections/web_scheduled_tasks/records/'+taskId,su,{'nextRunAt':old,'catchUp':'once','maxCatchUpDelayMinutes':15},'PATCH');assert private('claim')['job']is None
+ missed=next(row for row in req(path,token)['items']if row['id']==taskId);assert missed['lastRun']['status']=='missed'and missed['lastMissedAt'];assert missed['lastSuccessAt']
+ req('/api/collections/web_scheduled_tasks/records/'+taskId,su,{'nextRunAt':past,'catchUp':'skip'},'PATCH');assert private('claim')['job']is None
+ checks.append('bounded_catchup_missed_occurrences_and_last_success')
  req('/api/collections/users/records/'+actor['id'],su,{'superAdmin':False},'PATCH');req('/api/collections/web_scheduled_tasks/records/'+taskId,su,{'nextRunAt':past},'PATCH');assert private('claim')['job']is None;assert not req('/api/collections/web_scheduled_tasks/records/'+taskId,su)['enabled']
  # The legacy suspension is never silent: one pushed task_failed alert, without the command or its log.
  events=[row for row in req('/api/collections/web_alert_events/records?perPage=100',su)['items']if row['appId']==ident];assert len(events)==1 and events[0]['event']=='task_failed'and events[0]['details']['status']=='disabled'and events[0]['details']['reason']=='rights',events;assert'command'not in json.dumps(events[0]['details'])

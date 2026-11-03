@@ -27,6 +27,8 @@ const serviceLabels: Record<string, string> = {
   'platform:rootless': 'Docker des hébergements',
   'platform:collector': 'Collecteur de supervision',
   'backups:recovery': 'Sauvegardes de la plateforme',
+  'backups:project-sandbox': 'Copies isolées des projets',
+  'backups:project-recovery': 'Capture et reprise des projets',
 }
 
 /** IDs and measurements come from the collector; human labels come from this authenticated controller. */
